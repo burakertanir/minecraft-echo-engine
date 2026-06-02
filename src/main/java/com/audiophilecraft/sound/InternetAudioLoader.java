@@ -39,7 +39,6 @@ public class InternetAudioLoader {
         // Register other remote sources (SoundCloud, HTTP, etc.)
         playerManager.registerSourceManager(SoundCloudAudioSourceManager.createDefault());
         playerManager.registerSourceManager(new HttpAudioSourceManager());
-        System.out.println("InternetAudioLoader: Initialized with YouTube + SoundCloud + HTTP sources (PCM output).");
     }
 
     public static InternetAudioLoader getInstance() {
@@ -68,13 +67,10 @@ public class InternetAudioLoader {
      * @param callback Called on completion or failure
      */
     public void loadTrack(String url, TrackLoadCallback callback) {
-        System.out.println("InternetAudioLoader: Loading URL: " + url);
 
         playerManager.loadItem(url, new AudioLoadResultHandler() {
             @Override
             public void trackLoaded(AudioTrack track) {
-                System.out.println("InternetAudioLoader: Track resolved: " + track.getInfo().title
-                        + " (" + (track.getDuration() / 1000) + "s)");
                 // Decode on a separate thread to avoid blocking
                 CompletableFuture.runAsync(() -> decodeTrack(track, callback));
             }
@@ -92,8 +88,6 @@ public class InternetAudioLoader {
                     selected = playlist.getTracks().get(0);
                 }
 
-                System.out.println("InternetAudioLoader: Playlist loaded, using first track: "
-                        + selected.getInfo().title);
                 final AudioTrack finalTrack = selected;
                 CompletableFuture.runAsync(() -> decodeTrack(finalTrack, callback));
             }
@@ -141,8 +135,6 @@ public class InternetAudioLoader {
             // Create a player and play the track through it
             var player = playerManager.createPlayer();
             player.playTrack(track);
-
-            System.out.println("InternetAudioLoader: Decoding " + title + "...");
 
             // Read all frames
             while (true) {
@@ -214,10 +206,6 @@ public class InternetAudioLoader {
                 int actualSampleRate = (int) Math.round(monoSamples / trackDurationSec);
                 sampleRate = actualSampleRate;
             }
-
-            System.out.println("InternetAudioLoader: Decoded " + title + " — "
-                    + monoSamples + " mono samples at " + sampleRate + " Hz ("
-                    + String.format("%.1f", monoSamples / (float) sampleRate) + "s)");
 
             callback.onTrackLoaded(monoData, sampleRate, title);
 

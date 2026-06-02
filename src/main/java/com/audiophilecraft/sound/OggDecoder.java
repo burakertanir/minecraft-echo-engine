@@ -145,10 +145,6 @@ public class OggDecoder {
             int channels = info.channels();
             int totalSamples = STBVorbis.stb_vorbis_stream_length_in_samples(handle);
 
-            System.out.println("OggDecoder: Streaming open — " + totalSamples + " samples, "
-                    + sampleRate + "Hz, " + channels + "ch, ~"
-                    + String.format("%.1f", (double) totalSamples / sampleRate) + "s");
-
             return new StreamingDecoder(handle, vorbisData, sampleRate, channels, totalSamples);
         }
     }
@@ -205,7 +201,6 @@ public class OggDecoder {
                 resultBuffer = copy;
             } else if (channelCount == 2) {
                 // Downmix to Mono for 3D support
-                System.out.println("OggDecoder: Downmixing Stereo to Mono for 3D Spatialization...");
                 java.nio.ShortBuffer monoAudio = MemoryUtil.memAllocShort(rawAudio.capacity() / 2);
                 for (int i = 0; i < rawAudio.capacity(); i += 2) {
                     short left = rawAudio.get(i);

@@ -103,9 +103,6 @@ public class AudioStreamBuffer {
         if (targetCursor > maxSamples - 1)
             targetCursor = maxSamples - 1;
 
-        System.out.println("AudioStreamBuffer: seekToTime(" + timeSeconds + ") triggered! globalWriteCursor="
-                + globalWriteCursor + " targetCursor=" + targetCursor);
-
         // Reset read position
         if (pcmArray != null) {
             this.readCursor = (int) targetCursor;

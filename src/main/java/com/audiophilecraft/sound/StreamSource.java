@@ -295,9 +295,11 @@ public class StreamSource {
             int queued = org.lwjgl.openal.AL10.alGetSourcei(sourceId, org.lwjgl.openal.AL10.AL_BUFFERS_QUEUED);
             int state = org.lwjgl.openal.AL10.alGetSourcei(sourceId, org.lwjgl.openal.AL10.AL_SOURCE_STATE);
             if (queued == 0 || state == org.lwjgl.openal.AL10.AL_STOPPED) {
-                // Don't remove from list — keep source alive so seek can revive it
-                // The source will be cleaned up when stopAll() or cleanup() is called
-                return true;
+                // Return false to trigger cleanup in AudioEngine.updateSourcesTick().
+                // This frees the OpenAL source ID so Minecraft's own sound system
+                // can use it. Seeking on a finished track is handled by pressing
+                // play again (which calls playTrack() → stopAll() → new sources).
+                return false;
             }
         }
 

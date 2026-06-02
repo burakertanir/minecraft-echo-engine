@@ -245,7 +245,6 @@ public class LiveTuningConfig {
                 } else {
                         INSTANCE = new LiveTuningConfig();
                         saveToFile();
-                        System.out.println("[LiveTuning] Created default config: " + configPath);
                 }
         }
 
@@ -265,7 +264,6 @@ public class LiveTuningConfig {
                         long currentModified = configPath.toFile().lastModified();
                         if (currentModified != lastModifiedTime) {
                                 loadFromFile();
-                                System.out.println("[LiveTuning] Reloaded! (" + configPath.getFileName() + ")");
                         }
                 } catch (Exception e) {
                         System.err.println("[LiveTuning] Reload check failed: " + e.getMessage());

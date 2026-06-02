@@ -34,8 +34,6 @@ public class SpeakerRegistry {
                 result.add(sp);
             }
         }
-        System.out.println("SpeakerRegistry: findSpeakersInRange() registry total=" + speakers.size()
-                + " found=" + result.size() + " center=" + center + " range=" + maxRange);
         return result;
     }
 

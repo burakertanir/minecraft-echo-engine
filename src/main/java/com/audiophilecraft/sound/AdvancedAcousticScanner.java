@@ -780,10 +780,6 @@ public class AdvancedAcousticScanner {
         float rightClearance = sectorClearance(centerProbe.distances, rightDir, 0.3f);
         float upClearance = sectorClearance(centerProbe.distances, upDir, 0.3f);
 
-        System.out.println("VenueScan Phase1: frontClear=" + frontClearance
-                + " leftClear=" + leftClearance + " rightClear=" + rightClearance
-                + " upClear=" + upClearance);
-
         // ─── PHASE 2: Adaptive Probe Placement ──────────────────────
         java.util.List<ProbeResult> probes = new java.util.ArrayList<>();
         probes.add(centerProbe); // Index 0 = center (gets 2x weight)
@@ -806,8 +802,6 @@ public class AdvancedAcousticScanner {
         Vec3d aboveProbePos = centerPos.add(0, upClearance * 0.50, 0);
         probes.add(scanProbe(world, aboveProbePos, currentCloud));
 
-        System.out.println("VenueScan Phase2: " + probes.size() + " probes placed");
-
         // Save the massive aggregated point cloud for GUI rendering
         AdvancedAcousticScanner.lastPointCloud = currentCloud;
 
@@ -820,7 +814,6 @@ public class AdvancedAcousticScanner {
                         (int) Math.floor(pt.x), (int) Math.floor(pt.y), (int) Math.floor(pt.z)));
             }
             AdvancedAcousticScanner.lastVenueBlocks = hitBlocks;
-            System.out.println("VenueScan: " + hitBlocks.size() + " reverb-hit blocks for 3D map");
         }
         // ─── PHASE 3-4: Merge Probes → VenueDescriptor ──────────────
         VenueDescriptor desc = mergeProbes(probes);
@@ -999,14 +992,6 @@ public class AdvancedAcousticScanner {
 
         boolean vHFLimit = vAvgAbsorption < 0.2f;
         float vAirAbs = vMeanDist > 15.0f ? 0.95f : 0.994f;
-
-        System.out.println("VenuePreset: decay=" + vDecay + " gain=" + vGain
-                + " enclosure=" + vEnclosure + " effectiveEncl=" + effectiveEnclosure
-                + " openness=" + vOpenness + " isOpenAir=" + isOpenAir
-                + " volume=" + vVolume + " effectiveVolume=" + effectiveVolume
-                + " meanDist=" + vMeanDist + " absorption=" + vAvgAbsorption
-                + " hfRatio=" + vHFRatio + " lfRatio=" + vLFRatio
-                + " reflGain=" + vReflGain + " lateGain=" + vLateGain);
 
         return new VenuePreset(vDecay, vGain, vGainHF, vGainLF,
                 vReflGain, vReflDelay, vLateGain, vLateDelay,

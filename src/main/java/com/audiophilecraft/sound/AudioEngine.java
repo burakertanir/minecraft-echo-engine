@@ -88,9 +88,6 @@ public class AudioEngine {
     // Concurrency Lock
     private volatile boolean isLoadingTrack = false;
 
-    // Track OpenAL context pointer for audio device-change detection
-    private long lastKnownContext = 0;
-
     // Direct buffer allocation caching (Prevents native memory JVM GC thrashing in
     // hot loop)
     private final java.nio.IntBuffer reusableRestartBuffer = org.lwjgl.BufferUtils.createIntBuffer(1024);
@@ -137,7 +134,6 @@ public class AudioEngine {
             // We request 512 here; OpenAL Soft will honour this if the hardware allows it.
             if (alcCaps.ALC_SOFT_HRTF) {
                 int numHrtf = ALC10.alcGetInteger(device, SOFTHRTF.ALC_NUM_HRTF_SPECIFIERS_SOFT);
-                System.out.println("AudioEngine: Found " + numHrtf + " HRTF profile(s).");
 
                 if (numHrtf > 0) {
                     // Request HRTF + 1024 mono sources in a single reset call
@@ -150,8 +146,6 @@ public class AudioEngine {
                     if (success) {
                         int hrtfStatus = ALC10.alcGetInteger(device, SOFTHRTF.ALC_HRTF_STATUS_SOFT);
                         int actualSources = ALC10.alcGetInteger(device, org.lwjgl.openal.ALC11.ALC_MONO_SOURCES);
-                        System.out.println("AudioEngine: HRTF enabled (status=" + hrtfStatus
-                                + ") + Source pool expanded to " + actualSources + " mono sources.");
                     } else {
                         System.err.println("AudioEngine: alcResetDeviceSOFT failed (HRTF + sources)."
                                 + " Trying sources-only reset...");
@@ -161,23 +155,16 @@ public class AudioEngine {
                                 0
                         };
                         SOFTHRTF.alcResetDeviceSOFT(device, attrsNoHrtf);
-                        int actualSources = ALC10.alcGetInteger(device, org.lwjgl.openal.ALC11.ALC_MONO_SOURCES);
-                        System.out.println("AudioEngine: Source pool is now " + actualSources + " mono sources.");
                     }
                 } else {
                     // No HRTF profiles — still try to expand sources
-                    System.out.println("AudioEngine: No HRTF profiles. Expanding source pool only...");
                     int[] attrs = {
                             org.lwjgl.openal.ALC11.ALC_MONO_SOURCES, 1024,
                             0
                     };
                     SOFTHRTF.alcResetDeviceSOFT(device, attrs);
-                    int actualSources = ALC10.alcGetInteger(device, org.lwjgl.openal.ALC11.ALC_MONO_SOURCES);
-                    System.out.println("AudioEngine: Source pool is now " + actualSources + " mono sources.");
                 }
             } else {
-                System.out.println("AudioEngine: ALC_SOFT_HRTF not available. Cannot expand source pool via reset.");
-                System.out.println("AudioEngine: Consider placing alsoft.ini in %AppData% with 'sources=256'.");
             }
         } catch (Exception e) {
             System.err.println("AudioEngine: HRTF/source-pool init failed: " + e.getMessage());
@@ -214,7 +201,6 @@ public class AudioEngine {
             alEffecti(reverbEffectId, AL_EFFECT_TYPE, AL_EFFECT_EAXREVERB);
 
             if (alGetError() != AL_NO_ERROR) {
-                System.out.println("AudioEngine: EAX Reverb not supported, trying basic reverb...");
                 alEffecti(reverbEffectId, AL_EFFECT_TYPE, AL_EFFECT_REVERB);
                 if (alGetError() != AL_NO_ERROR) {
                     System.err.println("AudioEngine: No reverb support available");
@@ -222,9 +208,6 @@ public class AudioEngine {
                     reverbEffectId = 0;
                     return;
                 }
-                System.out.println("AudioEngine: Using basic reverb (EAX not available)");
-            } else {
-                System.out.println("AudioEngine: EAX Reverb initialized — physics-based acoustics active!");
             }
 
             // --- CRITICAL DISTANCE MODEL SETTINGS ---
@@ -264,9 +247,6 @@ public class AudioEngine {
             alAuxiliaryEffectSloti(auxSlotId, AL_EFFECTSLOT_EFFECT, reverbEffectId);
 
             int errCheck = alGetError();
-            System.out.println(
-                    "AudioEngine: EFX system ready. Aux Slot: " + auxSlotId
-                            + " effectId: " + reverbEffectId + " alError: " + errCheck);
         } catch (Exception e) {
             System.err.println("AudioEngine: EFX init failed: " + e.getMessage());
             reverbEffectId = 0;
@@ -300,7 +280,6 @@ public class AudioEngine {
         if (currentGen != lastConfigGeneration && storedVenueDescriptor != null && storedVenueProbePos != null) {
             this.venuePreset = acousticScanner.descriptorToPreset(storedVenueDescriptor, storedVenueProbePos);
             lastConfigGeneration = currentGen;
-            System.out.println("[LiveTuning] Venue preset regenerated from descriptor.");
         }
 
         applyVenueReverbToEfx();
@@ -424,13 +403,6 @@ public class AudioEngine {
         // Safely pass to the render thread instead of calling OpenAL directly
         this.currentReflGain = dynamicReflGain;
         this.currentReflDelay = dynamicReflDelay;
-
-        // Debug Log (Once per second)
-        if (world.getTime() % 20 == 0) {
-            System.out.println("[AudioEngine-Live] minDist: " + minDist +
-                    " | Delay: " + dynamicReflDelay + "s" +
-                    " | Gain: " + dynamicReflGain);
-        }
     }
 
     /**
@@ -857,26 +829,11 @@ public class AudioEngine {
     }
 
     private long lastTickTime = System.nanoTime();
-    private int contextCheckTick = 0;
 
     /**
      * Cleanup and logic update. Called every client tick (20Hz).
      */
     public void updateSourcesTick(World world) {
-        // Automatically detect device change and instantly restore the 512 source limit
-        // so Minecraft's native sounds don't get cut off. (Throttled to 1 per second)
-        if (contextCheckTick++ >= 20) {
-            contextCheckTick = 0;
-            if (detectAndHandleContextChange()) {
-                initEfx();
-                // Re-apply venue reverb immediately after EFX reinitialization
-                if (venuePreset != null) {
-                    ensureVenueReverb();
-                    System.out.println("AudioEngine: Venue reverb re-applied after device recovery.");
-                }
-            }
-        }
-
         MinecraftClient mc = MinecraftClient.getInstance();
         boolean gamePaused = mc.isPaused();
 
@@ -1052,7 +1009,6 @@ public class AudioEngine {
         audioThread.execute(() -> {
             try {
                 org.lwjgl.openal.AL.setCurrentThread(alCaps);
-                System.out.println("AudioEngine: Audio thread AL context propagated successfully.");
             } catch (Exception e) {
                 System.err.println("AudioEngine: Failed to propagate AL caps to audio thread: " + e.getMessage());
             }
@@ -1133,7 +1089,6 @@ public class AudioEngine {
                 int count = reusableRestartBuffer.position();
                 reusableRestartBuffer.flip();
                 org.lwjgl.openal.AL10.alSourcePlayv(reusableRestartBuffer); // ATOMIC RESTART
-                System.out.println("AudioEngine: Recovered from massive underrun (" + count + " sources locked).");
             }
         } catch (Exception e) {
             // Swallow: ConcurrentModification during stopAll is harmless
@@ -1245,73 +1200,9 @@ public class AudioEngine {
         AudioDSP.applyPeakLimiter(audioData, 0.98f);
     }
 
-    /**
-     * Detects if the OpenAL context has changed (audio device switch) and
-     * performs a full safe reset.
-     *
-     * @return true if the context changed, false otherwise.
-     */
-    private boolean detectAndHandleContextChange() {
-        long currentContext = ALC10.alcGetCurrentContext();
-        if (currentContext == 0L)
-            return false;
-
-        boolean changed = false;
-        if (currentContext != lastKnownContext) {
-            changed = true;
-
-            if (lastKnownContext != 0) {
-                System.out.println(
-                        "AudioEngine: OpenAL context changed (audio device switch detected). Full reinitialization.");
-
-                // 1. Stop audio thread FIRST (prevent invalid OpenAL calls)
-                if (audioThread != null) {
-                    audioThread.shutdownNow();
-                    audioThread = null;
-                }
-
-                // 2. Free Java-side native memory from sources WITHOUT touching OpenAL
-                // (old source/buffer/filter IDs are dead in the new context)
-                for (StreamSource source : streamSources) {
-                    source.releaseNativeMemory();
-                }
-                streamSources.clear();
-
-                // 3. Zero out EFX IDs (do NOT delete — they don't exist in the new context)
-                reverbEffectId = 0;
-                auxSlotId = 0;
-                efxInitialized = false;
-
-                // 4. Clear buffer caches (old buffer IDs are invalid)
-                bufferCache.clear();
-                for (AudioStreamBuffer buffer : streamBuffers.values()) {
-                    buffer.cleanup();
-                }
-                streamBuffers.clear();
-
-                // 5. Reset playback state (but KEEP venue reverb data for re-application)
-                isPlaying = false;
-                isPaused = false;
-                streamStartTime = 0;
-                // DO NOT clear venuePreset / storedVenueDescriptor / storedVenueProbePos
-                // They are still valid and will be re-applied after EFX reinitialization.
-                venuePresetApplied = false; // Force re-application on next tick
-            } else {
-                System.out.println("AudioEngine: Initial OpenAL context detected. Maximizing source limit...");
-            }
-
-            // 6. Drain any stale OpenAL errors from the new context
-            while (alGetError() != AL_NO_ERROR) {
-                /* drain */ }
-        }
-
-        lastKnownContext = currentContext;
-        return changed;
-    }
 
     public void playTrack(String trackId, List<BlockPos> speakers, float power, float inputGain) {
         isLoadingTrack = true;
-        detectAndHandleContextChange();
         stopAll();
 
         // Clear old venue scan data
@@ -1377,12 +1268,10 @@ public class AudioEngine {
      * @param inputGain Input gain multiplier
      */
     public void playFromUrl(String url, List<BlockPos> speakers, float power, float inputGain) {
-        System.out.println("AudioEngine: Loading URL: " + url);
 
         InternetAudioLoader.getInstance().loadTrack(url, new InternetAudioLoader.TrackLoadCallback() {
             @Override
             public void onTrackLoaded(short[] pcmData, int sampleRate, String trackTitle) {
-                System.out.println("AudioEngine: Track ready: " + trackTitle + " (" + pcmData.length + " samples)");
 
                 // Execute on the main client thread to avoid OpenAL threading issues
                 MinecraftClient.getInstance().execute(() -> {
@@ -1542,9 +1431,6 @@ public class AudioEngine {
                         baseRefDist * power, dirX, dirY, dirZ, speakerType, filterId, sendFilterId,
                         inputGain, sampleShiftMs, speakerCount, leaderSource, cluster.size());
                 streamSources.add(ss);
-                System.out.println("AudioEngine: Source #" + streamSources.size()
-                        + " pos=" + pos + " type=" + speakerType
-                        + " block=" + (world != null ? world.getBlockState(pos).getBlock().getClass().getSimpleName() : "?"));
 
                 if (leaderSource == null) leaderSource = ss;
             }
@@ -1580,14 +1466,11 @@ public class AudioEngine {
                 }
             }
             startAudioThread();
-            System.out.println("AudioEngine: Playback started with " + streamSources.size() + " sources.");
         };
 
         if (!streamSources.isEmpty() && world != null) {
             Vec3d probePos = calculateVenueProbe(streamSources);
             Vec3d stageDir = calculateStageDirection(streamSources);
-
-            System.out.println("AudioEngine: Probe centroid=" + probePos + " stageDir=" + stageDir);
 
             java.util.concurrent.CompletableFuture.supplyAsync(() -> {
                 return acousticScanner.scanVenue(world, probePos, stageDir);
@@ -1597,7 +1480,6 @@ public class AudioEngine {
                     this.storedVenueDescriptor = acousticScanner.getLastDescriptor();
                     this.storedVenueProbePos = acousticScanner.getLastProbePos();
                     this.lastConfigGeneration = com.audiophilecraft.config.LiveTuningConfig.getReloadGeneration();
-                    System.out.println("AudioEngine: Venue reverb locked.");
                     applyVenueReverbToEfx();
                 }
                 startPlayback.run();
@@ -1613,7 +1495,6 @@ public class AudioEngine {
      */
     private void playFromPcmData(short[] pcmData, int sampleRate, List<BlockPos> speakers,
             float power, float inputGain) {
-        detectAndHandleContextChange();
         stopAll();
         while (alGetError() != AL_NO_ERROR) { /* drain */ }
         initEfx();
@@ -1740,6 +1621,10 @@ public class AudioEngine {
         // resulting in 3-4 speakers playing asynchronously.
         isSeeking = true;
         try {
+            // Nothing to seek if all sources were cleaned up (song ended naturally)
+            if (streamSources.isEmpty())
+                return;
+
             // Shift absolute temporal timeline baseline
             long now = System.nanoTime();
 
