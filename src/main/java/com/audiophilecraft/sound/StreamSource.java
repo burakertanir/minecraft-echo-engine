@@ -201,8 +201,11 @@ public class StreamSource {
      * Synchronized to prevent background AudioThread race conditions.
      */
     public synchronized void seekToTime(double timeSeconds) {
-        if (!isValid || isFinished)
+        if (!isValid)
             return;
+
+        // CRITICAL: Reset finished state so seek works on ended tracks
+        this.isFinished = false;
 
         // 50ms ramp-in fade to stop DAC cone snap/clicks from splicing peak waves
         this.seekFadeSamplesRemaining = (long) (0.05 * streamBuffer.sampleRate);
@@ -292,7 +295,9 @@ public class StreamSource {
             int queued = org.lwjgl.openal.AL10.alGetSourcei(sourceId, org.lwjgl.openal.AL10.AL_BUFFERS_QUEUED);
             int state = org.lwjgl.openal.AL10.alGetSourcei(sourceId, org.lwjgl.openal.AL10.AL_SOURCE_STATE);
             if (queued == 0 || state == org.lwjgl.openal.AL10.AL_STOPPED) {
-                return false; // Now it's truly safe to stop and destroy the source
+                // Don't remove from list — keep source alive so seek can revive it
+                // The source will be cleaned up when stopAll() or cleanup() is called
+                return true;
             }
         }
 
