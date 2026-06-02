@@ -119,55 +119,80 @@ public class AudioEngine {
     private void enableHrtf() {
         try {
             long context = ALC10.alcGetCurrentContext();
-            if (context == 0L)
+            if (context == 0L) {
+                System.err.println("[enableHrtf] No current context, aborting.");
                 return;
+            }
             long device = ALC10.alcGetContextsDevice(context);
-            if (device == 0L)
+            if (device == 0L) {
+                System.err.println("[enableHrtf] No device for context, aborting.");
                 return;
+            }
+
+            // LOG: Current state before reset
+            int preResetSources = ALC10.alcGetInteger(device, org.lwjgl.openal.ALC11.ALC_MONO_SOURCES);
+            int preResetStereo = ALC10.alcGetInteger(device, org.lwjgl.openal.ALC11.ALC_STEREO_SOURCES);
+            int preResetError = ALC10.alcGetError(device);
+            System.out.println("[enableHrtf] PRE-RESET: monoSources=" + preResetSources
+                    + " stereoSources=" + preResetStereo + " alcError=0x" + Integer.toHexString(preResetError));
 
             ALCCapabilities alcCaps = org.lwjgl.openal.ALC.createCapabilities(device);
+            System.out.println("[enableHrtf] ALC_SOFT_HRTF=" + alcCaps.ALC_SOFT_HRTF);
 
-            // --- STEP 1: Always attempt to expand the source pool ---
-            // ALC_MONO_SOURCES controls how many simultaneous audio sources OpenAL
-            // will allow. The default is usually 32, shared with ALL sounds in Minecraft.
-            // A 4-cluster PA system can easily need 200+ sources (3 types × N speakers).
-            // We request 512 here; OpenAL Soft will honour this if the hardware allows it.
             if (alcCaps.ALC_SOFT_HRTF) {
                 int numHrtf = ALC10.alcGetInteger(device, SOFTHRTF.ALC_NUM_HRTF_SPECIFIERS_SOFT);
+                System.out.println("[enableHrtf] HRTF profiles found: " + numHrtf);
 
                 if (numHrtf > 0) {
-                    // Request HRTF + 1024 mono sources in a single reset call
                     int[] attrs = {
                             SOFTHRTF.ALC_HRTF_SOFT, ALC10.ALC_TRUE,
                             org.lwjgl.openal.ALC11.ALC_MONO_SOURCES, 512,
                             0
                     };
+                    System.out.println("[enableHrtf] Calling alcResetDeviceSOFT(HRTF=TRUE, MONO=512)...");
                     boolean success = SOFTHRTF.alcResetDeviceSOFT(device, attrs);
+                    int postResetError = ALC10.alcGetError(device);
+                    System.out.println("[enableHrtf] alcResetDeviceSOFT returned: " + success
+                            + " alcError=0x" + Integer.toHexString(postResetError));
+
                     if (success) {
                         int hrtfStatus = ALC10.alcGetInteger(device, SOFTHRTF.ALC_HRTF_STATUS_SOFT);
                         int actualSources = ALC10.alcGetInteger(device, org.lwjgl.openal.ALC11.ALC_MONO_SOURCES);
+                        int actualStereo = ALC10.alcGetInteger(device, org.lwjgl.openal.ALC11.ALC_STEREO_SOURCES);
+                        int postAlError = org.lwjgl.openal.AL10.alGetError();
+                        System.out.println("[enableHrtf] POST-RESET: hrtfStatus=" + hrtfStatus
+                                + " actualMonoSources=" + actualSources + " actualStereoSources=" + actualStereo
+                                + " alError=0x" + Integer.toHexString(postAlError));
                     } else {
-                        System.err.println("AudioEngine: alcResetDeviceSOFT failed (HRTF + sources)."
-                                + " Trying sources-only reset...");
-                        // Fallback: request sources without HRTF
+                        System.err.println("[enableHrtf] alcResetDeviceSOFT FAILED! alcError=0x"
+                                + Integer.toHexString(postResetError));
+                        System.err.println("[enableHrtf] Trying sources-only fallback...");
                         int[] attrsNoHrtf = {
                                 org.lwjgl.openal.ALC11.ALC_MONO_SOURCES, 512,
                                 0
                         };
-                        SOFTHRTF.alcResetDeviceSOFT(device, attrsNoHrtf);
+                        boolean fallback = SOFTHRTF.alcResetDeviceSOFT(device, attrsNoHrtf);
+                        int fallbackError = ALC10.alcGetError(device);
+                        System.out.println("[enableHrtf] Fallback reset returned: " + fallback
+                                + " alcError=0x" + Integer.toHexString(fallbackError));
                     }
                 } else {
-                    // No HRTF profiles — still try to expand sources
+                    System.out.println("[enableHrtf] No HRTF profiles, trying sources-only...");
                     int[] attrs = {
                             org.lwjgl.openal.ALC11.ALC_MONO_SOURCES, 512,
                             0
                     };
-                    SOFTHRTF.alcResetDeviceSOFT(device, attrs);
+                    boolean success = SOFTHRTF.alcResetDeviceSOFT(device, attrs);
+                    int postError = ALC10.alcGetError(device);
+                    System.out.println("[enableHrtf] Sources-only reset returned: " + success
+                            + " alcError=0x" + Integer.toHexString(postError));
                 }
             } else {
+                System.out.println("[enableHrtf] ALC_SOFT_HRTF not available, skipping.");
             }
         } catch (Exception e) {
-            System.err.println("AudioEngine: HRTF/source-pool init failed: " + e.getMessage());
+            System.err.println("[enableHrtf] EXCEPTION: " + e.getMessage());
+            e.printStackTrace();
         }
     }
 
@@ -184,8 +209,9 @@ public class AudioEngine {
             return;
         efxInitialized = true;
 
-        // Enable HRTF Binaural Audio (safe — falls back gracefully)
-        enableHrtf();
+        // HRTF and source pool expansion are now handled via alsoft.ini
+        // (placed in %AppData%/alsoft.ini). This avoids alcResetDeviceSOFT
+        // which was disrupting Minecraft's sound engine.
 
         try {
             // Create EAX Reverb Effect (superior to basic AL_EFFECT_REVERB)
@@ -270,7 +296,7 @@ public class AudioEngine {
      * Also regenerates VenuePreset from stored descriptor when config changes.
      */
     private void ensureVenueReverb() {
-        if (venuePreset == null)
+        if (venuePreset == null || venuePresetApplied)
             return;
         if (auxSlotId == 0 || reverbEffectId == 0)
             return;
@@ -280,6 +306,7 @@ public class AudioEngine {
         if (currentGen != lastConfigGeneration && storedVenueDescriptor != null && storedVenueProbePos != null) {
             this.venuePreset = acousticScanner.descriptorToPreset(storedVenueDescriptor, storedVenueProbePos);
             lastConfigGeneration = currentGen;
+            venuePresetApplied = false;
         }
 
         applyVenueReverbToEfx();
@@ -313,7 +340,7 @@ public class AudioEngine {
         alEffectf(reverbEffectId, AL_EAXREVERB_DECAY_TIME, decayTime);
         alEffectf(reverbEffectId, AL_EAXREVERB_DECAY_HFRATIO, venuePreset.decayHFRatio);
         alEffectf(reverbEffectId, AL_EAXREVERB_DECAY_LFRATIO, venuePreset.decayLFRatio);
-        alEffectf(reverbEffectId, AL_EAXREVERB_DECAY_HFLIMIT, venuePreset.decayHFLimit ? 1 : 0);
+        alEffecti(reverbEffectId, AL_EAXREVERB_DECAY_HFLIMIT, venuePreset.decayHFLimit ? 1 : 0);
 
         // Thread-safe application of dynamic early reflections (calculated in tick
         // thread)
