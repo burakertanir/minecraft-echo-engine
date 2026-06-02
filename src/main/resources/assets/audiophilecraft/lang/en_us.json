@@ -1,0 +1,7 @@
+{
+    "item.audiophilecraft.amplifier_tablet": "Amplifier Tablet",
+    "block.audiophilecraft.subwoofer": "Subwoofer (Low)",
+    "block.audiophilecraft.mid_range": "Studio Monitor (Mid)",
+    "block.audiophilecraft.line_array": "Line Array Module (High)",
+    "itemgroup.audiophilecraft": "AudiophileCraft"
+}

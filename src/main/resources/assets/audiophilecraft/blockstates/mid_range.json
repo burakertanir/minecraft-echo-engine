@@ -1,0 +1,8 @@
+{
+  "variants": {
+    "facing=north": { "model": "audiophilecraft:block/mid_range" },
+    "facing=south": { "model": "audiophilecraft:block/mid_range", "y": 180 },
+    "facing=west": { "model": "audiophilecraft:block/mid_range", "y": 270 },
+    "facing=east": { "model": "audiophilecraft:block/mid_range", "y": 90 }
+  }
+}

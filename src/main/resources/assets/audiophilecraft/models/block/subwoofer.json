@@ -1,0 +1,8 @@
+{
+  "parent": "minecraft:block/orientable",
+  "textures": {
+    "top": "audiophilecraft:block/speaker_side",
+    "side": "audiophilecraft:block/speaker_side",
+    "front": "audiophilecraft:block/subwoofer"
+  }
+}

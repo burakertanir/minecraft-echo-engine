@@ -1,0 +1,8 @@
+{
+  "variants": {
+    "facing=north": { "model": "audiophilecraft:block/subwoofer" },
+    "facing=south": { "model": "audiophilecraft:block/subwoofer", "y": 180 },
+    "facing=west": { "model": "audiophilecraft:block/subwoofer", "y": 270 },
+    "facing=east": { "model": "audiophilecraft:block/subwoofer", "y": 90 }
+  }
+}
