@@ -139,7 +139,7 @@ public class AudioEngine {
                     // Request HRTF + 1024 mono sources in a single reset call
                     int[] attrs = {
                             SOFTHRTF.ALC_HRTF_SOFT, ALC10.ALC_TRUE,
-                            org.lwjgl.openal.ALC11.ALC_MONO_SOURCES, 1024,
+                            org.lwjgl.openal.ALC11.ALC_MONO_SOURCES, 512,
                             0
                     };
                     boolean success = SOFTHRTF.alcResetDeviceSOFT(device, attrs);
@@ -151,7 +151,7 @@ public class AudioEngine {
                                 + " Trying sources-only reset...");
                         // Fallback: request sources without HRTF
                         int[] attrsNoHrtf = {
-                                org.lwjgl.openal.ALC11.ALC_MONO_SOURCES, 1024,
+                                org.lwjgl.openal.ALC11.ALC_MONO_SOURCES, 512,
                                 0
                         };
                         SOFTHRTF.alcResetDeviceSOFT(device, attrsNoHrtf);
@@ -159,7 +159,7 @@ public class AudioEngine {
                 } else {
                     // No HRTF profiles — still try to expand sources
                     int[] attrs = {
-                            org.lwjgl.openal.ALC11.ALC_MONO_SOURCES, 1024,
+                            org.lwjgl.openal.ALC11.ALC_MONO_SOURCES, 512,
                             0
                     };
                     SOFTHRTF.alcResetDeviceSOFT(device, attrs);
