@@ -296,7 +296,7 @@ public class AudioEngine {
      * Also regenerates VenuePreset from stored descriptor when config changes.
      */
     private void ensureVenueReverb() {
-        if (venuePreset == null || venuePresetApplied)
+        if (venuePreset == null)
             return;
         if (auxSlotId == 0 || reverbEffectId == 0)
             return;
@@ -306,7 +306,6 @@ public class AudioEngine {
         if (currentGen != lastConfigGeneration && storedVenueDescriptor != null && storedVenueProbePos != null) {
             this.venuePreset = acousticScanner.descriptorToPreset(storedVenueDescriptor, storedVenueProbePos);
             lastConfigGeneration = currentGen;
-            venuePresetApplied = false;
         }
 
         applyVenueReverbToEfx();
