@@ -1,1697 +1,1719 @@
-package com.audiophilecraft.sound;
-
-import net.minecraft.client.MinecraftClient;
-import net.minecraft.util.math.BlockPos;
-import net.minecraft.util.math.Direction;
-import net.minecraft.util.math.Vec3d;
-import net.minecraft.util.math.Vec3i;
-import net.minecraft.world.World;
-import net.minecraft.state.property.Properties;
-import net.minecraft.block.BlockState;
-import static org.lwjgl.openal.EXTEfx.*;
-import org.lwjgl.openal.ALC10;
-import org.lwjgl.openal.SOFTHRTF;
-import org.lwjgl.openal.ALCCapabilities;
-
-import java.util.ArrayList;
-import java.util.Iterator;
-import java.util.List;
-import java.util.Map;
-import java.util.HashMap;
-import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.Executors;
-import java.util.concurrent.ScheduledExecutorService;
-import java.util.concurrent.TimeUnit;
-import java.nio.ShortBuffer;
-import org.lwjgl.system.MemoryUtil;
-
-import static org.lwjgl.openal.AL10.*;
-import static org.lwjgl.openal.AL11.*;
-
-public class AudioEngine {
-    private static AudioEngine INSTANCE;
-
-    // Listener state (volatile: written by render thread, read by audio thread)
-    private volatile Vec3d listenerPos = Vec3d.ZERO;
-    private volatile Vec3d smoothedListenerPos = Vec3d.ZERO;
-    private float listenerYaw = 0;
-
-    private float listenerPitch = 0;
-
-    // Global Pause State
-    private volatile boolean isPaused = false;
-
-    // Seek Atomicity Guard — prevents audio thread from feeding sources mid-seek
-    private volatile boolean isSeeking = false;
-
-    // Underwater State (for global HF filtering)
-    private boolean isUnderwater = false;
-    private float smoothedUnderwaterHF = 1.0f; // 1.0 = normal, 0.08 = deep underwater
-
-    // --- Master Reverb Occlusion ---
-    private float smoothedMasterOcclusion = 1.0f;
-
-    // EFX EAX Reverb System
-    private int reverbEffectId = 0;
-    private int auxSlotId = 0;
-
-    private boolean efxInitialized = false;
-
-    // Acoustic Scanner (used only for venue probe scans at playback start)
-    private final AdvancedAcousticScanner acousticScanner = new AdvancedAcousticScanner();
-
-    // Streaming System
-    private final Map<String, AudioStreamBuffer> streamBuffers = new ConcurrentHashMap<>(); // Thread-safe: main thread writes, audio thread iterates
-    private final List<StreamSource> streamSources = new java.util.concurrent.CopyOnWriteArrayList<>();
-
-    // Time Tracking
-    private volatile long streamStartTime = 0; // Absolute start time (nanoTime) � volatile: written by main thread, read by audio thread
-    private volatile boolean isPlaying = false; // volatile: written by main thread, read by audio thread
-    private static final double BUFFER_LOOKAHEAD = 0.5; // Low-latency pipeline: 6 initial + 3 precomputed buffers ×
-                                                        // 1024 = 9216 samples (~0.19s) PLUS delay headroom
-    private long pauseStartTimestamp = 0; // Track when pause started
-
-    // Background Audio Thread (pre-computes PCM buffers off main thread)
-    private ScheduledExecutorService audioThread;
-
-    // Venue-Locked Reverb System
-    private AdvancedAcousticScanner.VenuePreset venuePreset = null;
-    private boolean venuePresetApplied = false;
-
-    // --- Dynamic Early Reflections ---
-    private volatile float currentReflGain = -1.0f;
-    private volatile float currentReflDelay = -1.0f;
-    // Live Tuning: stored descriptor for regenerating preset when config changes
-    private AdvancedAcousticScanner.VenueDescriptor storedVenueDescriptor = null;
-    private net.minecraft.util.math.Vec3d storedVenueProbePos = null;
-    private long lastConfigGeneration = 0;
-
-
-    // Direct buffer allocation caching (Prevents native memory JVM GC thrashing in
-    // hot loop)
-    private final java.nio.IntBuffer reusableRestartBuffer = org.lwjgl.BufferUtils.createIntBuffer(1024);
-
-    private AudioEngine() {
-        // Private constructor for singleton
-    }
-
-    public static synchronized AudioEngine getInstance() {
-        if (INSTANCE == null) {
-            INSTANCE = new AudioEngine();
-        }
-        return INSTANCE;
-    }
-
-    /**
-     * Enable HRTF (Head-Related Transfer Function) for binaural 3D audio,
-     * AND simultaneously request an expanded source pool (256 mono sources).
-     *
-     * OpenAL Soft's default source limit (typically 32) is far too low for
-     * large PA systems with 4+ speaker clusters. Without raising this limit,
-     * alGenSources() returns AL_INVALID_OPERATION after the first ~20 sources,
-     * causing the outermost speaker clusters to be silently skipped.
-     *
-     * alcResetDeviceSOFT is the only way to change ALC attributes (like
-     * ALC_MONO_SOURCES) on an existing context without destroying it.
-     * We piggyback this request onto the HRTF reset so it happens in one call.
-     */
-    private void enableHrtf() {
-        try {
-            long context = ALC10.alcGetCurrentContext();
-            if (context == 0L) {
-                System.err.println("[enableHrtf] No current context, aborting.");
-                return;
-            }
-            long device = ALC10.alcGetContextsDevice(context);
-            if (device == 0L) {
-                System.err.println("[enableHrtf] No device for context, aborting.");
-                return;
-            }
-
-            // LOG: Current state before reset
-            int preResetSources = ALC10.alcGetInteger(device, org.lwjgl.openal.ALC11.ALC_MONO_SOURCES);
-            int preResetStereo = ALC10.alcGetInteger(device, org.lwjgl.openal.ALC11.ALC_STEREO_SOURCES);
-            int preResetError = ALC10.alcGetError(device);
-            System.out.println("[enableHrtf] PRE-RESET: monoSources=" + preResetSources
-                    + " stereoSources=" + preResetStereo + " alcError=0x" + Integer.toHexString(preResetError));
-
-            ALCCapabilities alcCaps = org.lwjgl.openal.ALC.createCapabilities(device);
-            System.out.println("[enableHrtf] ALC_SOFT_HRTF=" + alcCaps.ALC_SOFT_HRTF);
-
-            if (alcCaps.ALC_SOFT_HRTF) {
-                int numHrtf = ALC10.alcGetInteger(device, SOFTHRTF.ALC_NUM_HRTF_SPECIFIERS_SOFT);
-                System.out.println("[enableHrtf] HRTF profiles found: " + numHrtf);
-
-                if (numHrtf > 0) {
-                    int[] attrs = {
-                            SOFTHRTF.ALC_HRTF_SOFT, ALC10.ALC_TRUE,
-                            org.lwjgl.openal.ALC11.ALC_MONO_SOURCES, 1024,
-                            0
-                    };
-                    System.out.println("[enableHrtf] Calling alcResetDeviceSOFT(HRTF=TRUE, MONO=512)...");
-                    boolean success = SOFTHRTF.alcResetDeviceSOFT(device, attrs);
-                    int postResetError = ALC10.alcGetError(device);
-                    System.out.println("[enableHrtf] alcResetDeviceSOFT returned: " + success
-                            + " alcError=0x" + Integer.toHexString(postResetError));
-
-                    if (success) {
-                        int hrtfStatus = ALC10.alcGetInteger(device, SOFTHRTF.ALC_HRTF_STATUS_SOFT);
-                        int actualSources = ALC10.alcGetInteger(device, org.lwjgl.openal.ALC11.ALC_MONO_SOURCES);
-                        int actualStereo = ALC10.alcGetInteger(device, org.lwjgl.openal.ALC11.ALC_STEREO_SOURCES);
-                        int postAlError = org.lwjgl.openal.AL10.alGetError();
-                        System.out.println("[enableHrtf] POST-RESET: hrtfStatus=" + hrtfStatus
-                                + " actualMonoSources=" + actualSources + " actualStereoSources=" + actualStereo
-                                + " alError=0x" + Integer.toHexString(postAlError));
-                    } else {
-                        System.err.println("[enableHrtf] alcResetDeviceSOFT FAILED! alcError=0x"
-                                + Integer.toHexString(postResetError));
-                        System.err.println("[enableHrtf] Trying sources-only fallback...");
-                        int[] attrsNoHrtf = {
-                                org.lwjgl.openal.ALC11.ALC_MONO_SOURCES, 1024,
-                                0
-                        };
-                        boolean fallback = SOFTHRTF.alcResetDeviceSOFT(device, attrsNoHrtf);
-                        int fallbackError = ALC10.alcGetError(device);
-                        System.out.println("[enableHrtf] Fallback reset returned: " + fallback
-                                + " alcError=0x" + Integer.toHexString(fallbackError));
-                    }
-                } else {
-                    System.out.println("[enableHrtf] No HRTF profiles, trying sources-only...");
-                    int[] attrs = {
-                            org.lwjgl.openal.ALC11.ALC_MONO_SOURCES, 1024,
-                            0
-                    };
-                    boolean success = SOFTHRTF.alcResetDeviceSOFT(device, attrs);
-                    int postError = ALC10.alcGetError(device);
-                    System.out.println("[enableHrtf] Sources-only reset returned: " + success
-                            + " alcError=0x" + Integer.toHexString(postError));
-                }
-            } else {
-                System.out.println("[enableHrtf] ALC_SOFT_HRTF not available, skipping.");
-            }
-        } catch (Exception e) {
-            System.err.println("[enableHrtf] EXCEPTION: " + e.getMessage());
-            e.printStackTrace();
-        }
-    }
-
-    public int getAuxSlotId() {
-        return auxSlotId;
-    }
-
-    /**
-     * Initialize OpenAL EFX with EAX Reverb for physics-based room simulation.
-     * Called lazily on first playTrack().
-     */
-    private void initEfx() {
-        if (efxInitialized)
-            return;
-        efxInitialized = true;
-
-        // Enable HRTF and expanded source pool for all users
-        enableHrtf();
-
-        // HRTF and source pool expansion are now handled via alsoft.ini
-        // (placed in %AppData%/alsoft.ini). This avoids alcResetDeviceSOFT
-        // which was disrupting Minecraft's sound engine.
-
-        try {
-            // Create EAX Reverb Effect (superior to basic AL_EFFECT_REVERB)
-            reverbEffectId = alGenEffects();
-
-            if (alGetError() != AL_NO_ERROR) {
-                System.err.println("AudioEngine: Failed to create EFX effect");
-                reverbEffectId = 0;
-                return;
-            }
-
-            // Try EAX Reverb first, fall back to basic reverb
-            alEffecti(reverbEffectId, AL_EFFECT_TYPE, AL_EFFECT_EAXREVERB);
-
-            if (alGetError() != AL_NO_ERROR) {
-                alEffecti(reverbEffectId, AL_EFFECT_TYPE, AL_EFFECT_REVERB);
-                if (alGetError() != AL_NO_ERROR) {
-                    System.err.println("AudioEngine: No reverb support available");
-                    alDeleteEffects(reverbEffectId);
-                    reverbEffectId = 0;
-                    return;
-                }
-            }
-
-            // --- CRITICAL DISTANCE MODEL SETTINGS ---
-            // Current Issue: Sound stops attenuating at MaxDist due to CLAMPED model.
-            // Fix: Use AL_INVERSE_DISTANCE (Standard) so sound fades naturally forever.
-            alDistanceModel(AL_NONE);
-
-            // Rolloff Factor Default
-            // alListenerf(AL_ROLLOFF_FACTOR, 1.0f); // Per-source is better
-
-            // 1. Primary Reverb (Dynamic - Updated by Scanner)
-            alEffectf(reverbEffectId, AL_EAXREVERB_DECAY_TIME, 0.3f);
-            alEffectf(reverbEffectId, AL_EAXREVERB_REFLECTIONS_GAIN, 0.3f);
-            alEffectf(reverbEffectId, AL_EAXREVERB_REFLECTIONS_DELAY, 0.02f);
-            alEffectf(reverbEffectId, AL_EAXREVERB_LATE_REVERB_GAIN, 0.1f);
-            alEffectf(reverbEffectId, AL_EAXREVERB_LATE_REVERB_DELAY, 0.04f);
-            alEffectf(reverbEffectId, AL_EAXREVERB_DIFFUSION, 0.7f);
-            alEffectf(reverbEffectId, AL_EAXREVERB_DENSITY, 0.5f);
-            alEffectf(reverbEffectId, AL_EAXREVERB_GAIN, 0.3f);
-            alEffectf(reverbEffectId, AL_EAXREVERB_GAINHF, 0.6f);
-            alEffectf(reverbEffectId, AL_EAXREVERB_GAINLF, 0.8f);
-            alEffectf(reverbEffectId, AL_EAXREVERB_DECAY_HFRATIO, 0.5f);
-            alEffectf(reverbEffectId, AL_EAXREVERB_DECAY_LFRATIO, 1.1f);
-            alEffectf(reverbEffectId, AL_EAXREVERB_AIR_ABSORPTION_GAINHF, 0.994f);
-            alEffecti(reverbEffectId, AL_EAXREVERB_DECAY_HFLIMIT, 1);
-
-            // Create Auxiliary Effect Slots
-            auxSlotId = alGenAuxiliaryEffectSlots();
-
-            if (alGetError() != AL_NO_ERROR) {
-                System.err.println("AudioEngine: Failed to create aux slot");
-                // Cleanup
-                return;
-            }
-
-            // Attach effect to slot
-            alAuxiliaryEffectSloti(auxSlotId, AL_EFFECTSLOT_EFFECT, reverbEffectId);
-
-            int errCheck = alGetError();
-        } catch (Exception e) {
-            System.err.println("AudioEngine: EFX init failed: " + e.getMessage());
-            reverbEffectId = 0;
-            auxSlotId = 0;
-        }
-
-    }
-
-    public AdvancedAcousticScanner.VenuePreset getVenuePreset() {
-        return this.venuePreset;
-    }
-
-    public AdvancedAcousticScanner.VenueDescriptor getStoredVenueDescriptor() {
-        return storedVenueDescriptor;
-    }
-
-    /**
-     * Apply venue reverb to EFX every tick.
-     * Re-applies each tick so LiveTuningConfig multipliers take effect in
-     * real-time.
-     * Also regenerates VenuePreset from stored descriptor when config changes.
-     */
-    private void ensureVenueReverb() {
-        if (venuePreset == null)
-            return;
-        if (auxSlotId == 0 || reverbEffectId == 0)
-            return;
-
-        // If config was reloaded, regenerate the VenuePreset from stored descriptor
-        long currentGen = com.audiophilecraft.config.LiveTuningConfig.getReloadGeneration();
-        if (currentGen != lastConfigGeneration && storedVenueDescriptor != null && storedVenueProbePos != null) {
-            this.venuePreset = acousticScanner.descriptorToPreset(storedVenueDescriptor, storedVenueProbePos);
-            lastConfigGeneration = currentGen;
-        }
-
-        applyVenueReverbToEfx();
-        venuePresetApplied = true;
-    }
-
-    /**
-     * Apply the locked venue reverb preset to the EFX effect.
-     * Parameters come from the one-time probe scan and never change.
-     */
-    private void applyVenueReverbToEfx() {
-        com.audiophilecraft.config.LiveTuningConfig cfg = com.audiophilecraft.config.LiveTuningConfig.get();
-
-        float decayTime = venuePreset.decayTime * cfg.reverb_decayMultiplier;
-        float gain = venuePreset.gain * cfg.reverb_gainMultiplier;
-        float gainHF = venuePreset.gainHF * cfg.reverb_gainHFMultiplier;
-        float reflGain = venuePreset.reflectionsGain * cfg.reverb_reflGainMultiplier;
-        float lateGain = venuePreset.lateReverbGain * cfg.reverb_lateGainMultiplier;
-        float density = cfg.reverb_densityOverride >= 0 ? cfg.reverb_densityOverride : venuePreset.density;
-        float diffusion = cfg.reverb_diffusionOverride >= 0 ? cfg.reverb_diffusionOverride : venuePreset.diffusion;
-
-        // Clamp to OpenAL EAX Reverb limits
-        decayTime = Math.max(0.1f, Math.min(20.0f, decayTime));
-        gain = Math.max(0.0f, Math.min(1.0f, gain));
-        gainHF = Math.max(0.0f, Math.min(1.0f, gainHF));
-        reflGain = Math.max(0.0f, Math.min(3.16f, reflGain));
-        lateGain = Math.max(0.0f, Math.min(10.0f, lateGain));
-        density = Math.max(0.0f, Math.min(1.0f, density));
-        diffusion = Math.max(0.0f, Math.min(1.0f, diffusion));
-
-        alEffectf(reverbEffectId, AL_EAXREVERB_DECAY_TIME, decayTime);
-        alEffectf(reverbEffectId, AL_EAXREVERB_DECAY_HFRATIO, venuePreset.decayHFRatio);
-        alEffectf(reverbEffectId, AL_EAXREVERB_DECAY_LFRATIO, venuePreset.decayLFRatio);
-        alEffecti(reverbEffectId, AL_EAXREVERB_DECAY_HFLIMIT, venuePreset.decayHFLimit ? 1 : 0);
-
-        // Thread-safe application of dynamic early reflections (calculated in tick
-        // thread)
-        if (currentReflGain >= 0.0f && currentReflDelay >= 0.0f) {
-            alEffectf(reverbEffectId, AL_EAXREVERB_REFLECTIONS_GAIN, currentReflGain);
-            alEffectf(reverbEffectId, AL_EAXREVERB_REFLECTIONS_DELAY, currentReflDelay);
-        }
-
-        alEffectfv(reverbEffectId, AL_EAXREVERB_REFLECTIONS_PAN, new float[] { 0, 0, 0 });
-        alEffectf(reverbEffectId, AL_EAXREVERB_LATE_REVERB_GAIN, lateGain);
-        alEffectf(reverbEffectId, AL_EAXREVERB_LATE_REVERB_DELAY, venuePreset.lateReverbDelay);
-        alEffectfv(reverbEffectId, AL_EAXREVERB_LATE_REVERB_PAN, new float[] { 0, 0, 0 });
-        alEffectf(reverbEffectId, AL_EAXREVERB_DENSITY, density);
-        alEffectf(reverbEffectId, AL_EAXREVERB_DIFFUSION, diffusion);
-        alEffectf(reverbEffectId, AL_EAXREVERB_GAIN, gain);
-        alEffectf(reverbEffectId, AL_EAXREVERB_GAINHF, gainHF);
-        alEffectf(reverbEffectId, AL_EAXREVERB_GAINLF, venuePreset.gainLF);
-        alEffectf(reverbEffectId, AL_EAXREVERB_AIR_ABSORPTION_GAINHF, venuePreset.airAbsorptionGainHF);
-        alAuxiliaryEffectSloti(auxSlotId, AL_EFFECTSLOT_EFFECT, reverbEffectId);
-    }
-
-    /**
-     * Listener-centric Early Reflections scanner.
-     * Fires 6 rays from the listener position to find immediate wall proximity.
-     * Updates AL_EAXREVERB_REFLECTIONS_GAIN and AL_EAXREVERB_REFLECTIONS_DELAY
-     * live.
-     */
-    private void updateListenerReflections(World world) {
-        if (this.venuePreset == null || reverbEffectId == 0 || auxSlotId == 0)
-            return;
-
-        com.audiophilecraft.config.LiveTuningConfig cfg = com.audiophilecraft.config.LiveTuningConfig.get();
-
-        float[][] DIRS = {
-                { 1, 0, 0 }, { -1, 0, 0 },
-                { 0, 1, 0 }, { 0, -1, 0 },
-                { 0, 0, 1 }, { 0, 0, -1 }
-        };
-
-        int maxDist = 10; // 10 blocks max for early reflections radius
-        float minDist = maxDist;
-
-        for (int i = 0; i < 6; i++) {
-            float dirX = DIRS[i][0];
-            float dirY = DIRS[i][1];
-            float dirZ = DIRS[i][2];
-            float hitDist = maxDist;
-
-            net.minecraft.util.math.BlockPos.Mutable checkPos = new net.minecraft.util.math.BlockPos.Mutable();
-            for (int step = 1; step <= maxDist; step++) {
-                checkPos.set(
-                        (int) Math.floor(listenerPos.x + dirX * step),
-                        (int) Math.floor(listenerPos.y + dirY * step),
-                        (int) Math.floor(listenerPos.z + dirZ * step));
-
-                net.minecraft.block.BlockState state = world.getBlockState(checkPos);
-                if (state.isSolidBlock(world, checkPos)) {
-                    hitDist = step;
-                    break;
-                }
-            }
-            if (hitDist < minDist) {
-                minDist = hitDist;
-            }
-        }
-
-        // 1. Dynamic Delay based on NEAREST wall
-        // Reverted to 2000.0f divisor. Long delays ruin the "fullness" because EAX
-        // reflections
-        // are diffuse clusters, not discrete echoes. They must arrive <30ms to fuse and
-        // thicken the sound.
-        float dynamicReflDelay = Math.max(0.001f, Math.min(minDist * 2.0f / 2000.0f, 0.3f));
-
-        // 2. Dynamic Gain based on distance to the NEAREST wall.
-        float distanceFactor = Math.max(0.0f, Math.min(1.0f, 1.0f - (minDist / (float) maxDist)));
-
-        // Retrieve base reflection gain calculated from venue material (vReflGain)
-        float baseReflGain = venuePreset.reflectionsGain * cfg.reverb_reflGainMultiplier;
-
-        // Scale baseReflGain dynamically.
-        // The venue preset already sets a baseline (1.0x) for the room's average
-        // reflectivity.
-        // When you walk close to a wall, we BOOST the early reflections up to 2.5x.
-        float dynamicReflGain = baseReflGain * (1.0f + (distanceFactor * 0.6f));
-        dynamicReflGain = Math.max(0.0f, Math.min(3.16f, dynamicReflGain));
-
-        // Safely pass to the render thread instead of calling OpenAL directly
-        this.currentReflGain = dynamicReflGain;
-        this.currentReflDelay = dynamicReflDelay;
-    }
-
-    /**
-     * Calculate venue probe position from speaker cluster.
-     * Weighted: 50% mid, 30% sub, 20% high/line array
-     */
-    private Vec3d calculateVenueProbe(List<StreamSource> sources) {
-        double subX = 0, subY = 0, subZ = 0;
-        int subCount = 0;
-        double midX = 0, midY = 0, midZ = 0;
-        int midCount = 0;
-        double highX = 0, highY = 0, highZ = 0;
-        int highCount = 0;
-
-        for (StreamSource s : sources) {
-            BlockPos p = s.getPos();
-            double px = p.getX() + 0.5, py = p.getY() + 0.5, pz = p.getZ() + 0.5;
-            if ("sub".equals(s.speakerType)) {
-                subX += px;
-                subY += py;
-                subZ += pz;
-                subCount++;
-            } else if ("mid".equals(s.speakerType)) {
-                midX += px;
-                midY += py;
-                midZ += pz;
-                midCount++;
-            } else {
-                highX += px;
-                highY += py;
-                highZ += pz;
-                highCount++;
-            }
-        }
-
-        double totalX = 0, totalY = 0, totalZ = 0;
-        double totalWeight = 0;
-
-        if (midCount > 0) {
-            totalX += (midX / midCount) * 0.5;
-            totalY += (midY / midCount) * 0.5;
-            totalZ += (midZ / midCount) * 0.5;
-            totalWeight += 0.5;
-        }
-        if (subCount > 0) {
-            totalX += (subX / subCount) * 0.3;
-            totalY += (subY / subCount) * 0.3;
-            totalZ += (subZ / subCount) * 0.3;
-            totalWeight += 0.3;
-        }
-        if (highCount > 0) {
-            totalX += (highX / highCount) * 0.2;
-            totalY += (highY / highCount) * 0.2;
-            totalZ += (highZ / highCount) * 0.2;
-            totalWeight += 0.2;
-        }
-
-        if (totalWeight > 0) {
-            return new Vec3d(totalX / totalWeight, totalY / totalWeight, totalZ / totalWeight);
-        }
-
-        // Fallback: simple average
-        double avgX = 0, avgY = 0, avgZ = 0;
-        for (StreamSource s : sources) {
-            avgX += s.getPos().getX() + 0.5;
-            avgY += s.getPos().getY() + 0.5;
-            avgZ += s.getPos().getZ() + 0.5;
-        }
-        return new Vec3d(avgX / sources.size(), avgY / sources.size(), avgZ / sources.size());
-    }
-
-    /**
-     * Calculate stage-front direction from speaker facing vectors.
-     * This is the average direction speakers are pointing at (towards the
-     * audience).
-     */
-    private Vec3d calculateStageDirection(List<StreamSource> sources) {
-        double totalDirX = 0, totalDirY = 0, totalDirZ = 0;
-        for (StreamSource s : sources) {
-            totalDirX += s.dirX;
-            totalDirY += s.dirY;
-            totalDirZ += s.dirZ;
-        }
-        double len = Math.sqrt(totalDirX * totalDirX + totalDirY * totalDirY + totalDirZ * totalDirZ);
-        if (len < 0.001) {
-            return new Vec3d(1, 0, 0); // Fallback: face +X
-        }
-        return new Vec3d(totalDirX / len, totalDirY / len, totalDirZ / len);
-    }
-
-    /**
-     * Applies global occlusion to the main EFX Reverb effect.
-     * Called by updateSourcesTick to prevent lingering reverb tails from passing
-     * through solid walls at full volume.
-     */
-    private void updateMasterReverbOcclusion(float targetMasterOcclusion) {
-        if (reverbEffectId == 0 || venuePreset == null)
-            return;
-
-        com.audiophilecraft.config.LiveTuningConfig cfg = com.audiophilecraft.config.LiveTuningConfig.get();
-        // Smooth the master occlusion
-        float lerpRate = (targetMasterOcclusion < this.smoothedMasterOcclusion) ? cfg.masterOcc_lerpIn
-                : cfg.masterOcc_lerpOut;
-        this.smoothedMasterOcclusion += (targetMasterOcclusion - this.smoothedMasterOcclusion) * lerpRate;
-
-        float masterGain = venuePreset.gain
-                * (cfg.masterOcc_gainFloor + (1.0f - cfg.masterOcc_gainFloor) * this.smoothedMasterOcclusion);
-
-        // HF (Treble) gets completely smothered by walls
-        float masterGainHF = venuePreset.gainHF
-                * (float) Math.pow(this.smoothedMasterOcclusion, cfg.masterOcc_hfExponent);
-
-        // Ensure values stay within the absolute limits OpenAL allows
-        masterGain = Math.max(0.0f, Math.min(1.0f, masterGain));
-        masterGainHF = Math.max(0.01f, Math.min(1.0f, masterGainHF));
-
-        alEffectf(reverbEffectId, AL_EAXREVERB_GAIN, masterGain);
-        alEffectf(reverbEffectId, AL_EAXREVERB_GAINHF, masterGainHF);
-
-        // Slot needs to be "re-attached" to instantly update some drivers
-        alAuxiliaryEffectSloti(auxSlotId, AL_EFFECTSLOT_EFFECT, reverbEffectId);
-
-    }
-
-    /**
-     * Updates the OpenAL listener position and orientation.
-     * Called every render frame.
-     */
-    public void updateListener(Vec3d pos, float yaw, float pitch) {
-        // Position - Update instantly
-        // listenerPos stores the REAL position for physics/distance calculations
-        this.listenerPos = pos;
-
-        // ═══════════════════════════════════════════════════════════════
-        // HRTF Y-AXIS FLATTENING (Listener-Side)
-        // ═══════════════════════════════════════════════════════════════
-        // HRTF uses the elevation angle between listener and source positions.
-        // Adjusting source Y doesn't work well because HRTF is angle-based:
-        // if source is directly above, scaling Y doesn't change the 90° angle.
-        //
-        // Instead, we shift the LISTENER Y that OpenAL sees toward the
-        // weighted average Y of active sources. This directly changes the
-        // elevation angle for ALL sources simultaneously.
-        //
-        // Factor 0.4 = listener Y moves 40% toward the average source Y.
-        // Result: HRTF perceives sources as being much closer to ear level.
-        // ═══════════════════════════════════════════════════════════════
-        float openAlListenerY = (float) pos.y;
-        if (!streamSources.isEmpty()) {
-            double avgSourceY = 0;
-            int count = 0;
-            for (StreamSource s : streamSources) {
-                if (s.isValid && !s.isFinished) {
-                    avgSourceY += s.getPos().getY() + 0.5;
-                    count++;
-                }
-            }
-            if (count > 0) {
-                avgSourceY /= count;
-                openAlListenerY = (float) (avgSourceY
-                        - (avgSourceY - pos.y) * com.audiophilecraft.config.LiveTuningConfig.get().hrtf_yFlatten);
-            }
-        }
-        alListener3f(AL_POSITION, (float) pos.x, openAlListenerY, (float) pos.z);
-
-        // Removed rotation smoothing (lerping) as it causes phase glitching/pitching
-        // with the HRTF/OpenAL 3D spatializer when rotating the camera.
-        this.listenerYaw = yaw;
-        this.listenerPitch = pitch;
-
-        float useYaw = yaw;
-        float usePitch = pitch;
-
-        // Velocity (assume zero for now, or track delta)
-        alListener3f(AL_VELOCITY, 0f, 0f, 0f);
-
-        // Orientation calculation
-        // pitch: 0=horizon, -90=up, +90=down
-        // yaw: 0=south, 90=west, 180=north, 270=east
-        // Look vector (AT)
-        // Minecraft's orientation:
-        // yaw 0 = South (+Z), 90 = West (-X), 180 = North (-Z), 270 = East (+X)
-        // pitch -90 = Straight UP, 90 = Straight DOWN
-
-        // Convert to radians and flip signs to match standard mathematics
-        float pitchRad = (float) Math.toRadians(usePitch);
-        float yawRad = (float) Math.toRadians(-useYaw); // -yaw for correct CW/CCW
-
-        float cosPitch = (float) Math.cos(pitchRad);
-        float sinPitch = (float) Math.sin(pitchRad);
-        float cosYaw = (float) Math.cos(yawRad);
-        float sinYaw = (float) Math.sin(yawRad);
-
-        // AT vector (Where the listener is looking)
-        // OpenAL uses same coordinate axes as Minecraft world:
-        // sources and listener positions are in world coords,
-        // so AT must also point in the actual world direction.
-        // Yaw 0 = South (+Z), 90 = West (-X), etc.
-        float atX = sinYaw * cosPitch;
-        float atY = -sinPitch;
-        float atZ = cosYaw * cosPitch;
-
-        // --- ROBUST UP VECTOR (Cross Product Method) ---
-        // To guarantee the UP vector is perfectly perpendicular (orthogonal) to the AT
-        // vector
-        // without arbitrary trigonometry flipping, we use the standard 3D math
-        // approach:
-        // 1. Define a temporary "Right" vector by crossing AT with World Up (0, 1, 0)
-        // 2. Define the real "UP" vector by crossing Right with AT
-        // 3. If looking straight up/down, standard cross product fails, so we handle
-        // it.
-
-        float upX, upY, upZ;
-
-        if (Math.abs(usePitch) > 89.9f) {
-            // Extreme angles (looking straight up or straight down)
-            // If looking straight down (pitch = 90), AT is (0, -1, 0).
-            // The top of your head points FORWARD (which is exactly where you were facing
-            // before looking down)
-            // Forward in Minecraft is (-sinYaw, 0, -cosYaw).
-            // If looking straight UP (pitch = -90), AT is (0, 1, 0).
-            // The top of your head points BACKWARD.
-            float sign = Math.signum(usePitch); // 1.0 for down, -1.0 for up
-            upX = sinYaw * sign;
-            upY = 0.0f;
-            upZ = cosYaw * sign;
-        } else {
-            // Normal angles: Cross Product for perfect 90-degree orthoganality
-
-            // World Up
-            float worldUpX = 0.0f;
-            float worldUpY = 1.0f;
-            float worldUpZ = 0.0f;
-
-            // Right = AT x WorldUp
-            float rightX = atY * worldUpZ - atZ * worldUpY;
-            float rightY = atZ * worldUpX - atX * worldUpZ;
-            float rightZ = atX * worldUpY - atY * worldUpX;
-
-            // Normalize Right vector
-            float rightLen = (float) Math.sqrt(rightX * rightX + rightY * rightY + rightZ * rightZ);
-            rightX /= rightLen;
-            rightY /= rightLen;
-            rightZ /= rightLen;
-
-            // True UP = Right x AT
-            upX = rightY * atZ - rightZ * atY;
-            upY = rightZ * atX - rightX * atZ;
-            upZ = rightX * atY - rightY * atX;
-
-            // Normalize UP vector
-            float upLen = (float) Math.sqrt(upX * upX + upY * upY + upZ * upZ);
-            upX /= upLen;
-            upY /= upLen;
-            upZ /= upLen;
-        }
-
-        float[] orientation = new float[] { atX, atY, atZ, upX, upY, upZ };
-        alListenerfv(AL_ORIENTATION, orientation);
-
-        // --- UNDERWATER DETECTION ---
-        // When the listener is submerged, HF is dramatically absorbed by water.
-        // We set a flag here and apply the filter in StreamSource.updatePhysics()
-        MinecraftClient mc = MinecraftClient.getInstance();
-        if (mc.player != null) {
-            isUnderwater = mc.player.isSubmergedInWater();
-        }
-        // Smooth transition to prevent pop when entering/exiting water
-        float targetUnderwaterHF = isUnderwater ? 0.08f : 1.0f;
-        smoothedUnderwaterHF += (targetUnderwaterHF - smoothedUnderwaterHF) * 0.15f;
-    }
-
-    /** Returns the smoothed underwater HF gain (0.08 = submerged, 1.0 = normal) */
-    public float getUnderwaterHFGain() {
-        return smoothedUnderwaterHF;
-    }
-
-    // --- MIXER STATE (Client-Side Only — No Network Required) ---
-    private volatile float mixerGainSub = 1.0f;
-    private volatile float mixerGainMid = 1.0f;
-    private volatile float mixerGainLine = 1.0f;
-
-    // Mid/Side (Direct/Reverb) Mute States
-    private volatile boolean midMuted = false;
-    private volatile boolean sideMuted = false;
-
-    public boolean isMidMuted() {
-        return midMuted;
-    }
-
-    public void setMidMuted(boolean muted) {
-        this.midMuted = muted;
-    }
-
-    public boolean isSideMuted() {
-        return sideMuted;
-    }
-
-    public void setSideMuted(boolean muted) {
-        this.sideMuted = muted;
-    }
-
-    // 5-Band Parametric EQ per speaker type (dB, range: -12 to +12)
-    private volatile float[] subEq = new float[5];
-    private volatile float[] midEq = new float[5];
-    private volatile float[] lineEq = new float[5];
-
-    public float getMixerGain(String speakerType) {
-        if ("sub".equals(speakerType))
-            return mixerGainSub;
-        if ("mid".equals(speakerType))
-            return mixerGainMid;
-        if ("line".equals(speakerType))
-            return mixerGainLine;
-        return 1.0f;
-    }
-
-    public void setMixerGain(String speakerType, float gain) {
-        gain = Math.max(0.0f, Math.min(gain, 1.0f));
-        if ("sub".equals(speakerType))
-            mixerGainSub = gain;
-        else if ("mid".equals(speakerType))
-            mixerGainMid = gain;
-        else if ("line".equals(speakerType))
-            mixerGainLine = gain;
-    }
-
-    /** Get EQ dB for a speaker type and band (0 to 4) */
-    public float getEqDb(String speakerType, int band) {
-        if (band < 0 || band > 4)
-            return 0f;
-        if ("sub".equals(speakerType))
-            return subEq[band];
-        if ("mid".equals(speakerType))
-            return midEq[band];
-        if ("line".equals(speakerType))
-            return lineEq[band];
-        return 0f;
-    }
-
-    /** Set EQ dB for a speaker type and band (0 to 4). Range: -12 to +12 */
-    public void setEqDb(String speakerType, int band, float db) {
-        if (band < 0 || band > 4)
-            return;
-        db = Math.max(-12f, Math.min(db, 12f));
-        if ("sub".equals(speakerType))
-            subEq[band] = db;
-        else if ("mid".equals(speakerType))
-            midEq[band] = db;
-        else if ("line".equals(speakerType))
-            lineEq[band] = db;
-    }
-
-    // Q (Bandwidth) per speaker type and band (range: 0.1 to 10.0, default: 1.0)
-    private volatile float[] subEqQ = new float[] { 1f, 1f, 1f, 1f, 1f };
-    private volatile float[] midEqQ = new float[] { 1f, 1f, 1f, 1f, 1f };
-    private volatile float[] lineEqQ = new float[] { 1f, 1f, 1f, 1f, 1f };
-
-    /** Get EQ Q for a speaker type and band (0 to 4) */
-    public float getEqQ(String speakerType, int band) {
-        if (band < 0 || band > 4)
-            return 1f;
-        if ("sub".equals(speakerType))
-            return subEqQ[band];
-        if ("mid".equals(speakerType))
-            return midEqQ[band];
-        if ("line".equals(speakerType))
-            return lineEqQ[band];
-        return 1f;
-    }
-
-    /** Set EQ Q for a speaker type and band (0 to 4). Range: 0.1 to 10.0 */
-    public void setEqQ(String speakerType, int band, float q) {
-        if (band < 0 || band > 4)
-            return;
-        q = Math.max(0.1f, Math.min(q, 10.0f));
-        if ("sub".equals(speakerType))
-            subEqQ[band] = q;
-        else if ("mid".equals(speakerType))
-            midEqQ[band] = q;
-        else if ("line".equals(speakerType))
-            lineEqQ[band] = q;
-    }
-
-    /**
-     * Smooth gain interpolation placeholder.
-     * Called every render frame.
-     */
-    public void updateGains() {
-        if (this.listenerPos == null)
-            return;
-
-        // Ensure venue reverb is applied if a preset exists
-        ensureVenueReverb();
-
-        // Note: Per-source physics (gain, occlusion, etc.) is now handled
-        // in StreamSource.update() which runs every tick.
-    }
-
-    /**
-     * Thread-safe wall-clock time since playback started.
-     * Audio thread calls this to derive globalSampleTime for ALL sources.
-     * Pause duration is already factored out via streamStartTime offset.
-     * Returns 0.0 if not playing.
-     */
-    public double getTimeSinceStart() {
-        if (!isPlaying || streamStartTime == 0)
-            return 0.0;
-        return (System.nanoTime() - streamStartTime) / 1_000_000_000.0;
-    }
-
-    /**
-     * Returns the sample rate of the currently active audio stream.
-     * Used by the global master clock to convert wall-clock seconds to sample
-     * position.
-     */
-    public int getSampleRateForClock() {
-        for (AudioStreamBuffer buffer : streamBuffers.values()) {
-            if (buffer.sampleRate > 0) {
-                return buffer.sampleRate;
-            }
-        }
-        return 48000; // Safe fallback
-    }
-
-    private long lastTickTime = System.nanoTime();
-
-    /**
-     * Cleanup and logic update. Called every client tick (20Hz).
-     */
-    public void updateSourcesTick(World world) {
-        MinecraftClient mc = MinecraftClient.getInstance();
-        boolean gamePaused = mc.isPaused();
-
-        if (gamePaused != isPaused) {
-            isPaused = gamePaused;
-            if (isPaused) {
-                // Game Just Paused: Record timestamp
-                pauseStartTimestamp = System.nanoTime();
-                pauseAll();
-            } else {
-                // Game Just Resumed: Calculate duration and shift start time
-                if (pauseStartTimestamp > 0 && streamStartTime > 0) {
-                    long pauseDuration = System.nanoTime() - pauseStartTimestamp;
-                    streamStartTime += pauseDuration; // "Freeze" the timeline during pause
-                }
-                resumeAll();
-            }
-        }
-
-        // Don't update logic if paused
-        if (isPaused) {
-            lastTickTime = System.nanoTime(); // Reset delta tracking when paused
-            return;
-        }
-
-        // OPTIMIZATION: Continuous environment analysis is disabled to save CPU.
-        // We only care about the PA system, which does a one-time scan via
-        // scanAtPosition() later.
-        // analyzeEnvironment(world);
-
-        double timeSinceStart = 0;
-        // Absolute Time Synchronization (Fixes Speed & Lag Issues)
-        if (isPlaying && streamStartTime != 0) {
-            long now = System.nanoTime();
-            timeSinceStart = (now - streamStartTime) / 1_000_000_000.0;
-
-            // FREEZE DETECTION REMOVED: With global master clock (globalSampleTime
-            // derived from nanoTime), all sources ALWAYS share the same
-            // timeline. Inter-source drift is mathematically impossible.
-        }
-
-        for (StreamSource source : streamSources) {
-            // Pass current time (not lookahead) to source for playback
-            if (!source.update(world, this.listenerPos, timeSinceStart)) {
-                // Sound finished or invalid
-                source.cleanup();
-                streamSources.remove(source);
-            }
-        }
-
-        // Apply Listener-based Early Reflections dynamically every tick
-        if (isPlaying) {
-            updateListenerReflections(world);
-        }
-
-        // --- VENUE-LOCKED REVERB STATE FIX ---
-        // If all sources finished naturally during ACTIVE playback, clear the venue
-        // preset.
-        // Otherwise, the player will be stuck with the stadium reverb forever.
-        // Guard: only clear if we were actually playing (not during device recovery)
-        if (isPlaying && streamSources.isEmpty() && this.venuePreset != null) {
-            this.venuePreset = null;
-            this.venuePresetApplied = false;
-        }
-
-        // --- OCCLUSION CLUSTERING (REMOVED) ---
-        // Clustering was sharing occlusion values between speakers up to 8 blocks
-        // apart.
-        // If one speaker peeks out from behind a wall, the *entire cluster* instantly
-        // gets
-        // unoccluded, causing a sudden pop in volume and treble even for speakers still
-        // behind the wall.
-        // Raycast performance is already throttled per-speaker in StreamSource.java.
-
-        // --- MASTER REVERB OCCLUSION (Global Room Reverb Control) ---
-        // If the player steps outside the building where the music is playing, the
-        // overall
-        // room reverb (the tail of the stadium or hall) should also be physically
-        // muffled and blocked
-        // by the walls. It should not hang in the player's ears like an artificial
-        // overlay.
-        float maxOcclusion = 0.0f;
-        for (StreamSource source : streamSources) {
-            if (source.currentOcclusion > maxOcclusion) {
-                maxOcclusion = source.currentOcclusion;
-            }
-        }
-
-        // If not playing anything, keep maxOcclusion at 1.0 so ambient sound is normal
-        if (streamSources.isEmpty()) {
-            maxOcclusion = 1.0f;
-        }
-
-        updateMasterReverbOcclusion(maxOcclusion);
-
-        // Ensure venue reverb is applied if preset exists
-        ensureVenueReverb();
-
-        lastTickTime = System.nanoTime();
-    }
-
-    /**
-     * Pauses all active audio sources (Game Paused).
-     */
-    public void pauseAll() {
-        for (StreamSource sound : streamSources) {
-            sound.pause();
-        }
-        // Mute aux effect slots to kill reverb tails during pause
-        if (auxSlotId != 0) {
-            alAuxiliaryEffectSlotf(auxSlotId, AL_EFFECTSLOT_GAIN, 0.0f);
-        }
-    }
-
-    /**
-     * Resumes all active audio sources (Game Unpaused).
-     */
-    public void resumeAll() {
-        // Restore aux effect slot gain before resuming sources
-        if (auxSlotId != 0) {
-            alAuxiliaryEffectSlotf(auxSlotId, AL_EFFECTSLOT_GAIN, 1.0f);
-        }
-        for (StreamSource sound : streamSources) {
-            sound.resume();
-        }
-    }
-
-    /**
-     * Stops all active audio sources immediately.
-     */
-    public void stopAll() {
-        // Shutdown background audio thread first
-        if (audioThread != null) {
-            audioThread.shutdownNow();
-            audioThread = null;
-        }
-
-        for (StreamSource sound : streamSources) {
-            sound.cleanup();
-        }
-        streamSources.clear();
-        isPaused = false;
-        isPlaying = false;
-        streamStartTime = 0;
-
-        // Clear venue preset so reverb falls back to listener-based scanner
-        this.venuePreset = null;
-        this.venuePresetApplied = false;
-        this.storedVenueDescriptor = null;
-        this.storedVenueProbePos = null;
-    }
-
-    /**
-     * Start the background audio processing thread.
-     * Runs every 5ms, pre-computing PCM buffers for all active StreamSources.
-     */
-    private void startAudioThread() {
-        if (audioThread != null) {
-            audioThread.shutdownNow();
-        }
-
-        // Capture LWJGL OpenAL capabilities from the current (render) thread.
-        // These must be propagated to the audio thread so it can make AL calls.
-        final org.lwjgl.openal.ALCapabilities alCaps = org.lwjgl.openal.AL.getCapabilities();
-
-        audioThread = Executors.newSingleThreadScheduledExecutor(r -> {
-            Thread t = new Thread(r, "AudiophileCraft-Audio");
-            t.setDaemon(true);
-            return t;
-        });
-
-        // One-shot init: set AL capabilities on the audio thread before any work
-        audioThread.execute(() -> {
-            try {
-                org.lwjgl.openal.AL.setCurrentThread(alCaps);
-            } catch (Exception e) {
-                System.err.println("AudioEngine: Failed to propagate AL caps to audio thread: " + e.getMessage());
-            }
-        });
-
-        audioThread.scheduleWithFixedDelay(this::processAudioBackground, 0, 5, TimeUnit.MILLISECONDS);
-    }
-
-    /**
-     * Background audio processing loop.
-     * Phase 1: Smooth listener position (kill FPS jitter).
-     * Phase 2: Pre-computes PCM data for all active sources with up-to-date
-     * distance.
-     * Phase 3: Feeds the pre-computed data to OpenAL (unqueue → fill → queue).
-     * All phases run entirely on this thread, making audio independent from the
-     * render thread. Minecraft can freeze for seconds without audio dropping out.
-     */
-    private void processAudioBackground() {
-        try {
-            // CRITICAL: Respect game pause and load state.
-            if (isPaused)
-                return;
-
-            // SKIP: Don't feed sources while seek() is updating the global clock
-            // and re-aligning speakers. Prevents underrun recovery from snapping
-            // outputCursor to wrong positions mid-seek.
-            if (isSeeking)
-                return;
-
-            // PHASE 0: Decode OGG on the background thread.
-            // If the main thread hangs (32 chunks), OGG decoding will continue flawlessly
-            // preventing IIR filter math explosions due to audio dropouts.
-            double currentWallTime = getTimeSinceStart();
-            for (AudioStreamBuffer buffer : streamBuffers.values()) {
-                if (buffer.sampleRate > 0) {
-                    buffer.syncToTime(currentWallTime + BUFFER_LOOKAHEAD);
-                }
-            }
-
-            // ═══════════════════════════════════════════════════════════════
-            // PHASE 1: Smooth listener position (lock-free volatile read)
-            // alpha = 0.35 at 200Hz → effective time constant ~14ms
-            // Eats Minecraft's per-frame jitter without adding latency.
-            // ═══════════════════════════════════════════════════════════════
-            Vec3d rawPos = this.listenerPos;
-            Vec3d prev = this.smoothedListenerPos;
-            double alpha = 0.35;
-            this.smoothedListenerPos = new Vec3d(
-                    prev.x + (rawPos.x - prev.x) * alpha,
-                    prev.y + (rawPos.y - prev.y) * alpha,
-                    prev.z + (rawPos.z - prev.z) * alpha);
-            Vec3d currentPos = this.smoothedListenerPos;
-
-            // ═══════════════════════════════════════════════════════════════
-            // GLOBAL MASTER CLOCK: Compute the single authoritative sample
-            // position that ALL sources will use. This guarantees zero drift.
-            // ═══════════════════════════════════════════════════════════════
-            double globalSampleTime = currentWallTime * getSampleRateForClock();
-
-            // NOTE: Early reflections are now mixed directly into
-            // StreamSource.generatePcmBlock()
-            // as delayed signal taps — no separate OpenAL source feeding needed.
-
-            // Unified Phase: Feed OpenAL with inline PCM generation using global clock.
-            // Distance calculation is done inside each source's feed method.
-            reusableRestartBuffer.clear();
-
-            for (StreamSource source : streamSources) {
-                if (source.feedOpenALFromAudioThread(globalSampleTime, currentPos)) {
-                    // Prevent overflow in extreme situations
-                    if (reusableRestartBuffer.remaining() > 0) {
-                        reusableRestartBuffer.put(source.sourceId);
-                    }
-                }
-            }
-
-            if (reusableRestartBuffer.position() > 0) {
-                int count = reusableRestartBuffer.position();
-                reusableRestartBuffer.flip();
-                org.lwjgl.openal.AL10.alSourcePlayv(reusableRestartBuffer); // ATOMIC RESTART
-            }
-        } catch (Exception e) {
-            // Swallow: ConcurrentModification during stopAll is harmless
-        }
-    }
-
-    /**
-     * Full cleanup including EFX resources.
-     */
-    public void cleanupEfx() {
-        stopAll();
-        if (auxSlotId != 0) {
-            alAuxiliaryEffectSloti(auxSlotId, AL_EFFECTSLOT_EFFECT, AL_EFFECT_NULL);
-            alDeleteAuxiliaryEffectSlots(auxSlotId);
-            auxSlotId = 0;
-        }
-        if (reverbEffectId != 0) {
-            alDeleteEffects(reverbEffectId);
-            reverbEffectId = 0;
-        }
-        // Free cached OpenAL buffers to prevent GPU-side memory leak
-        for (Map<String, Integer> trackBuffers : bufferCache.values()) {
-            for (int bufferId : trackBuffers.values()) {
-                alDeleteBuffers(bufferId);
-            }
-        }
-        bufferCache.clear();
-
-        // Free Stream Buffers (off-heap memory)
-        for (AudioStreamBuffer buffer : streamBuffers.values()) {
-            buffer.cleanup();
-        }
-        streamBuffers.clear();
-
-        efxInitialized = false;
-    }
-
-    private final Map<String, Map<String, Integer>> bufferCache = new HashMap<>();
-
-    // Speaker Types for Cache Keys
-    private static final String TYPE_NORMAL = "normal";
-    private static final String TYPE_SUB = "sub";
-    private static final String TYPE_MID = "mid";
-    private static final String TYPE_LINE = "line";
-
-    // Stream Buffers Management
-    private void prepareStreamBuffers(String trackId) {
-        for (AudioStreamBuffer buffer : streamBuffers.values()) {
-            buffer.cleanup();
-        }
-        streamBuffers.clear();
-
-        // Load Raw Data once
-        OggDecoder.RawTrackData rawData = OggDecoder.loadOgg("sounds/" + trackId + ".ogg");
-        if (rawData == null)
-            return;
-
-        // Create 3 Buffers (Sub, Mid, Line) + Normal?
-        createStreamBufferForType(trackId, rawData, TYPE_SUB);
-        createStreamBufferForType(trackId, rawData, TYPE_MID);
-        createStreamBufferForType(trackId, rawData, TYPE_LINE);
-        createStreamBufferForType(trackId, rawData, TYPE_NORMAL);
-
-        // Free the native PCM buffer to prevent memory leak
-        MemoryUtil.memFree(rawData.pcmData);
-    }
-
-    private void createStreamBufferForType(String trackId, OggDecoder.RawTrackData rawData, String type) {
-        // Clone data for processing
-        short[] audioData = new short[rawData.pcmData.remaining()];
-        rawData.pcmData.rewind();
-        rawData.pcmData.get(audioData);
-        rawData.pcmData.rewind(); // Reset for next usage
-
-        // Apply DSP
-        applyDspForType(audioData, rawData.sampleRate, type);
-
-        // Create Buffer
-        AudioStreamBuffer buffer = new AudioStreamBuffer(trackId + "_" + type, rawData.sampleRate);
-
-        // Fill Buffer
-        ShortBuffer pcm = MemoryUtil.memAllocShort(audioData.length);
-        pcm.put(audioData);
-        pcm.flip();
-
-        buffer.setSourceData(pcm);
-        streamBuffers.put(type, buffer);
-    }
-
-    private void applyDspForType(short[] audioData, int sampleRate, String speakerType) {
-        // Pre-gain for headroom: fixed at 0.60 for all incoming tracks
-        AudioDSP.applyGain(audioData, 0.60f);
-        if (TYPE_SUB.equals(speakerType)) {
-            // 24dB/oct Butterworth LP crossover at 100Hz
-            AudioDSP.applyFilter(audioData, sampleRate, AudioDSP.FilterType.LOW_PASS, 100, 0.707f, 0);
-            AudioDSP.applyFilter(audioData, sampleRate, AudioDSP.FilterType.LOW_PASS, 100, 0.707f, 0);
-        } else if (TYPE_MID.equals(speakerType)) {
-            // 24dB/oct HP at 100Hz (matches sub crossover) + 24dB/oct LP at 2000Hz
-            AudioDSP.applyFilter(audioData, sampleRate, AudioDSP.FilterType.HIGH_PASS, 100, 0.707f, 0);
-            AudioDSP.applyFilter(audioData, sampleRate, AudioDSP.FilterType.HIGH_PASS, 100, 0.707f, 0);
-            AudioDSP.applyFilter(audioData, sampleRate, AudioDSP.FilterType.LOW_PASS, 2000, 0.707f, 0);
-            AudioDSP.applyFilter(audioData, sampleRate, AudioDSP.FilterType.LOW_PASS, 2000, 0.707f, 0);
-        } else if (TYPE_LINE.equals(speakerType)) {
-            // Line arrays in real life output both Mid and High frequencies (everything
-            // except Sub)
-            // 24dB/oct HP at 100Hz (no Low-Pass so it extends to 20kHz)
-            AudioDSP.applyFilter(audioData, sampleRate, AudioDSP.FilterType.HIGH_PASS, 100, 0.707f, 0);
-            AudioDSP.applyFilter(audioData, sampleRate, AudioDSP.FilterType.HIGH_PASS, 100, 0.707f, 0);
-        }
-
-        // SAFETY LIMITER: Prevents hard digital clipping
-        AudioDSP.applyPeakLimiter(audioData, 0.98f);
-    }
-
-
-    public void playTrack(String trackId, List<BlockPos> speakers, float power, float inputGain) {
-        stopAll();
-
-        // Clear old venue scan data
-        AdvancedAcousticScanner.lastPointCloud = null;
-        AdvancedAcousticScanner.lastVenueBlocks = null;
-        AdvancedAcousticScanner.lastSpeakers = speakers != null ? new java.util.ArrayList<>(speakers) : new java.util.ArrayList<>();
-        venuePreset = null;
-        venuePresetApplied = false;
-        storedVenueDescriptor = null;
-        storedVenueProbePos = null;
-        com.audiophilecraft.client.screen.PointCloudRenderer.invalidateCache();
-
-        while (alGetError() != AL_NO_ERROR) { /* drain */ }
-        initEfx();
-
-        if (speakers == null || speakers.isEmpty()) return;
-
-        try {
-            prepareStreamBuffers(trackId);
-            this.isPlaying = true;
-            this.isPaused = false;
-            for (AudioStreamBuffer buffer : streamBuffers.values()) {
-                if (buffer.sampleRate > 0) buffer.syncToTime(BUFFER_LOOKAHEAD);
-            }
-
-            // Shared logic
-            World world = MinecraftClient.getInstance().world;
-            int[] counts = countSpeakerTypes(speakers, world);
-            List<List<BlockPos>> clusters = clusterSpeakers(speakers);
-            createSourcesFromClusters(clusters, counts, world, power, inputGain);
-            startPlaybackWithVenueScan(world, speakers, false);
-
-        } catch (Exception e) {
-            e.printStackTrace();
-        }
-    }
-
-    public void updateInputGain(float gain) {
-        for (StreamSource ss : streamSources) {
-            ss.inputGain = gain;
-        }
-    }
-
-    /**
-     * Live update power for all active StreamSources.
-     * Called when the power knob is changed in the GUI.
-     * Smoothing is handled inside StreamSource.updatePhysics().
-     */
-    public void updatePower(float power) {
-        for (StreamSource ss : streamSources) {
-            ss.power = power;
-        }
-    }
-
-    /**
-     * Play audio from an internet URL (YouTube, SoundCloud, HTTP, etc.)
-     * Uses InternetAudioLoader (LavaPlayer) to resolve and decode the URL to PCM,
-     * then feeds into the existing DSP/StreamSource/OpenAL pipeline.
-     *
-     * @param url       The URL to play (e.g. YouTube link, HTTP audio file)
-     * @param speakers  Connected speaker positions
-     * @param power     Amplifier power
-     * @param inputGain Input gain multiplier
-     */
-    public void playFromUrl(String url, List<BlockPos> speakers, float power, float inputGain) {
-
-        InternetAudioLoader.getInstance().loadTrack(url, new InternetAudioLoader.TrackLoadCallback() {
-            @Override
-            public void onTrackLoaded(short[] pcmData, int sampleRate, String trackTitle) {
-
-                // Execute on the main client thread to avoid OpenAL threading issues
-                MinecraftClient.getInstance().execute(() -> {
-                    playFromPcmData(pcmData, sampleRate, speakers, power, inputGain);
-                });
-            }
-
-            @Override
-            public void onFailed(String reason) {
-                System.err.println("AudioEngine: URL load failed: " + reason);
-            }
-        });
-    }
-
-    // ═══════════════════════════════════════════════════════════════════
-    // SHARED HELPERS — Used by both playTrack() and playFromPcmData()
-    // ═══════════════════════════════════════════════════════════════════
-
-    /**
-     * Groups speaker positions into clusters based on proximity (≤8 blocks).
-     * Speakers in the same cluster share a leader for delay synchronization.
-     */
-    private List<List<BlockPos>> clusterSpeakers(List<BlockPos> speakers) {
-        List<List<BlockPos>> clusters = new java.util.ArrayList<>();
-        for (BlockPos pos : speakers) {
-            boolean added = false;
-            for (List<BlockPos> cluster : clusters) {
-                for (BlockPos cPos : cluster) {
-                    if (cPos.getSquaredDistance(pos) <= 8.0) {
-                        cluster.add(pos);
-                        added = true;
-                        break;
-                    }
-                }
-                if (added) break;
-            }
-            if (!added) {
-                List<BlockPos> newCluster = new java.util.ArrayList<>();
-                newCluster.add(pos);
-                clusters.add(newCluster);
-            }
-        }
-        return clusters;
-    }
-
-    /**
-     * Counts speakers by type: [sub, mid, line, normal].
-     */
-    private int[] countSpeakerTypes(List<BlockPos> speakers, World world) {
-        int countSub = 0, countMid = 0, countLine = 0, countNormal = 0;
-        if (world != null) {
-            for (BlockPos pos : speakers) {
-                var block = world.getBlockState(pos).getBlock();
-                if (block instanceof com.audiophilecraft.block.SubwooferBlock) countSub++;
-                else if (block instanceof com.audiophilecraft.block.MidRangeBlock) countMid++;
-                else if (block instanceof com.audiophilecraft.block.LineArrayBlock) countLine++;
-                else countNormal++;
-            }
-        }
-        return new int[]{countSub, countMid, countLine, countNormal};
-    }
-
-    /**
-     * Creates OpenAL sources and StreamSource objects for all speakers in all clusters.
-     * Shared logic between OGG playback and URL/PCM playback.
-     */
-    private void createSourcesFromClusters(List<List<BlockPos>> clusters, int[] counts,
-            World world, float power, float inputGain) {
-        for (List<BlockPos> cluster : clusters) {
-            StreamSource leaderSource = null;
-            for (BlockPos pos : cluster) {
-                String speakerType = TYPE_NORMAL;
-                float baseRefDist = 3.0f;
-                float baseMaxDist = 64.0f;
-                int sampleShiftMs = 0;
-                int speakerCount = 1;
-
-                if (world != null) {
-                    var blockState = world.getBlockState(pos);
-                    var block = blockState.getBlock();
-                    if (block instanceof com.audiophilecraft.block.SubwooferBlock) {
-                        speakerType = TYPE_SUB; baseRefDist = 10.0f; baseMaxDist = 85.0f; speakerCount = counts[0];
-                    } else if (block instanceof com.audiophilecraft.block.MidRangeBlock) {
-                        speakerType = TYPE_MID; baseRefDist = 5.0f; baseMaxDist = 60.0f; speakerCount = counts[1];
-                    } else if (block instanceof com.audiophilecraft.block.LineArrayBlock) {
-                        speakerType = TYPE_LINE; baseRefDist = 3.0f; baseMaxDist = 50.0f; speakerCount = counts[2];
-                    } else {
-                        speakerCount = counts[3];
-                    }
-                    net.minecraft.block.entity.BlockEntity be = world.getBlockEntity(pos);
-                    if (be instanceof com.audiophilecraft.block.entity.SpeakerBlockEntity speakerBe) {
-                        sampleShiftMs = speakerBe.getSampleShift();
-                    }
-                }
-
-                AudioStreamBuffer buffer = streamBuffers.get(speakerType);
-                if (buffer == null) buffer = streamBuffers.get(TYPE_NORMAL);
-                if (buffer == null) continue;
-
-                int sourceId = alGenSources();
-                int err = alGetError();
-                if (err != AL_NO_ERROR) {
-                    System.err.println("AudioEngine: OPENAL SOURCE LIMIT HIT! Failed at speaker #"
-                            + (streamSources.size() + 1) + " of " + clusters.stream().mapToInt(List::size).sum()
-                            + " (error=0x" + Integer.toHexString(err) + ")");
-                    break;
-                }
-
-                alSource3f(sourceId, AL_POSITION, pos.getX() + 0.5f, pos.getY() + 0.5f, pos.getZ() + 0.5f);
-                alSourcef(sourceId, AL_ROLLOFF_FACTOR, 1.0f);
-                alSourcef(sourceId, AL_MAX_DISTANCE, Float.MAX_VALUE);
-                alSourcef(sourceId, AL_REFERENCE_DISTANCE, baseRefDist);
-                alSourcef(sourceId, AL_GAIN, 1.0f);
-                alSourcef(sourceId, AL_PITCH, 1.0f);
-
-                Direction facing = Direction.SOUTH;
-                int tiltDeg = 0;
-                if (world != null) {
-                    BlockState state = world.getBlockState(pos);
-                    if (state.contains(Properties.HORIZONTAL_FACING)) {
-                        facing = state.get(Properties.HORIZONTAL_FACING);
-                    }
-                    net.minecraft.block.entity.BlockEntity sbe = world.getBlockEntity(pos);
-                    if (sbe instanceof com.audiophilecraft.block.entity.SpeakerBlockEntity speaker) {
-                        tiltDeg = speaker.getVerticalTilt();
-                    }
-                }
-                Vec3i vec = facing.getVector();
-                float tiltRad = (float) Math.toRadians(tiltDeg);
-                float cosT = (float) Math.cos(tiltRad);
-                float sinT = (float) Math.sin(tiltRad);
-                float dirX = vec.getX() * cosT;
-                float dirY = sinT;
-                float dirZ = vec.getZ() * cosT;
-                alSource3f(sourceId, AL_DIRECTION, dirX, dirY, dirZ);
-
-                int filterId = 0, sendFilterId = 0;
-                try {
-                    filterId = alGenFilters();
-                    alFilteri(filterId, AL_FILTER_TYPE, AL_FILTER_LOWPASS);
-                    alFilterf(filterId, AL_LOWPASS_GAIN, 1.0f);
-                    alFilterf(filterId, AL_LOWPASS_GAINHF, 1.0f);
-                    alSourcei(sourceId, AL_DIRECT_FILTER, filterId);
-
-                    sendFilterId = alGenFilters();
-                    alFilteri(sendFilterId, AL_FILTER_TYPE, AL_FILTER_LOWPASS);
-                    alFilterf(sendFilterId, AL_LOWPASS_GAIN, 1.0f);
-                    alFilterf(sendFilterId, AL_LOWPASS_GAINHF, 1.0f);
-                    if (auxSlotId != 0) {
-                        alSource3i(sourceId, AL_AUXILIARY_SEND_FILTER, auxSlotId, 0, sendFilterId);
-                    }
-                } catch (Exception e) {
-                    System.err.println("AudioEngine: EFX filter/send setup failed: " + e.getMessage());
-                }
-
-                StreamSource ss = new StreamSource(sourceId, buffer, pos, power, baseMaxDist * power,
-                        baseRefDist * power, dirX, dirY, dirZ, speakerType, filterId, sendFilterId,
-                        inputGain, sampleShiftMs, speakerCount, leaderSource, cluster.size());
-                streamSources.add(ss);
-
-                if (leaderSource == null) leaderSource = ss;
-            }
-        }
-    }
-
-    /**
-     * Performs venue acoustic scan and starts playback.
-     * If world is null or no sources exist, starts playback immediately.
-     *
-     * @param atomicStart If true, uses alSourcePlayv for simultaneous start (URL path).
-     *                    If false, uses source.start() individually (OGG path).
-     */
-    private void startPlaybackWithVenueScan(World world, List<BlockPos> speakers, boolean atomicStart) {
-        Runnable startPlayback = () -> {
-            if (MinecraftClient.getInstance().cameraEntity != null) {
-                this.listenerPos = MinecraftClient.getInstance().cameraEntity.getPos();
-                this.smoothedListenerPos = this.listenerPos;
-            }
-            this.streamStartTime = System.nanoTime();
-
-            if (atomicStart) {
-                java.nio.IntBuffer sourceIds = org.lwjgl.BufferUtils.createIntBuffer(streamSources.size());
-                for (StreamSource source : streamSources) {
-                    org.lwjgl.openal.AL10.alSourcei(source.sourceId, org.lwjgl.openal.AL10.AL_LOOPING, org.lwjgl.openal.AL10.AL_FALSE);
-                    sourceIds.put(source.sourceId);
-                }
-                sourceIds.flip();
-                org.lwjgl.openal.AL10.alSourcePlayv(sourceIds);
-            } else {
-                for (StreamSource source : streamSources) {
-                    source.start();
-                }
-            }
-            startAudioThread();
-        };
-
-        if (!streamSources.isEmpty() && world != null) {
-            Vec3d probePos = calculateVenueProbe(streamSources);
-            Vec3d stageDir = calculateStageDirection(streamSources);
-
-            java.util.concurrent.CompletableFuture.supplyAsync(() -> {
-                return acousticScanner.scanVenue(world, probePos, stageDir);
-            }).thenAcceptAsync(preset -> {
-                if (preset != null) {
-                    this.venuePreset = preset;
-                    this.storedVenueDescriptor = acousticScanner.getLastDescriptor();
-                    this.storedVenueProbePos = acousticScanner.getLastProbePos();
-                    this.lastConfigGeneration = com.audiophilecraft.config.LiveTuningConfig.getReloadGeneration();
-                    applyVenueReverbToEfx();
-                }
-                startPlayback.run();
-            }, MinecraftClient.getInstance()::execute);
-        } else {
-            startPlayback.run();
-        }
-    }
-
-    /**
-     * Play from raw mono PCM data (used by InternetAudioLoader callback).
-     * Creates DSP-processed stream buffers and spawns StreamSources.
-     */
-    private void playFromPcmData(short[] pcmData, int sampleRate, List<BlockPos> speakers,
-            float power, float inputGain) {
-        stopAll();
-        while (alGetError() != AL_NO_ERROR) { /* drain */ }
-        initEfx();
-
-        if (speakers == null || speakers.isEmpty()) return;
-
-        try {
-            // Wrap PCM data into RawTrackData
-            java.nio.ShortBuffer pcmBuffer = org.lwjgl.system.MemoryUtil.memAllocShort(pcmData.length);
-            pcmBuffer.put(pcmData);
-            pcmBuffer.flip();
-
-            OggDecoder.RawTrackData rawData = new OggDecoder.RawTrackData();
-            rawData.pcmData = pcmBuffer;
-            rawData.sampleRate = sampleRate;
-            rawData.channels = 1;
-            rawData.format = org.lwjgl.openal.AL10.AL_FORMAT_MONO16;
-
-            // Prepare stream buffers
-            for (AudioStreamBuffer buffer : streamBuffers.values()) { buffer.cleanup(); }
-            streamBuffers.clear();
-            createStreamBufferForType("url_track", rawData, TYPE_SUB);
-            createStreamBufferForType("url_track", rawData, TYPE_MID);
-            createStreamBufferForType("url_track", rawData, TYPE_LINE);
-            createStreamBufferForType("url_track", rawData, TYPE_NORMAL);
-            org.lwjgl.system.MemoryUtil.memFree(pcmBuffer);
-
-            this.isPlaying = true;
-            this.isPaused = false;
-            for (AudioStreamBuffer buffer : streamBuffers.values()) {
-                if (buffer.sampleRate > 0) buffer.syncToTime(BUFFER_LOOKAHEAD);
-            }
-
-            // Shared logic
-            World world = MinecraftClient.getInstance().world;
-            int[] counts = countSpeakerTypes(speakers, world);
-            List<List<BlockPos>> clusters = clusterSpeakers(speakers);
-            createSourcesFromClusters(clusters, counts, world, power, inputGain);
-            startPlaybackWithVenueScan(world, speakers, true);
-
-        } catch (Exception e) {
-            e.printStackTrace();
-        }
-    }
-
-    /**
-     * Updates the OpenAL direction vector for all active streams of a speaker
-     * immediately. Called from the client UI or network packets.
-     */
-    public void updateSpeakerTilt(BlockPos speakerPos, int tiltDeg) {
-        net.minecraft.client.world.ClientWorld world = net.minecraft.client.MinecraftClient.getInstance().world;
-        if (world == null)
-            return;
-        net.minecraft.block.BlockState state = world.getBlockState(speakerPos);
-        if (!state.contains(net.minecraft.state.property.Properties.HORIZONTAL_FACING))
-            return;
-
-        net.minecraft.util.math.Direction facing = state.get(net.minecraft.state.property.Properties.HORIZONTAL_FACING);
-        net.minecraft.util.math.Vec3i vec = facing.getVector();
-        float tiltRad = (float) Math.toRadians(tiltDeg);
-        float cosT = (float) Math.cos(tiltRad);
-        float sinT = (float) Math.sin(tiltRad);
-        float dirX = vec.getX() * cosT;
-        float dirY = sinT;
-        float dirZ = vec.getZ() * cosT;
-
-        for (StreamSource ss : streamSources) {
-            if (ss.pos.equals(speakerPos) && !TYPE_SUB.equals(ss.speakerType)) {
-                alSource3f(ss.sourceId, AL_DIRECTION, dirX, dirY, dirZ);
-            }
-        }
-    }
-
-    /**
-     * Fetch Total Duration in Seconds for the currently playing track.
-     */
-    public double getTotalPlaybackDuration() {
-        if (!isPlaying || streamBuffers.isEmpty())
-            return 0.0;
-        AudioStreamBuffer buf = streamBuffers.values().iterator().next();
-        return buf != null ? buf.getTotalDurationSeconds() : 0.0;
-    }
-
-    /**
-     * Fetch Current Playback Time in Seconds.
-     */
-    public double getCurrentPlaybackTime() {
-        if (!isPlaying || streamStartTime == 0)
-            return 0.0;
-        long now = System.nanoTime();
-        double timeSinceStart = (now - streamStartTime) / 1_000_000_000.0;
-        return timeSinceStart;
-    }
-
-    /**
-     * Globally Seek all playing channels to the designated timestamp.
-     * Alters the base physical stream clock so all nodes fast-forward
-     * homogeneously.
-     */
-    public void seek(double timeSeconds) {
-        if (!isPlaying)
-            return;
-
-        // Clamp to bounds
-        double totalDuration = getTotalPlaybackDuration();
-        if (timeSeconds < 0)
-            timeSeconds = 0;
-        if (totalDuration > 0 && timeSeconds > totalDuration)
-            timeSeconds = totalDuration;
-
-        // Echo Debouncing (Client-Side Prediction Defense)
-        // If a local client jumped the track manually, the server echoes the packet
-        // 200ms later.
-        // We do not want to "jump back" 200ms to the exact same marker and cause a
-        // track stutter.
-        if (Math.abs(getCurrentPlaybackTime() - timeSeconds) < 0.5) {
-            return; // Already within the target window realistically
-        }
-
-        // ATOMIC SEEK: Block the audio thread from feeding OpenAL sources
-        // while we update the global clock and re-align every speaker.
-        // Without this, processAudioBackground() can fire mid-seek and cause
-        // underrun recovery to snap outputCursor to the wrong position,
-        // resulting in 3-4 speakers playing asynchronously.
-        isSeeking = true;
-        try {
-            // Nothing to seek if all sources were cleaned up (song ended naturally)
-            if (streamSources.isEmpty())
-                return;
-
-            // Shift absolute temporal timeline baseline
-            long now = System.nanoTime();
-
-            // If the game is paused, adjust the pause tracker so it doesn't double-cancel
-            // the seek on resume
-            if (isPaused) {
-                pauseStartTimestamp = now;
-            }
-
-            this.streamStartTime = now - (long) (timeSeconds * 1_000_000_000.0);
-
-            // Force raw JLayer decoder index jumps
-            for (AudioStreamBuffer buffer : streamBuffers.values()) {
-                // Buffer up to 0.1s INTO THE PAST to cushion StreamSource physics delays.
-                // When speakers simulate spatial distance, they read slightly backwards in the
-                // ring buffer.
-                // If the buffer starts exactly at timeSeconds, spatial delay forces a read of 0
-                // (causing a crackle).
-                buffer.seekToTime(timeSeconds - 0.1);
-
-                // Pre-fill next half-second buffer window so StreamSource AL generators don't
-                // read zeros
-                buffer.syncToTime(timeSeconds + BUFFER_LOOKAHEAD);
-            }
-
-            // Broadcast snap offsets into ALL actively playing physical speakers locally
-            // using atomic AL Source commands
-            java.nio.IntBuffer sourceIds = org.lwjgl.BufferUtils.createIntBuffer(streamSources.size());
-            for (StreamSource source : streamSources) {
-                source.seekToTime(timeSeconds); // Aligns playhead and hardware queue internally (does NOT call
-                                                // alSourcePlay)
-                sourceIds.put(source.sourceId);
-            }
-            sourceIds.flip();
-            org.lwjgl.openal.AL10.alSourcePlayv(sourceIds); // ATOMIC HARDWARE START: NO SPEAKER PHASE STAGGER
-        } finally {
-            isSeeking = false; // Resume audio thread feeding
-        }
-    }
-}
+package com.audiophilecraft.sound;
+
+import net.minecraft.client.MinecraftClient;
+import net.minecraft.util.math.BlockPos;
+import net.minecraft.util.math.Direction;
+import net.minecraft.util.math.Vec3d;
+import net.minecraft.util.math.Vec3i;
+import net.minecraft.world.World;
+import net.minecraft.state.property.Properties;
+import net.minecraft.block.BlockState;
+import static org.lwjgl.openal.EXTEfx.*;
+import org.lwjgl.openal.ALC10;
+import org.lwjgl.openal.SOFTHRTF;
+import org.lwjgl.openal.ALCCapabilities;
+
+import java.util.ArrayList;
+import java.util.Iterator;
+import java.util.List;
+import java.util.Map;
+import java.util.HashMap;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.Executors;
+import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.TimeUnit;
+import java.nio.ShortBuffer;
+import org.lwjgl.system.MemoryUtil;
+
+import static org.lwjgl.openal.AL10.*;
+import static org.lwjgl.openal.AL11.*;
+
+public class AudioEngine {
+    private static AudioEngine INSTANCE;
+
+    // Listener state (volatile: written by render thread, read by audio thread)
+    private volatile Vec3d listenerPos = Vec3d.ZERO;
+    private volatile Vec3d smoothedListenerPos = Vec3d.ZERO;
+    private float listenerYaw = 0;
+
+    private float listenerPitch = 0;
+
+    // Global Pause State
+    private volatile boolean isPaused = false;
+
+    // Seek Atomicity Guard — prevents audio thread from feeding sources mid-seek
+    private volatile boolean isSeeking = false;
+
+    // Track Generation — increments on each playTrack(), used to discard stale venue scan callbacks
+    private volatile int trackGeneration = 0;
+
+    // Underwater State (for global HF filtering)
+    private boolean isUnderwater = false;
+    private float smoothedUnderwaterHF = 1.0f; // 1.0 = normal, 0.08 = deep underwater
+
+    // --- Master Reverb Occlusion ---
+    private float smoothedMasterOcclusion = 1.0f;
+
+    // EFX EAX Reverb System
+    private int reverbEffectId = 0;
+    private int auxSlotId = 0;
+
+    private boolean efxInitialized = false;
+
+    // Acoustic Scanner (used only for venue probe scans at playback start)
+    private final AdvancedAcousticScanner acousticScanner = new AdvancedAcousticScanner();
+
+    // Streaming System
+    private final Map<String, AudioStreamBuffer> streamBuffers = new ConcurrentHashMap<>(); // Thread-safe: main thread writes, audio thread iterates
+    private final List<StreamSource> streamSources = new java.util.concurrent.CopyOnWriteArrayList<>();
+
+    // Time Tracking
+    private volatile long streamStartTime = 0; // Absolute start time (nanoTime) � volatile: written by main thread, read by audio thread
+    private volatile boolean isPlaying = false; // volatile: written by main thread, read by audio thread
+    private static final double BUFFER_LOOKAHEAD = 0.5; // Low-latency pipeline: 6 initial + 3 precomputed buffers ×
+                                                        // 1024 = 9216 samples (~0.19s) PLUS delay headroom
+    private long pauseStartTimestamp = 0; // Track when pause started
+
+    // Background Audio Thread (pre-computes PCM buffers off main thread)
+    private ScheduledExecutorService audioThread;
+
+    // Venue-Locked Reverb System
+    private AdvancedAcousticScanner.VenuePreset venuePreset = null;
+    private boolean venuePresetApplied = false;
+
+    // --- Dynamic Early Reflections ---
+    private volatile float currentReflGain = -1.0f;
+    private volatile float currentReflDelay = -1.0f;
+    // Live Tuning: stored descriptor for regenerating preset when config changes
+    private AdvancedAcousticScanner.VenueDescriptor storedVenueDescriptor = null;
+    private net.minecraft.util.math.Vec3d storedVenueProbePos = null;
+    private long lastConfigGeneration = 0;
+
+
+    // Direct buffer allocation caching (Prevents native memory JVM GC thrashing in
+    // hot loop)
+    private final java.nio.IntBuffer reusableRestartBuffer = org.lwjgl.BufferUtils.createIntBuffer(1024);
+
+    private AudioEngine() {
+        // Private constructor for singleton
+    }
+
+    public static synchronized AudioEngine getInstance() {
+        if (INSTANCE == null) {
+            INSTANCE = new AudioEngine();
+        }
+        return INSTANCE;
+    }
+
+    /**
+     * Enable HRTF (Head-Related Transfer Function) for binaural 3D audio,
+     * AND simultaneously request an expanded source pool (256 mono sources).
+     *
+     * OpenAL Soft's default source limit (typically 32) is far too low for
+     * large PA systems with 4+ speaker clusters. Without raising this limit,
+     * alGenSources() returns AL_INVALID_OPERATION after the first ~20 sources,
+     * causing the outermost speaker clusters to be silently skipped.
+     *
+     * alcResetDeviceSOFT is the only way to change ALC attributes (like
+     * ALC_MONO_SOURCES) on an existing context without destroying it.
+     * We piggyback this request onto the HRTF reset so it happens in one call.
+     */
+    private void enableHrtf() {
+        try {
+            long context = ALC10.alcGetCurrentContext();
+            if (context == 0L) {
+                System.err.println("[enableHrtf] No current context, aborting.");
+                return;
+            }
+            long device = ALC10.alcGetContextsDevice(context);
+            if (device == 0L) {
+                System.err.println("[enableHrtf] No device for context, aborting.");
+                return;
+            }
+
+            // LOG: Current state before reset
+            int preResetSources = ALC10.alcGetInteger(device, org.lwjgl.openal.ALC11.ALC_MONO_SOURCES);
+            int preResetStereo = ALC10.alcGetInteger(device, org.lwjgl.openal.ALC11.ALC_STEREO_SOURCES);
+            int preResetError = ALC10.alcGetError(device);
+            System.out.println("[enableHrtf] PRE-RESET: monoSources=" + preResetSources
+                    + " stereoSources=" + preResetStereo + " alcError=0x" + Integer.toHexString(preResetError));
+
+            ALCCapabilities alcCaps = org.lwjgl.openal.ALC.createCapabilities(device);
+            System.out.println("[enableHrtf] ALC_SOFT_HRTF=" + alcCaps.ALC_SOFT_HRTF);
+
+            if (alcCaps.ALC_SOFT_HRTF) {
+                int numHrtf = ALC10.alcGetInteger(device, SOFTHRTF.ALC_NUM_HRTF_SPECIFIERS_SOFT);
+                System.out.println("[enableHrtf] HRTF profiles found: " + numHrtf);
+
+                if (numHrtf > 0) {
+                    int[] attrs = {
+                            SOFTHRTF.ALC_HRTF_SOFT, ALC10.ALC_TRUE,
+                            org.lwjgl.openal.ALC11.ALC_MONO_SOURCES, 1024,
+                            0
+                    };
+                    System.out.println("[enableHrtf] Calling alcResetDeviceSOFT(HRTF=TRUE, MONO=512)...");
+                    boolean success = SOFTHRTF.alcResetDeviceSOFT(device, attrs);
+                    int postResetError = ALC10.alcGetError(device);
+                    System.out.println("[enableHrtf] alcResetDeviceSOFT returned: " + success
+                            + " alcError=0x" + Integer.toHexString(postResetError));
+
+                    if (success) {
+                        int hrtfStatus = ALC10.alcGetInteger(device, SOFTHRTF.ALC_HRTF_STATUS_SOFT);
+                        int actualSources = ALC10.alcGetInteger(device, org.lwjgl.openal.ALC11.ALC_MONO_SOURCES);
+                        int actualStereo = ALC10.alcGetInteger(device, org.lwjgl.openal.ALC11.ALC_STEREO_SOURCES);
+                        int postAlError = org.lwjgl.openal.AL10.alGetError();
+                        System.out.println("[enableHrtf] POST-RESET: hrtfStatus=" + hrtfStatus
+                                + " actualMonoSources=" + actualSources + " actualStereoSources=" + actualStereo
+                                + " alError=0x" + Integer.toHexString(postAlError));
+                    } else {
+                        System.err.println("[enableHrtf] alcResetDeviceSOFT FAILED! alcError=0x"
+                                + Integer.toHexString(postResetError));
+                        System.err.println("[enableHrtf] Trying sources-only fallback...");
+                        int[] attrsNoHrtf = {
+                                org.lwjgl.openal.ALC11.ALC_MONO_SOURCES, 1024,
+                                0
+                        };
+                        boolean fallback = SOFTHRTF.alcResetDeviceSOFT(device, attrsNoHrtf);
+                        int fallbackError = ALC10.alcGetError(device);
+                        System.out.println("[enableHrtf] Fallback reset returned: " + fallback
+                                + " alcError=0x" + Integer.toHexString(fallbackError));
+                    }
+                } else {
+                    System.out.println("[enableHrtf] No HRTF profiles, trying sources-only...");
+                    int[] attrs = {
+                            org.lwjgl.openal.ALC11.ALC_MONO_SOURCES, 1024,
+                            0
+                    };
+                    boolean success = SOFTHRTF.alcResetDeviceSOFT(device, attrs);
+                    int postError = ALC10.alcGetError(device);
+                    System.out.println("[enableHrtf] Sources-only reset returned: " + success
+                            + " alcError=0x" + Integer.toHexString(postError));
+                }
+            } else {
+                System.out.println("[enableHrtf] ALC_SOFT_HRTF not available, skipping.");
+            }
+        } catch (Exception e) {
+            System.err.println("[enableHrtf] EXCEPTION: " + e.getMessage());
+            e.printStackTrace();
+        }
+    }
+
+    public int getAuxSlotId() {
+        return auxSlotId;
+    }
+
+    /**
+     * Initialize OpenAL EFX with EAX Reverb for physics-based room simulation.
+     * Called lazily on first playTrack().
+     */
+    private void initEfx() {
+        if (efxInitialized)
+            return;
+        efxInitialized = true;
+
+        // Enable HRTF and expanded source pool for all users
+        enableHrtf();
+
+        // HRTF and source pool expansion are now handled via alsoft.ini
+        // (placed in %AppData%/alsoft.ini). This avoids alcResetDeviceSOFT
+        // which was disrupting Minecraft's sound engine.
+
+        try {
+            // Create EAX Reverb Effect (superior to basic AL_EFFECT_REVERB)
+            reverbEffectId = alGenEffects();
+
+            if (alGetError() != AL_NO_ERROR) {
+                System.err.println("AudioEngine: Failed to create EFX effect");
+                reverbEffectId = 0;
+                return;
+            }
+
+            // Try EAX Reverb first, fall back to basic reverb
+            alEffecti(reverbEffectId, AL_EFFECT_TYPE, AL_EFFECT_EAXREVERB);
+
+            if (alGetError() != AL_NO_ERROR) {
+                alEffecti(reverbEffectId, AL_EFFECT_TYPE, AL_EFFECT_REVERB);
+                if (alGetError() != AL_NO_ERROR) {
+                    System.err.println("AudioEngine: No reverb support available");
+                    alDeleteEffects(reverbEffectId);
+                    reverbEffectId = 0;
+                    return;
+                }
+            }
+
+            // --- CRITICAL DISTANCE MODEL SETTINGS ---
+            // Current Issue: Sound stops attenuating at MaxDist due to CLAMPED model.
+            // Fix: Use AL_INVERSE_DISTANCE (Standard) so sound fades naturally forever.
+            alDistanceModel(AL_NONE);
+
+            // Rolloff Factor Default
+            // alListenerf(AL_ROLLOFF_FACTOR, 1.0f); // Per-source is better
+
+            // 1. Primary Reverb (Dynamic - Updated by Scanner)
+            alEffectf(reverbEffectId, AL_EAXREVERB_DECAY_TIME, 0.3f);
+            alEffectf(reverbEffectId, AL_EAXREVERB_REFLECTIONS_GAIN, 0.3f);
+            alEffectf(reverbEffectId, AL_EAXREVERB_REFLECTIONS_DELAY, 0.02f);
+            alEffectf(reverbEffectId, AL_EAXREVERB_LATE_REVERB_GAIN, 0.1f);
+            alEffectf(reverbEffectId, AL_EAXREVERB_LATE_REVERB_DELAY, 0.04f);
+            alEffectf(reverbEffectId, AL_EAXREVERB_DIFFUSION, 0.7f);
+            alEffectf(reverbEffectId, AL_EAXREVERB_DENSITY, 0.5f);
+            alEffectf(reverbEffectId, AL_EAXREVERB_GAIN, 0.3f);
+            alEffectf(reverbEffectId, AL_EAXREVERB_GAINHF, 0.6f);
+            alEffectf(reverbEffectId, AL_EAXREVERB_GAINLF, 0.8f);
+            alEffectf(reverbEffectId, AL_EAXREVERB_DECAY_HFRATIO, 0.5f);
+            alEffectf(reverbEffectId, AL_EAXREVERB_DECAY_LFRATIO, 1.1f);
+            alEffectf(reverbEffectId, AL_EAXREVERB_AIR_ABSORPTION_GAINHF, 0.994f);
+            alEffecti(reverbEffectId, AL_EAXREVERB_DECAY_HFLIMIT, 1);
+
+            // Create Auxiliary Effect Slots
+            auxSlotId = alGenAuxiliaryEffectSlots();
+
+            if (alGetError() != AL_NO_ERROR) {
+                System.err.println("AudioEngine: Failed to create aux slot");
+                // Cleanup
+                return;
+            }
+
+            // Attach effect to slot
+            alAuxiliaryEffectSloti(auxSlotId, AL_EFFECTSLOT_EFFECT, reverbEffectId);
+
+            int errCheck = alGetError();
+        } catch (Exception e) {
+            System.err.println("AudioEngine: EFX init failed: " + e.getMessage());
+            reverbEffectId = 0;
+            auxSlotId = 0;
+        }
+
+    }
+
+    public AdvancedAcousticScanner.VenuePreset getVenuePreset() {
+        return this.venuePreset;
+    }
+
+    public AdvancedAcousticScanner.VenueDescriptor getStoredVenueDescriptor() {
+        return storedVenueDescriptor;
+    }
+
+    /**
+     * Apply venue reverb to EFX every tick.
+     * Re-applies each tick so LiveTuningConfig multipliers take effect in
+     * real-time.
+     * Also regenerates VenuePreset from stored descriptor when config changes.
+     */
+    private void ensureVenueReverb() {
+        if (venuePreset == null)
+            return;
+        if (auxSlotId == 0 || reverbEffectId == 0)
+            return;
+
+        // If config was reloaded, regenerate the VenuePreset from stored descriptor
+        long currentGen = com.audiophilecraft.config.LiveTuningConfig.getReloadGeneration();
+        if (currentGen != lastConfigGeneration && storedVenueDescriptor != null && storedVenueProbePos != null) {
+            this.venuePreset = acousticScanner.descriptorToPreset(storedVenueDescriptor, storedVenueProbePos);
+            lastConfigGeneration = currentGen;
+        }
+
+        applyVenueReverbToEfx();
+        venuePresetApplied = true;
+    }
+
+    /**
+     * Apply the locked venue reverb preset to the EFX effect.
+     * Parameters come from the one-time probe scan and never change.
+     */
+    private void applyVenueReverbToEfx() {
+        com.audiophilecraft.config.LiveTuningConfig cfg = com.audiophilecraft.config.LiveTuningConfig.get();
+
+        float decayTime = venuePreset.decayTime * cfg.reverb_decayMultiplier;
+        float gain = venuePreset.gain * cfg.reverb_gainMultiplier;
+        float gainHF = venuePreset.gainHF * cfg.reverb_gainHFMultiplier;
+        float reflGain = venuePreset.reflectionsGain * cfg.reverb_reflGainMultiplier;
+        float lateGain = venuePreset.lateReverbGain * cfg.reverb_lateGainMultiplier;
+        float density = cfg.reverb_densityOverride >= 0 ? cfg.reverb_densityOverride : venuePreset.density;
+        float diffusion = cfg.reverb_diffusionOverride >= 0 ? cfg.reverb_diffusionOverride : venuePreset.diffusion;
+
+        // Clamp to OpenAL EAX Reverb limits
+        decayTime = Math.max(0.1f, Math.min(20.0f, decayTime));
+        gain = Math.max(0.0f, Math.min(1.0f, gain));
+        gainHF = Math.max(0.0f, Math.min(1.0f, gainHF));
+        reflGain = Math.max(0.0f, Math.min(3.16f, reflGain));
+        lateGain = Math.max(0.0f, Math.min(10.0f, lateGain));
+        density = Math.max(0.0f, Math.min(1.0f, density));
+        diffusion = Math.max(0.0f, Math.min(1.0f, diffusion));
+
+        alEffectf(reverbEffectId, AL_EAXREVERB_DECAY_TIME, decayTime);
+        alEffectf(reverbEffectId, AL_EAXREVERB_DECAY_HFRATIO, venuePreset.decayHFRatio);
+        alEffectf(reverbEffectId, AL_EAXREVERB_DECAY_LFRATIO, venuePreset.decayLFRatio);
+        alEffecti(reverbEffectId, AL_EAXREVERB_DECAY_HFLIMIT, venuePreset.decayHFLimit ? 1 : 0);
+
+        // Thread-safe application of dynamic early reflections (calculated in tick
+        // thread)
+        if (currentReflGain >= 0.0f && currentReflDelay >= 0.0f) {
+            alEffectf(reverbEffectId, AL_EAXREVERB_REFLECTIONS_GAIN, currentReflGain);
+            alEffectf(reverbEffectId, AL_EAXREVERB_REFLECTIONS_DELAY, currentReflDelay);
+        }
+
+        alEffectfv(reverbEffectId, AL_EAXREVERB_REFLECTIONS_PAN, new float[] { 0, 0, 0 });
+        alEffectf(reverbEffectId, AL_EAXREVERB_LATE_REVERB_GAIN, lateGain);
+        alEffectf(reverbEffectId, AL_EAXREVERB_LATE_REVERB_DELAY, venuePreset.lateReverbDelay);
+        alEffectfv(reverbEffectId, AL_EAXREVERB_LATE_REVERB_PAN, new float[] { 0, 0, 0 });
+        alEffectf(reverbEffectId, AL_EAXREVERB_DENSITY, density);
+        alEffectf(reverbEffectId, AL_EAXREVERB_DIFFUSION, diffusion);
+        alEffectf(reverbEffectId, AL_EAXREVERB_GAIN, gain);
+        alEffectf(reverbEffectId, AL_EAXREVERB_GAINHF, gainHF);
+        alEffectf(reverbEffectId, AL_EAXREVERB_GAINLF, venuePreset.gainLF);
+        alEffectf(reverbEffectId, AL_EAXREVERB_AIR_ABSORPTION_GAINHF, venuePreset.airAbsorptionGainHF);
+        alAuxiliaryEffectSloti(auxSlotId, AL_EFFECTSLOT_EFFECT, reverbEffectId);
+    }
+
+    /**
+     * Listener-centric Early Reflections scanner.
+     * Fires 6 rays from the listener position to find immediate wall proximity.
+     * Updates AL_EAXREVERB_REFLECTIONS_GAIN and AL_EAXREVERB_REFLECTIONS_DELAY
+     * live.
+     */
+    private void updateListenerReflections(World world) {
+        if (this.venuePreset == null || reverbEffectId == 0 || auxSlotId == 0)
+            return;
+
+        com.audiophilecraft.config.LiveTuningConfig cfg = com.audiophilecraft.config.LiveTuningConfig.get();
+
+        float[][] DIRS = {
+                { 1, 0, 0 }, { -1, 0, 0 },
+                { 0, 1, 0 }, { 0, -1, 0 },
+                { 0, 0, 1 }, { 0, 0, -1 }
+        };
+
+        int maxDist = 10; // 10 blocks max for early reflections radius
+        float minDist = maxDist;
+
+        for (int i = 0; i < 6; i++) {
+            float dirX = DIRS[i][0];
+            float dirY = DIRS[i][1];
+            float dirZ = DIRS[i][2];
+            float hitDist = maxDist;
+
+            net.minecraft.util.math.BlockPos.Mutable checkPos = new net.minecraft.util.math.BlockPos.Mutable();
+            for (int step = 1; step <= maxDist; step++) {
+                checkPos.set(
+                        (int) Math.floor(listenerPos.x + dirX * step),
+                        (int) Math.floor(listenerPos.y + dirY * step),
+                        (int) Math.floor(listenerPos.z + dirZ * step));
+
+                net.minecraft.block.BlockState state = world.getBlockState(checkPos);
+                if (state.isSolidBlock(world, checkPos)) {
+                    hitDist = step;
+                    break;
+                }
+            }
+            if (hitDist < minDist) {
+                minDist = hitDist;
+            }
+        }
+
+        // 1. Dynamic Delay based on NEAREST wall
+        // Reverted to 2000.0f divisor. Long delays ruin the "fullness" because EAX
+        // reflections
+        // are diffuse clusters, not discrete echoes. They must arrive <30ms to fuse and
+        // thicken the sound.
+        float dynamicReflDelay = Math.max(0.001f, Math.min(minDist * 2.0f / 2000.0f, 0.3f));
+
+        // 2. Dynamic Gain based on distance to the NEAREST wall.
+        float distanceFactor = Math.max(0.0f, Math.min(1.0f, 1.0f - (minDist / (float) maxDist)));
+
+        // Retrieve base reflection gain calculated from venue material (vReflGain)
+        float baseReflGain = venuePreset.reflectionsGain * cfg.reverb_reflGainMultiplier;
+
+        // Scale baseReflGain dynamically.
+        // The venue preset already sets a baseline (1.0x) for the room's average
+        // reflectivity.
+        // When you walk close to a wall, we BOOST the early reflections up to 2.5x.
+        float dynamicReflGain = baseReflGain * (1.0f + (distanceFactor * 0.6f));
+        dynamicReflGain = Math.max(0.0f, Math.min(3.16f, dynamicReflGain));
+
+        // Safely pass to the render thread instead of calling OpenAL directly
+        this.currentReflGain = dynamicReflGain;
+        this.currentReflDelay = dynamicReflDelay;
+    }
+
+    /**
+     * Calculate venue probe position from speaker cluster.
+     * Weighted: 50% mid, 30% sub, 20% high/line array
+     */
+    private Vec3d calculateVenueProbe(List<StreamSource> sources) {
+        double subX = 0, subY = 0, subZ = 0;
+        int subCount = 0;
+        double midX = 0, midY = 0, midZ = 0;
+        int midCount = 0;
+        double highX = 0, highY = 0, highZ = 0;
+        int highCount = 0;
+
+        for (StreamSource s : sources) {
+            BlockPos p = s.getPos();
+            double px = p.getX() + 0.5, py = p.getY() + 0.5, pz = p.getZ() + 0.5;
+            if ("sub".equals(s.speakerType)) {
+                subX += px;
+                subY += py;
+                subZ += pz;
+                subCount++;
+            } else if ("mid".equals(s.speakerType)) {
+                midX += px;
+                midY += py;
+                midZ += pz;
+                midCount++;
+            } else {
+                highX += px;
+                highY += py;
+                highZ += pz;
+                highCount++;
+            }
+        }
+
+        double totalX = 0, totalY = 0, totalZ = 0;
+        double totalWeight = 0;
+
+        if (midCount > 0) {
+            totalX += (midX / midCount) * 0.5;
+            totalY += (midY / midCount) * 0.5;
+            totalZ += (midZ / midCount) * 0.5;
+            totalWeight += 0.5;
+        }
+        if (subCount > 0) {
+            totalX += (subX / subCount) * 0.3;
+            totalY += (subY / subCount) * 0.3;
+            totalZ += (subZ / subCount) * 0.3;
+            totalWeight += 0.3;
+        }
+        if (highCount > 0) {
+            totalX += (highX / highCount) * 0.2;
+            totalY += (highY / highCount) * 0.2;
+            totalZ += (highZ / highCount) * 0.2;
+            totalWeight += 0.2;
+        }
+
+        if (totalWeight > 0) {
+            return new Vec3d(totalX / totalWeight, totalY / totalWeight, totalZ / totalWeight);
+        }
+
+        // Fallback: simple average
+        double avgX = 0, avgY = 0, avgZ = 0;
+        for (StreamSource s : sources) {
+            avgX += s.getPos().getX() + 0.5;
+            avgY += s.getPos().getY() + 0.5;
+            avgZ += s.getPos().getZ() + 0.5;
+        }
+        return new Vec3d(avgX / sources.size(), avgY / sources.size(), avgZ / sources.size());
+    }
+
+    /**
+     * Calculate stage-front direction from speaker facing vectors.
+     * This is the average direction speakers are pointing at (towards the
+     * audience).
+     */
+    private Vec3d calculateStageDirection(List<StreamSource> sources) {
+        double totalDirX = 0, totalDirY = 0, totalDirZ = 0;
+        for (StreamSource s : sources) {
+            totalDirX += s.dirX;
+            totalDirY += s.dirY;
+            totalDirZ += s.dirZ;
+        }
+        double len = Math.sqrt(totalDirX * totalDirX + totalDirY * totalDirY + totalDirZ * totalDirZ);
+        if (len < 0.001) {
+            return new Vec3d(1, 0, 0); // Fallback: face +X
+        }
+        return new Vec3d(totalDirX / len, totalDirY / len, totalDirZ / len);
+    }
+
+    /**
+     * Applies global occlusion to the main EFX Reverb effect.
+     * Called by updateSourcesTick to prevent lingering reverb tails from passing
+     * through solid walls at full volume.
+     */
+    private void updateMasterReverbOcclusion(float targetMasterOcclusion) {
+        if (reverbEffectId == 0 || venuePreset == null)
+            return;
+
+        com.audiophilecraft.config.LiveTuningConfig cfg = com.audiophilecraft.config.LiveTuningConfig.get();
+        // Smooth the master occlusion
+        float lerpRate = (targetMasterOcclusion < this.smoothedMasterOcclusion) ? cfg.masterOcc_lerpIn
+                : cfg.masterOcc_lerpOut;
+        this.smoothedMasterOcclusion += (targetMasterOcclusion - this.smoothedMasterOcclusion) * lerpRate;
+
+        float masterGain = venuePreset.gain
+                * (cfg.masterOcc_gainFloor + (1.0f - cfg.masterOcc_gainFloor) * this.smoothedMasterOcclusion);
+
+        // HF (Treble) gets completely smothered by walls
+        float masterGainHF = venuePreset.gainHF
+                * (float) Math.pow(this.smoothedMasterOcclusion, cfg.masterOcc_hfExponent);
+
+        // Ensure values stay within the absolute limits OpenAL allows
+        masterGain = Math.max(0.0f, Math.min(1.0f, masterGain));
+        masterGainHF = Math.max(0.01f, Math.min(1.0f, masterGainHF));
+
+        alEffectf(reverbEffectId, AL_EAXREVERB_GAIN, masterGain);
+        alEffectf(reverbEffectId, AL_EAXREVERB_GAINHF, masterGainHF);
+
+        // Slot needs to be "re-attached" to instantly update some drivers
+        alAuxiliaryEffectSloti(auxSlotId, AL_EFFECTSLOT_EFFECT, reverbEffectId);
+
+    }
+
+    /**
+     * Updates the OpenAL listener position and orientation.
+     * Called every render frame.
+     */
+    public void updateListener(Vec3d pos, float yaw, float pitch) {
+        // Position - Update instantly
+        // listenerPos stores the REAL position for physics/distance calculations
+        this.listenerPos = pos;
+
+        // ═══════════════════════════════════════════════════════════════
+        // HRTF Y-AXIS FLATTENING (Listener-Side)
+        // ═══════════════════════════════════════════════════════════════
+        // HRTF uses the elevation angle between listener and source positions.
+        // Adjusting source Y doesn't work well because HRTF is angle-based:
+        // if source is directly above, scaling Y doesn't change the 90° angle.
+        //
+        // Instead, we shift the LISTENER Y that OpenAL sees toward the
+        // weighted average Y of active sources. This directly changes the
+        // elevation angle for ALL sources simultaneously.
+        //
+        // Factor 0.4 = listener Y moves 40% toward the average source Y.
+        // Result: HRTF perceives sources as being much closer to ear level.
+        // ═══════════════════════════════════════════════════════════════
+        float openAlListenerY = (float) pos.y;
+        if (!streamSources.isEmpty()) {
+            double avgSourceY = 0;
+            int count = 0;
+            for (StreamSource s : streamSources) {
+                if (s.isValid && !s.isFinished) {
+                    avgSourceY += s.getPos().getY() + 0.5;
+                    count++;
+                }
+            }
+            if (count > 0) {
+                avgSourceY /= count;
+                openAlListenerY = (float) (avgSourceY
+                        - (avgSourceY - pos.y) * com.audiophilecraft.config.LiveTuningConfig.get().hrtf_yFlatten);
+            }
+        }
+        alListener3f(AL_POSITION, (float) pos.x, openAlListenerY, (float) pos.z);
+
+        // Removed rotation smoothing (lerping) as it causes phase glitching/pitching
+        // with the HRTF/OpenAL 3D spatializer when rotating the camera.
+        this.listenerYaw = yaw;
+        this.listenerPitch = pitch;
+
+        float useYaw = yaw;
+        float usePitch = pitch;
+
+        // Velocity (assume zero for now, or track delta)
+        alListener3f(AL_VELOCITY, 0f, 0f, 0f);
+
+        // Orientation calculation
+        // pitch: 0=horizon, -90=up, +90=down
+        // yaw: 0=south, 90=west, 180=north, 270=east
+        // Look vector (AT)
+        // Minecraft's orientation:
+        // yaw 0 = South (+Z), 90 = West (-X), 180 = North (-Z), 270 = East (+X)
+        // pitch -90 = Straight UP, 90 = Straight DOWN
+
+        // Convert to radians and flip signs to match standard mathematics
+        float pitchRad = (float) Math.toRadians(usePitch);
+        float yawRad = (float) Math.toRadians(-useYaw); // -yaw for correct CW/CCW
+
+        float cosPitch = (float) Math.cos(pitchRad);
+        float sinPitch = (float) Math.sin(pitchRad);
+        float cosYaw = (float) Math.cos(yawRad);
+        float sinYaw = (float) Math.sin(yawRad);
+
+        // AT vector (Where the listener is looking)
+        // OpenAL uses same coordinate axes as Minecraft world:
+        // sources and listener positions are in world coords,
+        // so AT must also point in the actual world direction.
+        // Yaw 0 = South (+Z), 90 = West (-X), etc.
+        float atX = sinYaw * cosPitch;
+        float atY = -sinPitch;
+        float atZ = cosYaw * cosPitch;
+
+        // --- ROBUST UP VECTOR (Cross Product Method) ---
+        // To guarantee the UP vector is perfectly perpendicular (orthogonal) to the AT
+        // vector
+        // without arbitrary trigonometry flipping, we use the standard 3D math
+        // approach:
+        // 1. Define a temporary "Right" vector by crossing AT with World Up (0, 1, 0)
+        // 2. Define the real "UP" vector by crossing Right with AT
+        // 3. If looking straight up/down, standard cross product fails, so we handle
+        // it.
+
+        float upX, upY, upZ;
+
+        if (Math.abs(usePitch) > 89.9f) {
+            // Extreme angles (looking straight up or straight down)
+            // If looking straight down (pitch = 90), AT is (0, -1, 0).
+            // The top of your head points FORWARD (which is exactly where you were facing
+            // before looking down)
+            // Forward in Minecraft is (-sinYaw, 0, -cosYaw).
+            // If looking straight UP (pitch = -90), AT is (0, 1, 0).
+            // The top of your head points BACKWARD.
+            float sign = Math.signum(usePitch); // 1.0 for down, -1.0 for up
+            upX = sinYaw * sign;
+            upY = 0.0f;
+            upZ = cosYaw * sign;
+        } else {
+            // Normal angles: Cross Product for perfect 90-degree orthoganality
+
+            // World Up
+            float worldUpX = 0.0f;
+            float worldUpY = 1.0f;
+            float worldUpZ = 0.0f;
+
+            // Right = AT x WorldUp
+            float rightX = atY * worldUpZ - atZ * worldUpY;
+            float rightY = atZ * worldUpX - atX * worldUpZ;
+            float rightZ = atX * worldUpY - atY * worldUpX;
+
+            // Normalize Right vector
+            float rightLen = (float) Math.sqrt(rightX * rightX + rightY * rightY + rightZ * rightZ);
+            rightX /= rightLen;
+            rightY /= rightLen;
+            rightZ /= rightLen;
+
+            // True UP = Right x AT
+            upX = rightY * atZ - rightZ * atY;
+            upY = rightZ * atX - rightX * atZ;
+            upZ = rightX * atY - rightY * atX;
+
+            // Normalize UP vector
+            float upLen = (float) Math.sqrt(upX * upX + upY * upY + upZ * upZ);
+            upX /= upLen;
+            upY /= upLen;
+            upZ /= upLen;
+        }
+
+        float[] orientation = new float[] { atX, atY, atZ, upX, upY, upZ };
+        alListenerfv(AL_ORIENTATION, orientation);
+
+        // --- UNDERWATER DETECTION ---
+        // When the listener is submerged, HF is dramatically absorbed by water.
+        // We set a flag here and apply the filter in StreamSource.updatePhysics()
+        MinecraftClient mc = MinecraftClient.getInstance();
+        if (mc.player != null) {
+            isUnderwater = mc.player.isSubmergedInWater();
+        }
+        // Smooth transition to prevent pop when entering/exiting water
+        float targetUnderwaterHF = isUnderwater ? 0.08f : 1.0f;
+        smoothedUnderwaterHF += (targetUnderwaterHF - smoothedUnderwaterHF) * 0.15f;
+    }
+
+    /** Returns the smoothed underwater HF gain (0.08 = submerged, 1.0 = normal) */
+    public float getUnderwaterHFGain() {
+        return smoothedUnderwaterHF;
+    }
+
+    // --- MIXER STATE (Client-Side Only — No Network Required) ---
+    private volatile float mixerGainSub = 1.0f;
+    private volatile float mixerGainMid = 1.0f;
+    private volatile float mixerGainLine = 1.0f;
+
+    // Mid/Side (Direct/Reverb) Mute States
+    private volatile boolean midMuted = false;
+    private volatile boolean sideMuted = false;
+
+    public boolean isMidMuted() {
+        return midMuted;
+    }
+
+    public void setMidMuted(boolean muted) {
+        this.midMuted = muted;
+    }
+
+    public boolean isSideMuted() {
+        return sideMuted;
+    }
+
+    public void setSideMuted(boolean muted) {
+        this.sideMuted = muted;
+    }
+
+    // 5-Band Parametric EQ per speaker type (dB, range: -12 to +12)
+    private volatile float[] subEq = new float[5];
+    private volatile float[] midEq = new float[5];
+    private volatile float[] lineEq = new float[5];
+
+    public float getMixerGain(String speakerType) {
+        if ("sub".equals(speakerType))
+            return mixerGainSub;
+        if ("mid".equals(speakerType))
+            return mixerGainMid;
+        if ("line".equals(speakerType))
+            return mixerGainLine;
+        return 1.0f;
+    }
+
+    public void setMixerGain(String speakerType, float gain) {
+        gain = Math.max(0.0f, Math.min(gain, 1.0f));
+        if ("sub".equals(speakerType))
+            mixerGainSub = gain;
+        else if ("mid".equals(speakerType))
+            mixerGainMid = gain;
+        else if ("line".equals(speakerType))
+            mixerGainLine = gain;
+    }
+
+    /** Get EQ dB for a speaker type and band (0 to 4) */
+    public synchronized float getEqDb(String speakerType, int band) {
+        if (band < 0 || band > 4)
+            return 0f;
+        if ("sub".equals(speakerType))
+            return subEq[band];
+        if ("mid".equals(speakerType))
+            return midEq[band];
+        if ("line".equals(speakerType))
+            return lineEq[band];
+        return 0f;
+    }
+
+    /** Set EQ dB for a speaker type and band (0 to 4). Range: -12 to +12 */
+    public synchronized void setEqDb(String speakerType, int band, float db) {
+        if (band < 0 || band > 4)
+            return;
+        db = Math.max(-12f, Math.min(db, 12f));
+        if ("sub".equals(speakerType))
+            subEq[band] = db;
+        else if ("mid".equals(speakerType))
+            midEq[band] = db;
+        else if ("line".equals(speakerType))
+            lineEq[band] = db;
+    }
+
+    // Q (Bandwidth) per speaker type and band (range: 0.1 to 10.0, default: 1.0)
+    private volatile float[] subEqQ = new float[] { 1f, 1f, 1f, 1f, 1f };
+    private volatile float[] midEqQ = new float[] { 1f, 1f, 1f, 1f, 1f };
+    private volatile float[] lineEqQ = new float[] { 1f, 1f, 1f, 1f, 1f };
+
+    /** Get EQ Q for a speaker type and band (0 to 4) */
+    public synchronized float getEqQ(String speakerType, int band) {
+        if (band < 0 || band > 4)
+            return 1f;
+        if ("sub".equals(speakerType))
+            return subEqQ[band];
+        if ("mid".equals(speakerType))
+            return midEqQ[band];
+        if ("line".equals(speakerType))
+            return lineEqQ[band];
+        return 1f;
+    }
+
+    /** Set EQ Q for a speaker type and band (0 to 4). Range: 0.1 to 10.0 */
+    public synchronized void setEqQ(String speakerType, int band, float q) {
+        if (band < 0 || band > 4)
+            return;
+        q = Math.max(0.1f, Math.min(q, 10.0f));
+        if ("sub".equals(speakerType))
+            subEqQ[band] = q;
+        else if ("mid".equals(speakerType))
+            midEqQ[band] = q;
+        else if ("line".equals(speakerType))
+            lineEqQ[band] = q;
+    }
+
+    /**
+     * Smooth gain interpolation placeholder.
+     * Called every render frame.
+     */
+    public void updateGains() {
+        if (this.listenerPos == null)
+            return;
+
+        // Ensure venue reverb is applied if a preset exists
+        ensureVenueReverb();
+
+        // Note: Per-source physics (gain, occlusion, etc.) is now handled
+        // in StreamSource.update() which runs every tick.
+    }
+
+    /**
+     * Thread-safe wall-clock time since playback started.
+     * Audio thread calls this to derive globalSampleTime for ALL sources.
+     * Pause duration is already factored out via streamStartTime offset.
+     * Returns 0.0 if not playing.
+     */
+    public double getTimeSinceStart() {
+        if (!isPlaying || streamStartTime == 0)
+            return 0.0;
+        return (System.nanoTime() - streamStartTime) / 1_000_000_000.0;
+    }
+
+    /**
+     * Returns the sample rate of the currently active audio stream.
+     * Used by the global master clock to convert wall-clock seconds to sample
+     * position.
+     */
+    public int getSampleRateForClock() {
+        for (AudioStreamBuffer buffer : streamBuffers.values()) {
+            if (buffer.sampleRate > 0) {
+                return buffer.sampleRate;
+            }
+        }
+        return 48000; // Safe fallback
+    }
+
+    private long lastTickTime = System.nanoTime();
+
+    /**
+     * Cleanup and logic update. Called every client tick (20Hz).
+     */
+    public void updateSourcesTick(World world) {
+        MinecraftClient mc = MinecraftClient.getInstance();
+        boolean gamePaused = mc.isPaused();
+
+        if (gamePaused != isPaused) {
+            isPaused = gamePaused;
+            if (isPaused) {
+                // Game Just Paused: Record timestamp
+                pauseStartTimestamp = System.nanoTime();
+                pauseAll();
+            } else {
+                // Game Just Resumed: Calculate duration and shift start time
+                if (pauseStartTimestamp > 0 && streamStartTime > 0) {
+                    long pauseDuration = System.nanoTime() - pauseStartTimestamp;
+                    streamStartTime += pauseDuration; // "Freeze" the timeline during pause
+                }
+                resumeAll();
+            }
+        }
+
+        // Don't update logic if paused
+        if (isPaused) {
+            lastTickTime = System.nanoTime(); // Reset delta tracking when paused
+            return;
+        }
+
+        // OPTIMIZATION: Continuous environment analysis is disabled to save CPU.
+        // We only care about the PA system, which does a one-time scan via
+        // scanAtPosition() later.
+        // analyzeEnvironment(world);
+
+        double timeSinceStart = 0;
+        // Absolute Time Synchronization (Fixes Speed & Lag Issues)
+        if (isPlaying && streamStartTime != 0) {
+            long now = System.nanoTime();
+            timeSinceStart = (now - streamStartTime) / 1_000_000_000.0;
+
+            // FREEZE DETECTION REMOVED: With global master clock (globalSampleTime
+            // derived from nanoTime), all sources ALWAYS share the same
+            // timeline. Inter-source drift is mathematically impossible.
+        }
+
+        for (StreamSource source : streamSources) {
+            // Pass current time (not lookahead) to source for playback
+            if (!source.update(world, this.listenerPos, timeSinceStart)) {
+                // Sound finished or invalid
+                source.cleanup();
+                streamSources.remove(source);
+            }
+        }
+
+        // Apply Listener-based Early Reflections dynamically every tick
+        if (isPlaying) {
+            updateListenerReflections(world);
+        }
+
+        // --- VENUE-LOCKED REVERB STATE FIX ---
+        // If all sources finished naturally during ACTIVE playback, clear the venue
+        // preset.
+        // Otherwise, the player will be stuck with the stadium reverb forever.
+        // Guard: only clear if we were actually playing (not during device recovery)
+        if (isPlaying && streamSources.isEmpty() && this.venuePreset != null) {
+            this.venuePreset = null;
+            this.venuePresetApplied = false;
+        }
+
+        // --- OCCLUSION CLUSTERING (REMOVED) ---
+        // Clustering was sharing occlusion values between speakers up to 8 blocks
+        // apart.
+        // If one speaker peeks out from behind a wall, the *entire cluster* instantly
+        // gets
+        // unoccluded, causing a sudden pop in volume and treble even for speakers still
+        // behind the wall.
+        // Raycast performance is already throttled per-speaker in StreamSource.java.
+
+        // --- MASTER REVERB OCCLUSION (Global Room Reverb Control) ---
+        // If the player steps outside the building where the music is playing, the
+        // overall
+        // room reverb (the tail of the stadium or hall) should also be physically
+        // muffled and blocked
+        // by the walls. It should not hang in the player's ears like an artificial
+        // overlay.
+        float maxOcclusion = 0.0f;
+        for (StreamSource source : streamSources) {
+            if (source.currentOcclusion > maxOcclusion) {
+                maxOcclusion = source.currentOcclusion;
+            }
+        }
+
+        // If not playing anything, keep maxOcclusion at 1.0 so ambient sound is normal
+        if (streamSources.isEmpty()) {
+            maxOcclusion = 1.0f;
+        }
+
+        updateMasterReverbOcclusion(maxOcclusion);
+
+        // Ensure venue reverb is applied if preset exists
+        ensureVenueReverb();
+
+        lastTickTime = System.nanoTime();
+    }
+
+    /**
+     * Pauses all active audio sources (Game Paused).
+     */
+    public void pauseAll() {
+        for (StreamSource sound : streamSources) {
+            sound.pause();
+        }
+        // Mute aux effect slots to kill reverb tails during pause
+        if (auxSlotId != 0) {
+            alAuxiliaryEffectSlotf(auxSlotId, AL_EFFECTSLOT_GAIN, 0.0f);
+        }
+    }
+
+    /**
+     * Resumes all active audio sources (Game Unpaused).
+     */
+    public void resumeAll() {
+        // Restore aux effect slot gain before resuming sources
+        if (auxSlotId != 0) {
+            alAuxiliaryEffectSlotf(auxSlotId, AL_EFFECTSLOT_GAIN, 1.0f);
+        }
+        for (StreamSource sound : streamSources) {
+            sound.resume();
+        }
+    }
+
+    /**
+     * Stops all active audio sources immediately.
+     */
+    public void stopAll() {
+        // Shutdown background audio thread first
+        if (audioThread != null) {
+            audioThread.shutdownNow();
+            try {
+                audioThread.awaitTermination(50, TimeUnit.MILLISECONDS);
+            } catch (InterruptedException ie) {
+                Thread.currentThread().interrupt();
+            }
+            audioThread = null;
+        }
+
+        for (StreamSource sound : streamSources) {
+            sound.cleanup();
+        }
+        streamSources.clear();
+        isPaused = false;
+        isPlaying = false;
+        streamStartTime = 0;
+
+        // Clear venue preset so reverb falls back to listener-based scanner
+        this.venuePreset = null;
+        this.venuePresetApplied = false;
+        this.storedVenueDescriptor = null;
+        this.storedVenueProbePos = null;
+    }
+
+    /**
+     * Start the background audio processing thread.
+     * Runs every 5ms, pre-computing PCM buffers for all active StreamSources.
+     */
+    private void startAudioThread() {
+        if (audioThread != null) {
+            audioThread.shutdownNow();
+            try {
+                audioThread.awaitTermination(50, TimeUnit.MILLISECONDS);
+            } catch (InterruptedException ie) {
+                Thread.currentThread().interrupt();
+            }
+        }
+
+        // Capture LWJGL OpenAL capabilities from the current (render) thread.
+        // These must be propagated to the audio thread so it can make AL calls.
+        final org.lwjgl.openal.ALCapabilities alCaps = org.lwjgl.openal.AL.getCapabilities();
+
+        audioThread = Executors.newSingleThreadScheduledExecutor(r -> {
+            Thread t = new Thread(r, "AudiophileCraft-Audio");
+            t.setDaemon(true);
+            return t;
+        });
+
+        // One-shot init: set AL capabilities on the audio thread before any work
+        audioThread.execute(() -> {
+            try {
+                org.lwjgl.openal.AL.setCurrentThread(alCaps);
+            } catch (Exception e) {
+                System.err.println("AudioEngine: Failed to propagate AL caps to audio thread: " + e.getMessage());
+            }
+        });
+
+        audioThread.scheduleWithFixedDelay(this::processAudioBackground, 0, 5, TimeUnit.MILLISECONDS);
+    }
+
+    /**
+     * Background audio processing loop.
+     * Phase 1: Smooth listener position (kill FPS jitter).
+     * Phase 2: Pre-computes PCM data for all active sources with up-to-date
+     * distance.
+     * Phase 3: Feeds the pre-computed data to OpenAL (unqueue → fill → queue).
+     * All phases run entirely on this thread, making audio independent from the
+     * render thread. Minecraft can freeze for seconds without audio dropping out.
+     */
+    private void processAudioBackground() {
+        try {
+            // CRITICAL: Respect game pause and load state.
+            if (isPaused)
+                return;
+
+            // SKIP: Don't feed sources while seek() is updating the global clock
+            // and re-aligning speakers. Prevents underrun recovery from snapping
+            // outputCursor to wrong positions mid-seek.
+            if (isSeeking)
+                return;
+
+            // PHASE 0: Decode OGG on the background thread.
+            // If the main thread hangs (32 chunks), OGG decoding will continue flawlessly
+            // preventing IIR filter math explosions due to audio dropouts.
+            double currentWallTime = getTimeSinceStart();
+            for (AudioStreamBuffer buffer : streamBuffers.values()) {
+                if (buffer.sampleRate > 0) {
+                    buffer.syncToTime(currentWallTime + BUFFER_LOOKAHEAD);
+                }
+            }
+
+            // ═══════════════════════════════════════════════════════════════
+            // PHASE 1: Smooth listener position (lock-free volatile read)
+            // alpha = 0.35 at 200Hz → effective time constant ~14ms
+            // Eats Minecraft's per-frame jitter without adding latency.
+            // ═══════════════════════════════════════════════════════════════
+            Vec3d rawPos = this.listenerPos;
+            Vec3d prev = this.smoothedListenerPos;
+            double alpha = 0.35;
+            this.smoothedListenerPos = new Vec3d(
+                    prev.x + (rawPos.x - prev.x) * alpha,
+                    prev.y + (rawPos.y - prev.y) * alpha,
+                    prev.z + (rawPos.z - prev.z) * alpha);
+            Vec3d currentPos = this.smoothedListenerPos;
+
+            // ═══════════════════════════════════════════════════════════════
+            // GLOBAL MASTER CLOCK: Compute the single authoritative sample
+            // position that ALL sources will use. This guarantees zero drift.
+            // ═══════════════════════════════════════════════════════════════
+            double globalSampleTime = currentWallTime * getSampleRateForClock();
+
+            // NOTE: Early reflections are now mixed directly into
+            // StreamSource.generatePcmBlock()
+            // as delayed signal taps — no separate OpenAL source feeding needed.
+
+            // Unified Phase: Feed OpenAL with inline PCM generation using global clock.
+            // Distance calculation is done inside each source's feed method.
+            reusableRestartBuffer.clear();
+
+            for (StreamSource source : streamSources) {
+                if (source.feedOpenALFromAudioThread(globalSampleTime, currentPos)) {
+                    // Prevent overflow in extreme situations
+                    if (reusableRestartBuffer.remaining() > 0) {
+                        reusableRestartBuffer.put(source.sourceId);
+                    }
+                }
+            }
+
+            if (reusableRestartBuffer.position() > 0) {
+                int count = reusableRestartBuffer.position();
+                reusableRestartBuffer.flip();
+                org.lwjgl.openal.AL10.alSourcePlayv(reusableRestartBuffer); // ATOMIC RESTART
+            }
+        } catch (Exception e) {
+            // Swallow: ConcurrentModification during stopAll is harmless
+        }
+    }
+
+    /**
+     * Full cleanup including EFX resources.
+     */
+    public void cleanupEfx() {
+        stopAll();
+        if (auxSlotId != 0) {
+            alAuxiliaryEffectSloti(auxSlotId, AL_EFFECTSLOT_EFFECT, AL_EFFECT_NULL);
+            alDeleteAuxiliaryEffectSlots(auxSlotId);
+            auxSlotId = 0;
+        }
+        if (reverbEffectId != 0) {
+            alDeleteEffects(reverbEffectId);
+            reverbEffectId = 0;
+        }
+        // Free cached OpenAL buffers to prevent GPU-side memory leak
+        for (Map<String, Integer> trackBuffers : bufferCache.values()) {
+            for (int bufferId : trackBuffers.values()) {
+                alDeleteBuffers(bufferId);
+            }
+        }
+        bufferCache.clear();
+
+        // Free Stream Buffers (off-heap memory)
+        for (AudioStreamBuffer buffer : streamBuffers.values()) {
+            buffer.cleanup();
+        }
+        streamBuffers.clear();
+
+        efxInitialized = false;
+    }
+
+    private final Map<String, Map<String, Integer>> bufferCache = new HashMap<>();
+
+    // Speaker Types for Cache Keys
+    private static final String TYPE_NORMAL = "normal";
+    private static final String TYPE_SUB = "sub";
+    private static final String TYPE_MID = "mid";
+    private static final String TYPE_LINE = "line";
+
+    // Stream Buffers Management
+    private void prepareStreamBuffers(String trackId) {
+        for (AudioStreamBuffer buffer : streamBuffers.values()) {
+            buffer.cleanup();
+        }
+        streamBuffers.clear();
+
+        // Load Raw Data once
+        OggDecoder.RawTrackData rawData = OggDecoder.loadOgg("sounds/" + trackId + ".ogg");
+        if (rawData == null)
+            return;
+
+        // Create 3 Buffers (Sub, Mid, Line) + Normal?
+        createStreamBufferForType(trackId, rawData, TYPE_SUB);
+        createStreamBufferForType(trackId, rawData, TYPE_MID);
+        createStreamBufferForType(trackId, rawData, TYPE_LINE);
+        createStreamBufferForType(trackId, rawData, TYPE_NORMAL);
+
+        // Free the native PCM buffer to prevent memory leak
+        MemoryUtil.memFree(rawData.pcmData);
+    }
+
+    private void createStreamBufferForType(String trackId, OggDecoder.RawTrackData rawData, String type) {
+        // Clone data for processing
+        short[] audioData = new short[rawData.pcmData.remaining()];
+        rawData.pcmData.rewind();
+        rawData.pcmData.get(audioData);
+        rawData.pcmData.rewind(); // Reset for next usage
+
+        // Apply DSP
+        applyDspForType(audioData, rawData.sampleRate, type);
+
+        // Create Buffer
+        AudioStreamBuffer buffer = new AudioStreamBuffer(trackId + "_" + type, rawData.sampleRate);
+
+        // Fill Buffer
+        ShortBuffer pcm = MemoryUtil.memAllocShort(audioData.length);
+        pcm.put(audioData);
+        pcm.flip();
+
+        buffer.setSourceData(pcm);
+        streamBuffers.put(type, buffer);
+    }
+
+    private void applyDspForType(short[] audioData, int sampleRate, String speakerType) {
+        // Pre-gain for headroom: fixed at 0.60 for all incoming tracks
+        AudioDSP.applyGain(audioData, 0.60f);
+        if (TYPE_SUB.equals(speakerType)) {
+            // 24dB/oct Butterworth LP crossover at 100Hz
+            AudioDSP.applyFilter(audioData, sampleRate, AudioDSP.FilterType.LOW_PASS, 100, 0.707f, 0);
+            AudioDSP.applyFilter(audioData, sampleRate, AudioDSP.FilterType.LOW_PASS, 100, 0.707f, 0);
+        } else if (TYPE_MID.equals(speakerType)) {
+            // 24dB/oct HP at 100Hz (matches sub crossover) + 24dB/oct LP at 2000Hz
+            AudioDSP.applyFilter(audioData, sampleRate, AudioDSP.FilterType.HIGH_PASS, 100, 0.707f, 0);
+            AudioDSP.applyFilter(audioData, sampleRate, AudioDSP.FilterType.HIGH_PASS, 100, 0.707f, 0);
+            AudioDSP.applyFilter(audioData, sampleRate, AudioDSP.FilterType.LOW_PASS, 2000, 0.707f, 0);
+            AudioDSP.applyFilter(audioData, sampleRate, AudioDSP.FilterType.LOW_PASS, 2000, 0.707f, 0);
+        } else if (TYPE_LINE.equals(speakerType)) {
+            // Line arrays in real life output both Mid and High frequencies (everything
+            // except Sub)
+            // 24dB/oct HP at 100Hz (no Low-Pass so it extends to 20kHz)
+            AudioDSP.applyFilter(audioData, sampleRate, AudioDSP.FilterType.HIGH_PASS, 100, 0.707f, 0);
+            AudioDSP.applyFilter(audioData, sampleRate, AudioDSP.FilterType.HIGH_PASS, 100, 0.707f, 0);
+        }
+
+        // SAFETY LIMITER: Prevents hard digital clipping
+        AudioDSP.applyPeakLimiter(audioData, 0.98f);
+    }
+
+
+    public void playTrack(String trackId, List<BlockPos> speakers, float power, float inputGain) {
+        stopAll();
+        trackGeneration++;
+
+        // Clear old venue scan data
+        AdvancedAcousticScanner.lastPointCloud = null;
+        AdvancedAcousticScanner.lastVenueBlocks = null;
+        AdvancedAcousticScanner.lastSpeakers = speakers != null ? new java.util.ArrayList<>(speakers) : new java.util.ArrayList<>();
+        venuePreset = null;
+        venuePresetApplied = false;
+        storedVenueDescriptor = null;
+        storedVenueProbePos = null;
+        com.audiophilecraft.client.screen.PointCloudRenderer.invalidateCache();
+
+        while (alGetError() != AL_NO_ERROR) { /* drain */ }
+        initEfx();
+
+        if (speakers == null || speakers.isEmpty()) return;
+
+        try {
+            prepareStreamBuffers(trackId);
+            this.isPlaying = true;
+            this.isPaused = false;
+            for (AudioStreamBuffer buffer : streamBuffers.values()) {
+                if (buffer.sampleRate > 0) buffer.syncToTime(BUFFER_LOOKAHEAD);
+            }
+
+            // Shared logic
+            World world = MinecraftClient.getInstance().world;
+            int[] counts = countSpeakerTypes(speakers, world);
+            List<List<BlockPos>> clusters = clusterSpeakers(speakers);
+            createSourcesFromClusters(clusters, counts, world, power, inputGain);
+            startPlaybackWithVenueScan(world, speakers, false);
+
+        } catch (Exception e) {
+            e.printStackTrace();
+        }
+    }
+
+    public void updateInputGain(float gain) {
+        for (StreamSource ss : streamSources) {
+            ss.inputGain = gain;
+        }
+    }
+
+    /**
+     * Live update power for all active StreamSources.
+     * Called when the power knob is changed in the GUI.
+     * Smoothing is handled inside StreamSource.updatePhysics().
+     */
+    public void updatePower(float power) {
+        for (StreamSource ss : streamSources) {
+            ss.power = power;
+        }
+    }
+
+    /**
+     * Play audio from an internet URL (YouTube, SoundCloud, HTTP, etc.)
+     * Uses InternetAudioLoader (LavaPlayer) to resolve and decode the URL to PCM,
+     * then feeds into the existing DSP/StreamSource/OpenAL pipeline.
+     *
+     * @param url       The URL to play (e.g. YouTube link, HTTP audio file)
+     * @param speakers  Connected speaker positions
+     * @param power     Amplifier power
+     * @param inputGain Input gain multiplier
+     */
+    public void playFromUrl(String url, List<BlockPos> speakers, float power, float inputGain) {
+
+        InternetAudioLoader.getInstance().loadTrack(url, new InternetAudioLoader.TrackLoadCallback() {
+            @Override
+            public void onTrackLoaded(short[] pcmData, int sampleRate, String trackTitle) {
+
+                // Execute on the main client thread to avoid OpenAL threading issues
+                MinecraftClient.getInstance().execute(() -> {
+                    playFromPcmData(pcmData, sampleRate, speakers, power, inputGain);
+                });
+            }
+
+            @Override
+            public void onFailed(String reason) {
+                System.err.println("AudioEngine: URL load failed: " + reason);
+            }
+        });
+    }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // SHARED HELPERS — Used by both playTrack() and playFromPcmData()
+    // ═══════════════════════════════════════════════════════════════════
+
+    /**
+     * Groups speaker positions into clusters based on proximity (≤8 blocks).
+     * Speakers in the same cluster share a leader for delay synchronization.
+     */
+    private List<List<BlockPos>> clusterSpeakers(List<BlockPos> speakers) {
+        List<List<BlockPos>> clusters = new java.util.ArrayList<>();
+        for (BlockPos pos : speakers) {
+            boolean added = false;
+            for (List<BlockPos> cluster : clusters) {
+                for (BlockPos cPos : cluster) {
+                    if (cPos.getSquaredDistance(pos) <= 8.0) {
+                        cluster.add(pos);
+                        added = true;
+                        break;
+                    }
+                }
+                if (added) break;
+            }
+            if (!added) {
+                List<BlockPos> newCluster = new java.util.ArrayList<>();
+                newCluster.add(pos);
+                clusters.add(newCluster);
+            }
+        }
+        return clusters;
+    }
+
+    /**
+     * Counts speakers by type: [sub, mid, line, normal].
+     */
+    private int[] countSpeakerTypes(List<BlockPos> speakers, World world) {
+        int countSub = 0, countMid = 0, countLine = 0, countNormal = 0;
+        if (world != null) {
+            for (BlockPos pos : speakers) {
+                var block = world.getBlockState(pos).getBlock();
+                if (block instanceof com.audiophilecraft.block.SubwooferBlock) countSub++;
+                else if (block instanceof com.audiophilecraft.block.MidRangeBlock) countMid++;
+                else if (block instanceof com.audiophilecraft.block.LineArrayBlock) countLine++;
+                else countNormal++;
+            }
+        }
+        return new int[]{countSub, countMid, countLine, countNormal};
+    }
+
+    /**
+     * Creates OpenAL sources and StreamSource objects for all speakers in all clusters.
+     * Shared logic between OGG playback and URL/PCM playback.
+     */
+    private void createSourcesFromClusters(List<List<BlockPos>> clusters, int[] counts,
+            World world, float power, float inputGain) {
+        for (List<BlockPos> cluster : clusters) {
+            StreamSource leaderSource = null;
+            for (BlockPos pos : cluster) {
+                String speakerType = TYPE_NORMAL;
+                float baseRefDist = 3.0f;
+                float baseMaxDist = 64.0f;
+                int sampleShiftMs = 0;
+                int speakerCount = 1;
+
+                if (world != null) {
+                    var blockState = world.getBlockState(pos);
+                    var block = blockState.getBlock();
+                    if (block instanceof com.audiophilecraft.block.SubwooferBlock) {
+                        speakerType = TYPE_SUB; baseRefDist = 10.0f; baseMaxDist = 85.0f; speakerCount = counts[0];
+                    } else if (block instanceof com.audiophilecraft.block.MidRangeBlock) {
+                        speakerType = TYPE_MID; baseRefDist = 5.0f; baseMaxDist = 60.0f; speakerCount = counts[1];
+                    } else if (block instanceof com.audiophilecraft.block.LineArrayBlock) {
+                        speakerType = TYPE_LINE; baseRefDist = 3.0f; baseMaxDist = 50.0f; speakerCount = counts[2];
+                    } else {
+                        speakerCount = counts[3];
+                    }
+                    net.minecraft.block.entity.BlockEntity be = world.getBlockEntity(pos);
+                    if (be instanceof com.audiophilecraft.block.entity.SpeakerBlockEntity speakerBe) {
+                        sampleShiftMs = speakerBe.getSampleShift();
+                    }
+                }
+
+                AudioStreamBuffer buffer = streamBuffers.get(speakerType);
+                if (buffer == null) buffer = streamBuffers.get(TYPE_NORMAL);
+                if (buffer == null) continue;
+
+                int sourceId = alGenSources();
+                int err = alGetError();
+                if (err != AL_NO_ERROR) {
+                    System.err.println("AudioEngine: OPENAL SOURCE LIMIT HIT! Failed at speaker #"
+                            + (streamSources.size() + 1) + " of " + clusters.stream().mapToInt(List::size).sum()
+                            + " (error=0x" + Integer.toHexString(err) + ")");
+                    // Clean up any sources created so far — partial playback is worse than silence
+                    for (StreamSource s : streamSources) {
+                        s.cleanup();
+                    }
+                    streamSources.clear();
+                    isPlaying = false;
+                    break;
+                }
+
+                alSource3f(sourceId, AL_POSITION, pos.getX() + 0.5f, pos.getY() + 0.5f, pos.getZ() + 0.5f);
+                alSourcef(sourceId, AL_ROLLOFF_FACTOR, 1.0f);
+                alSourcef(sourceId, AL_MAX_DISTANCE, Float.MAX_VALUE);
+                alSourcef(sourceId, AL_REFERENCE_DISTANCE, baseRefDist);
+                alSourcef(sourceId, AL_GAIN, 1.0f);
+                alSourcef(sourceId, AL_PITCH, 1.0f);
+
+                Direction facing = Direction.SOUTH;
+                int tiltDeg = 0;
+                if (world != null) {
+                    BlockState state = world.getBlockState(pos);
+                    if (state.contains(Properties.HORIZONTAL_FACING)) {
+                        facing = state.get(Properties.HORIZONTAL_FACING);
+                    }
+                    net.minecraft.block.entity.BlockEntity sbe = world.getBlockEntity(pos);
+                    if (sbe instanceof com.audiophilecraft.block.entity.SpeakerBlockEntity speaker) {
+                        tiltDeg = speaker.getVerticalTilt();
+                    }
+                }
+                Vec3i vec = facing.getVector();
+                float tiltRad = (float) Math.toRadians(tiltDeg);
+                float cosT = (float) Math.cos(tiltRad);
+                float sinT = (float) Math.sin(tiltRad);
+                float dirX = vec.getX() * cosT;
+                float dirY = sinT;
+                float dirZ = vec.getZ() * cosT;
+                alSource3f(sourceId, AL_DIRECTION, dirX, dirY, dirZ);
+
+                int filterId = 0, sendFilterId = 0;
+                try {
+                    filterId = alGenFilters();
+                    alFilteri(filterId, AL_FILTER_TYPE, AL_FILTER_LOWPASS);
+                    alFilterf(filterId, AL_LOWPASS_GAIN, 1.0f);
+                    alFilterf(filterId, AL_LOWPASS_GAINHF, 1.0f);
+                    alSourcei(sourceId, AL_DIRECT_FILTER, filterId);
+
+                    sendFilterId = alGenFilters();
+                    alFilteri(sendFilterId, AL_FILTER_TYPE, AL_FILTER_LOWPASS);
+                    alFilterf(sendFilterId, AL_LOWPASS_GAIN, 1.0f);
+                    alFilterf(sendFilterId, AL_LOWPASS_GAINHF, 1.0f);
+                    if (auxSlotId != 0) {
+                        alSource3i(sourceId, AL_AUXILIARY_SEND_FILTER, auxSlotId, 0, sendFilterId);
+                    }
+                } catch (Exception e) {
+                    System.err.println("AudioEngine: EFX filter/send setup failed: " + e.getMessage());
+                }
+
+                StreamSource ss = new StreamSource(sourceId, buffer, pos, power, baseMaxDist * power,
+                        baseRefDist * power, dirX, dirY, dirZ, speakerType, filterId, sendFilterId,
+                        inputGain, sampleShiftMs, speakerCount, leaderSource, cluster.size());
+                streamSources.add(ss);
+
+                if (leaderSource == null) leaderSource = ss;
+            }
+        }
+    }
+
+    /**
+     * Performs venue acoustic scan and starts playback.
+     * If world is null or no sources exist, starts playback immediately.
+     *
+     * @param atomicStart If true, uses alSourcePlayv for simultaneous start (URL path).
+     *                    If false, uses source.start() individually (OGG path).
+     */
+    private void startPlaybackWithVenueScan(World world, List<BlockPos> speakers, boolean atomicStart) {
+        Runnable startPlayback = () -> {
+            if (MinecraftClient.getInstance().cameraEntity != null) {
+                this.listenerPos = MinecraftClient.getInstance().cameraEntity.getPos();
+                this.smoothedListenerPos = this.listenerPos;
+            }
+            this.streamStartTime = System.nanoTime();
+
+            if (atomicStart) {
+                java.nio.IntBuffer sourceIds = org.lwjgl.BufferUtils.createIntBuffer(streamSources.size());
+                for (StreamSource source : streamSources) {
+                    org.lwjgl.openal.AL10.alSourcei(source.sourceId, org.lwjgl.openal.AL10.AL_LOOPING, org.lwjgl.openal.AL10.AL_FALSE);
+                    sourceIds.put(source.sourceId);
+                }
+                sourceIds.flip();
+                org.lwjgl.openal.AL10.alSourcePlayv(sourceIds);
+            } else {
+                for (StreamSource source : streamSources) {
+                    source.start();
+                }
+            }
+            startAudioThread();
+        };
+
+        if (!streamSources.isEmpty() && world != null) {
+            Vec3d probePos = calculateVenueProbe(streamSources);
+            Vec3d stageDir = calculateStageDirection(streamSources);
+
+            int gen = trackGeneration;
+            java.util.concurrent.CompletableFuture.supplyAsync(() -> {
+                return acousticScanner.scanVenue(world, probePos, stageDir);
+            }).thenAcceptAsync(preset -> {
+                if (gen != trackGeneration) return; // stale callback
+                if (preset != null) {
+                    this.venuePreset = preset;
+                    this.storedVenueDescriptor = acousticScanner.getLastDescriptor();
+                    this.storedVenueProbePos = acousticScanner.getLastProbePos();
+                    this.lastConfigGeneration = com.audiophilecraft.config.LiveTuningConfig.getReloadGeneration();
+                    applyVenueReverbToEfx();
+                }
+                startPlayback.run();
+            }, MinecraftClient.getInstance()::execute);
+        } else {
+            startPlayback.run();
+        }
+    }
+
+    /**
+     * Play from raw mono PCM data (used by InternetAudioLoader callback).
+     * Creates DSP-processed stream buffers and spawns StreamSources.
+     */
+    private void playFromPcmData(short[] pcmData, int sampleRate, List<BlockPos> speakers,
+            float power, float inputGain) {
+        stopAll();
+        while (alGetError() != AL_NO_ERROR) { /* drain */ }
+        initEfx();
+
+        if (speakers == null || speakers.isEmpty()) return;
+
+        try {
+            // Wrap PCM data into RawTrackData
+            java.nio.ShortBuffer pcmBuffer = org.lwjgl.system.MemoryUtil.memAllocShort(pcmData.length);
+            pcmBuffer.put(pcmData);
+            pcmBuffer.flip();
+
+            OggDecoder.RawTrackData rawData = new OggDecoder.RawTrackData();
+            rawData.pcmData = pcmBuffer;
+            rawData.sampleRate = sampleRate;
+            rawData.channels = 1;
+            rawData.format = org.lwjgl.openal.AL10.AL_FORMAT_MONO16;
+
+            // Prepare stream buffers
+            for (AudioStreamBuffer buffer : streamBuffers.values()) { buffer.cleanup(); }
+            streamBuffers.clear();
+            createStreamBufferForType("url_track", rawData, TYPE_SUB);
+            createStreamBufferForType("url_track", rawData, TYPE_MID);
+            createStreamBufferForType("url_track", rawData, TYPE_LINE);
+            createStreamBufferForType("url_track", rawData, TYPE_NORMAL);
+            org.lwjgl.system.MemoryUtil.memFree(pcmBuffer);
+
+            this.isPlaying = true;
+            this.isPaused = false;
+            for (AudioStreamBuffer buffer : streamBuffers.values()) {
+                if (buffer.sampleRate > 0) buffer.syncToTime(BUFFER_LOOKAHEAD);
+            }
+
+            // Shared logic
+            World world = MinecraftClient.getInstance().world;
+            int[] counts = countSpeakerTypes(speakers, world);
+            List<List<BlockPos>> clusters = clusterSpeakers(speakers);
+            createSourcesFromClusters(clusters, counts, world, power, inputGain);
+            startPlaybackWithVenueScan(world, speakers, true);
+
+        } catch (Exception e) {
+            e.printStackTrace();
+        }
+    }
+
+    /**
+     * Updates the OpenAL direction vector for all active streams of a speaker
+     * immediately. Called from the client UI or network packets.
+     */
+    public void updateSpeakerTilt(BlockPos speakerPos, int tiltDeg) {
+        net.minecraft.client.world.ClientWorld world = net.minecraft.client.MinecraftClient.getInstance().world;
+        if (world == null)
+            return;
+        net.minecraft.block.BlockState state = world.getBlockState(speakerPos);
+        if (!state.contains(net.minecraft.state.property.Properties.HORIZONTAL_FACING))
+            return;
+
+        net.minecraft.util.math.Direction facing = state.get(net.minecraft.state.property.Properties.HORIZONTAL_FACING);
+        net.minecraft.util.math.Vec3i vec = facing.getVector();
+        float tiltRad = (float) Math.toRadians(tiltDeg);
+        float cosT = (float) Math.cos(tiltRad);
+        float sinT = (float) Math.sin(tiltRad);
+        float dirX = vec.getX() * cosT;
+        float dirY = sinT;
+        float dirZ = vec.getZ() * cosT;
+
+        for (StreamSource ss : streamSources) {
+            if (ss.pos.equals(speakerPos) && !TYPE_SUB.equals(ss.speakerType)) {
+                alSource3f(ss.sourceId, AL_DIRECTION, dirX, dirY, dirZ);
+            }
+        }
+    }
+
+    /**
+     * Fetch Total Duration in Seconds for the currently playing track.
+     */
+    public double getTotalPlaybackDuration() {
+        if (!isPlaying || streamBuffers.isEmpty())
+            return 0.0;
+        AudioStreamBuffer buf = streamBuffers.values().iterator().next();
+        return buf != null ? buf.getTotalDurationSeconds() : 0.0;
+    }
+
+    /**
+     * Fetch Current Playback Time in Seconds.
+     */
+    public double getCurrentPlaybackTime() {
+        if (!isPlaying || streamStartTime == 0)
+            return 0.0;
+        long now = System.nanoTime();
+        double timeSinceStart = (now - streamStartTime) / 1_000_000_000.0;
+        return timeSinceStart;
+    }
+
+    /**
+     * Globally Seek all playing channels to the designated timestamp.
+     * Alters the base physical stream clock so all nodes fast-forward
+     * homogeneously.
+     */
+    public void seek(double timeSeconds) {
+        if (!isPlaying)
+            return;
+
+        // Clamp to bounds
+        double totalDuration = getTotalPlaybackDuration();
+        if (timeSeconds < 0)
+            timeSeconds = 0;
+        if (totalDuration > 0 && timeSeconds > totalDuration)
+            timeSeconds = totalDuration;
+
+        // Echo Debouncing (Client-Side Prediction Defense)
+        // If a local client jumped the track manually, the server echoes the packet
+        // 200ms later.
+        // We do not want to "jump back" 200ms to the exact same marker and cause a
+        // track stutter.
+        if (Math.abs(getCurrentPlaybackTime() - timeSeconds) < 0.5) {
+            return; // Already within the target window realistically
+        }
+
+        // ATOMIC SEEK: Block the audio thread from feeding OpenAL sources
+        // while we update the global clock and re-align every speaker.
+        // Without this, processAudioBackground() can fire mid-seek and cause
+        // underrun recovery to snap outputCursor to the wrong position,
+        // resulting in 3-4 speakers playing asynchronously.
+        isSeeking = true;
+        try {
+            // Nothing to seek if all sources were cleaned up (song ended naturally)
+            if (streamSources.isEmpty())
+                return;
+
+            // Shift absolute temporal timeline baseline
+            long now = System.nanoTime();
+
+            // If the game is paused, adjust the pause tracker so it doesn't double-cancel
+            // the seek on resume
+            if (isPaused) {
+                pauseStartTimestamp = now;
+            }
+
+            this.streamStartTime = now - (long) (timeSeconds * 1_000_000_000.0);
+
+            // Force raw JLayer decoder index jumps
+            for (AudioStreamBuffer buffer : streamBuffers.values()) {
+                // Buffer up to 0.1s INTO THE PAST to cushion StreamSource physics delays.
+                // When speakers simulate spatial distance, they read slightly backwards in the
+                // ring buffer.
+                // If the buffer starts exactly at timeSeconds, spatial delay forces a read of 0
+                // (causing a crackle).
+                buffer.seekToTime(timeSeconds - 0.1);
+
+                // Pre-fill next half-second buffer window so StreamSource AL generators don't
+                // read zeros
+                buffer.syncToTime(timeSeconds + BUFFER_LOOKAHEAD);
+            }
+
+            // Broadcast snap offsets into ALL actively playing physical speakers locally
+            // using atomic AL Source commands
+            java.nio.IntBuffer sourceIds = org.lwjgl.BufferUtils.createIntBuffer(streamSources.size());
+            for (StreamSource source : streamSources) {
+                source.seekToTime(timeSeconds); // Aligns playhead and hardware queue internally (does NOT call
+                                                // alSourcePlay)
+                sourceIds.put(source.sourceId);
+            }
+            sourceIds.flip();
+            org.lwjgl.openal.AL10.alSourcePlayv(sourceIds); // ATOMIC HARDWARE START: NO SPEAKER PHASE STAGGER
+        } finally {
+            isSeeking = false; // Resume audio thread feeding
+        }
+    }
+}

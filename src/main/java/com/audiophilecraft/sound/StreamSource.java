@@ -85,7 +85,7 @@ public class StreamSource {
 
     // Valid check
     public volatile boolean isValid = true;
-    public boolean isFinished = false;
+    public volatile boolean isFinished = false;
 
     // Fast fade-in to prevent harsh waveform snap-pops on manual seeks
     private long seekFadeSamplesRemaining = 0;
@@ -226,11 +226,21 @@ public class StreamSource {
         // Reset delay state so it re-initializes from current distance
         this.lastRenderedDelaySamples = -1.0;
 
-        // Flush OpenAL's queued buffers
-        org.lwjgl.openal.AL10.alSourceStop(sourceId);
-        org.lwjgl.openal.AL10.alSourcei(sourceId, org.lwjgl.openal.AL10.AL_BUFFER, 0);
-
-        // Refill using global absolute positions from the seek target
+        // Flush OpenAL's queued buffers
+
+        org.lwjgl.openal.AL10.alSourceStop(sourceId);
+
+        int queued = org.lwjgl.openal.AL10.alGetSourcei(sourceId, org.lwjgl.openal.AL10.AL_BUFFERS_QUEUED);
+
+        while (queued > 0) {
+
+            org.lwjgl.openal.AL10.alSourceUnqueueBuffers(sourceId);
+
+            queued--;
+
+        }
+
+        // Refill using global absolute positions from the seek target
         double seekStartSample = timeSeconds * streamBuffer.sampleRate;
         for (int i = 0; i < BUFFER_COUNT; i++) {
             double bufferStartSample = seekStartSample + (i * STREAM_BUFFER_SIZE);
@@ -1045,12 +1055,17 @@ public class StreamSource {
             // CLUSTER DELAY SYNC (audio thread owned — no race condition)
             // Followers use leader's distance for propagation delay.
             // Leaders in the for-loop are always processed BEFORE followers
-            // (insertion order), so leader's currentDistanceSnapshot is fresh.
-            if (!isLeader && clusterLeader != null) {
-                this.delayDistanceSnapshot = clusterLeader.currentDistanceSnapshot;
-            } else {
-                this.delayDistanceSnapshot = ownDistance;
-            }
+            // (insertion order), so leader's currentDistanceSnapshot is fresh.
+
+            if (!isLeader && clusterLeader != null && clusterLeader.isValid) {
+
+                this.delayDistanceSnapshot = clusterLeader.currentDistanceSnapshot;
+
+            } else {
+
+                this.delayDistanceSnapshot = ownDistance;
+
+            }
         }
 
         // 1. Check how many buffers the sound card has finished playing
@@ -1291,24 +1306,19 @@ public class StreamSource {
 
         releaseNativeMemory();
 
-        // CRITICAL BUG FIX (OpenAL Source Leak):
-        // Manual unqueueing often fails if the driver hasn't fully updated the state to
-        // STOPPED.
-        // If a buffer is still considered 'playing', alDeleteSources will silently
-        // fail,
-        // leading to permanent exhaustion of the 256 OpenAL hardware sources after a
-        // few songs.
-        // alSourcei with AL_BUFFER 0 instantly forces static buffers to detach, but
-        // streaming
-        // buffers must be flushed via alSourceUnqueueBuffers.
-        org.lwjgl.openal.AL10.alSourcei(sourceId, org.lwjgl.openal.AL10.AL_BUFFER, 0);
-
-        // Safely unqueue all processed/queued streaming buffers
-        int queued = org.lwjgl.openal.AL10.alGetSourcei(sourceId, org.lwjgl.openal.AL10.AL_BUFFERS_QUEUED);
-        while (queued > 0) {
-            org.lwjgl.openal.AL10.alSourceUnqueueBuffers(sourceId);
-            queued--;
-        }
+        // Safely unqueue all processed/queued streaming buffers before detaching
+
+        int queued = org.lwjgl.openal.AL10.alGetSourcei(sourceId, org.lwjgl.openal.AL10.AL_BUFFERS_QUEUED);
+
+        while (queued > 0) {
+
+            org.lwjgl.openal.AL10.alSourceUnqueueBuffers(sourceId);
+
+            queued--;
+
+        }
+
+        org.lwjgl.openal.AL10.alSourcei(sourceId, org.lwjgl.openal.AL10.AL_BUFFER, 0);
 
         // Detach filters/sends before deletion
         try {
