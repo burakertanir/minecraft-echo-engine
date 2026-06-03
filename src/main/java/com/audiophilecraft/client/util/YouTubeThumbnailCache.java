@@ -10,25 +10,48 @@ import java.io.ByteArrayOutputStream;
 import java.io.InputStream;
 import java.net.HttpURLConnection;
 import java.net.URL;
-import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.Map;
 import java.awt.image.BufferedImage;
 import javax.imageio.ImageIO;
 
 public class YouTubeThumbnailCache {
-    private static final Map<String, Identifier> cache = new HashMap<>();
+    private static final int MAX_CACHE_SIZE = 50; // LRU eviction limit
+    private static final Map<String, Identifier> cache = new LinkedHashMap<>(16, 0.75f, true) {
+        @Override
+        protected boolean removeEldestEntry(Map.Entry<String, Identifier> eldest) {
+            if (size() > MAX_CACHE_SIZE) {
+                // Free GPU texture for evicted entry
+                try {
+                    MinecraftClient.getInstance().getTextureManager().destroyTexture(eldest.getValue());
+                } catch (Exception e) {
+                    // Ignore cleanup errors
+                }
+                return true;
+            }
+            return false;
+        }
+    };
 
     public static Identifier getIdentifier(String videoId) {
-        return cache.get(videoId);
+        synchronized (cache) {
+            return cache.get(videoId);
+        }
     }
 
     public static BufferedImage loadAndCache(String videoId) {
-        if (videoId == null || cache.containsKey(videoId)) return null;
+        if (videoId == null) return null;
+        
+        synchronized (cache) {
+            if (cache.containsKey(videoId)) return null;
+        }
 
         try {
             URL imageUrl = new URL("https://img.youtube.com/vi/" + videoId + "/mqdefault.jpg");
             HttpURLConnection conn = (HttpURLConnection) imageUrl.openConnection();
             conn.setRequestProperty("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64)");
+            conn.setConnectTimeout(5000); // 5 second timeout
+            conn.setReadTimeout(5000);
             
             ByteArrayOutputStream baos = new ByteArrayOutputStream();
             try (InputStream in = conn.getInputStream()) {
@@ -52,16 +75,16 @@ public class YouTubeThumbnailCache {
             BufferedImage cropped = original.getSubimage(cropX, 0, cropSize, cropSize);
 
             // Pre-process High-Quality Rounded Corners and Gaussian Shadow using Java 2D
-            int shadowPadding = 45; // Expanded mathematically to yield an exact 12px scaled padding
+            int shadowPadding = 45;
             int canvasSize = cropSize + shadowPadding * 2;
-            int cornerRadius = 24; // Smooth rounded corners
+            int cornerRadius = 24;
             
             BufferedImage processed = new BufferedImage(canvasSize, canvasSize, BufferedImage.TYPE_INT_ARGB);
             
             // 1. Procedural True Gaussian Drop Shadow (25% Opacity max)
             int shadowYOffset = 6;
             float maxOpacity = 0.25f;
-            float blurRadius = 30.0f; // Extremely Soft Gaussian spread
+            float blurRadius = 30.0f;
             
             for (int y = 0; y < canvasSize; y++) {
                 for (int x = 0; x < canvasSize; x++) {
@@ -105,7 +128,7 @@ public class YouTubeThumbnailCache {
             gThumb.drawImage(cropped, 0, 0, null);
             gThumb.dispose();
             
-            // 3. Erase the exact thumbnail footprint from the shadow to prevent dark-edge bleeding
+            // 3. Erase the exact thumbnail footprint from the shadow
             java.awt.Graphics2D g2d = processed.createGraphics();
             g2d.setRenderingHint(java.awt.RenderingHints.KEY_ANTIALIASING, java.awt.RenderingHints.VALUE_ANTIALIAS_ON);
             g2d.setComposite(java.awt.AlphaComposite.DstOut);
@@ -130,13 +153,14 @@ public class YouTubeThumbnailCache {
                     String safeId = videoId.toLowerCase().replaceAll("[^a-z0-9/._-]", "_");
                     Identifier id = new Identifier("audiophilecraft", "yt_thumb_" + safeId);
                     MinecraftClient.getInstance().getTextureManager().registerTexture(id, texture);
-                    cache.put(videoId, id);
+                    synchronized (cache) {
+                        cache.put(videoId, id);
+                    }
                 } catch (Exception e) {
                     e.printStackTrace();
                 }
             });
 
-            // Return original uncropped image for background color extraction to preserve existing logic
             return original;
 
         } catch (Exception e) {

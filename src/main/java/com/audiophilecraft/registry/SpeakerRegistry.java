@@ -3,7 +3,7 @@ package com.audiophilecraft.registry;
 import net.minecraft.util.math.BlockPos;
 
 import java.util.ArrayList;
-import java.util.LinkedHashSet;
+
 import java.util.List;
 import java.util.Set;
 
@@ -13,7 +13,7 @@ import java.util.Set;
  * Scan becomes O(speakers) instead of O(volume).
  */
 public class SpeakerRegistry {
-    private static final Set<BlockPos> speakers = new LinkedHashSet<>();
+    private static final Set<BlockPos> speakers = java.util.concurrent.ConcurrentHashMap.newKeySet();
 
     // --- Speakers ---
 

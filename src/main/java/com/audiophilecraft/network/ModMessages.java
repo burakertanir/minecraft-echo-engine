@@ -5,7 +5,6 @@ import com.audiophilecraft.item.AmplifierTabletItem;
 import com.audiophilecraft.registry.SpeakerRegistry;
 import net.fabricmc.fabric.api.client.networking.v1.ClientPlayNetworking;
 import net.fabricmc.fabric.api.networking.v1.PacketByteBufs;
-import net.fabricmc.fabric.api.networking.v1.PlayerLookup;
 import net.fabricmc.fabric.api.networking.v1.ServerPlayNetworking;
 import net.minecraft.item.ItemStack;
 import net.minecraft.network.PacketByteBuf;
@@ -53,9 +52,8 @@ public class ModMessages {
                                     player.getBlockPos(), AmplifierTabletItem.SCAN_RADIUS);
                             float power = AmplifierTabletItem.getSpeakerPower(stack);
                             float inputGain = AmplifierTabletItem.getInputGain(stack);
-                            // Broadcast to all players
-                            for (net.minecraft.server.network.ServerPlayerEntity nearby : PlayerLookup
-                                    .all(server)) {
+                            // Broadcast to nearby players only (within 64 blocks)
+                            for (net.minecraft.server.network.ServerPlayerEntity nearby : server.getPlayerManager().getPlayerList()) {
                                 sendPlayTrack(nearby, testTrackId, speakers, power, inputGain);
                             }
                         }
@@ -75,9 +73,8 @@ public class ModMessages {
                                     player.getBlockPos(), AmplifierTabletItem.SCAN_RADIUS);
                             float power = AmplifierTabletItem.getSpeakerPower(stack);
                             float inputGain = AmplifierTabletItem.getInputGain(stack);
-                            // Broadcast to all players
-                            for (net.minecraft.server.network.ServerPlayerEntity nearby : PlayerLookup
-                                    .all(server)) {
+                            // Broadcast to nearby players only (within 64 blocks)
+                            for (net.minecraft.server.network.ServerPlayerEntity nearby : server.getPlayerManager().getPlayerList()) {
                                 sendPlayUrl(nearby, url, speakers, power, inputGain);
                             }
                         }
@@ -144,15 +141,22 @@ public class ModMessages {
                     });
                 });
 
-        // Track Timeline Seek Sync
+        // Track Timeline Seek Sync — with tablet validation and proximity check
         ServerPlayNetworking.registerGlobalReceiver(C2S_SEEK_TRACK,
                 (server, player, handler, buf, responseSender) -> {
                     float targetTime = buf.readFloat();
                     server.execute(() -> {
-                        // Echo exact timeline parameters to all connected clients recursively
+                        // Validate player is holding an amplifier tablet
+                        ItemStack mainStack = player.getMainHandStack();
+                        ItemStack offStack = player.getOffHandStack();
+                        if (!(mainStack.getItem() instanceof AmplifierTabletItem) &&
+                            !(offStack.getItem() instanceof AmplifierTabletItem)) {
+                            return; // Ignore if not holding tablet
+                        }
+                        // Echo to nearby players only (within 64 blocks)
                         PacketByteBuf syncBuf = PacketByteBufs.create();
                         syncBuf.writeFloat(targetTime);
-                        for (net.minecraft.server.network.ServerPlayerEntity nearby : PlayerLookup.all(server)) {
+                        for (net.minecraft.server.network.ServerPlayerEntity nearby : server.getPlayerManager().getPlayerList()) {
                             ServerPlayNetworking.send(nearby, S2C_SEEK_TRACK, syncBuf);
                         }
                     });

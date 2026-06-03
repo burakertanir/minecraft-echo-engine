@@ -32,7 +32,7 @@ public class AudioStreamBuffer {
     private short[] pcmArray;
     private volatile int decodedLength = 0; // How many mono samples have been decoded so far
     private int totalExpectedSamples = 0; // Total expected samples (from OGG header)
-    private int readCursor = 0; // Sequential read position for advance()
+    private volatile int readCursor = 0; // Sequential read position for advance() - volatile: written by seekToTime (main thread), read by advance (audio thread)
 
     // Legacy mode (backward compatibility)
     private ShortBuffer fullPcmData; // Source data (entire track) — used by URL path

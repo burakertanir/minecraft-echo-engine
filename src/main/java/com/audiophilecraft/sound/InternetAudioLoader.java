@@ -134,38 +134,40 @@ public class InternetAudioLoader {
 
             // Create a player and play the track through it
             var player = playerManager.createPlayer();
-            player.playTrack(track);
+            try {
+                player.playTrack(track);
 
-            // Read all frames
-            while (true) {
-                AudioFrame frame = player.provide(5000, java.util.concurrent.TimeUnit.MILLISECONDS);
+                // Read all frames
+                while (true) {
+                    AudioFrame frame = player.provide(5000, java.util.concurrent.TimeUnit.MILLISECONDS);
 
-                if (frame == null) {
-                    // No more data or timeout — check if track ended
-                    if (player.getPlayingTrack() == null) {
-                        break; // Track finished
-                    }
-                    // Timeout without data, but track still playing — might be buffering
-                    // Try a few more times then give up
-                    frame = player.provide(10000, java.util.concurrent.TimeUnit.MILLISECONDS);
                     if (frame == null) {
-                        break;
+                        // No more data or timeout — check if track ended
+                        if (player.getPlayingTrack() == null) {
+                            break; // Track finished
+                        }
+                        // Timeout without data, but track still playing — might be buffering
+                        // Try a few more times then give up
+                        frame = player.provide(10000, java.util.concurrent.TimeUnit.MILLISECONDS);
+                        if (frame == null) {
+                            break;
+                        }
                     }
+
+                    byte[] data = frame.getData();
+                    if (data == null || data.length == 0)
+                        continue;
+
+                    // Convert bytes to shorts (BIG-ENDIAN — LavaPlayer PCM_S16_BE format)
+                    short[] samples = new short[data.length / 2];
+                    ByteBuffer.wrap(data).order(ByteOrder.BIG_ENDIAN).asShortBuffer().get(samples);
+
+                    chunks.add(samples);
+                    totalSamples += samples.length;
                 }
-
-                byte[] data = frame.getData();
-                if (data == null || data.length == 0)
-                    continue;
-
-                // Convert bytes to shorts (BIG-ENDIAN — LavaPlayer PCM_S16_BE format)
-                short[] samples = new short[data.length / 2];
-                ByteBuffer.wrap(data).order(ByteOrder.BIG_ENDIAN).asShortBuffer().get(samples);
-
-                chunks.add(samples);
-                totalSamples += samples.length;
+            } finally {
+                player.destroy();
             }
-
-            player.destroy();
 
             if (totalSamples == 0) {
                 callback.onFailed("Decoded 0 samples from track");

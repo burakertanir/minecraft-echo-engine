@@ -18,6 +18,7 @@ import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
 import java.util.HashMap;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
@@ -60,12 +61,12 @@ public class AudioEngine {
     private final AdvancedAcousticScanner acousticScanner = new AdvancedAcousticScanner();
 
     // Streaming System
-    private final Map<String, AudioStreamBuffer> streamBuffers = new HashMap<>();
+    private final Map<String, AudioStreamBuffer> streamBuffers = new ConcurrentHashMap<>(); // Thread-safe: main thread writes, audio thread iterates
     private final List<StreamSource> streamSources = new java.util.concurrent.CopyOnWriteArrayList<>();
 
     // Time Tracking
-    private long streamStartTime = 0; // Absolute start time (nanoTime)
-    private boolean isPlaying = false;
+    private volatile long streamStartTime = 0; // Absolute start time (nanoTime) � volatile: written by main thread, read by audio thread
+    private volatile boolean isPlaying = false; // volatile: written by main thread, read by audio thread
     private static final double BUFFER_LOOKAHEAD = 0.5; // Low-latency pipeline: 6 initial + 3 precomputed buffers ×
                                                         // 1024 = 9216 samples (~0.19s) PLUS delay headroom
     private long pauseStartTimestamp = 0; // Track when pause started
@@ -208,6 +209,9 @@ public class AudioEngine {
         if (efxInitialized)
             return;
         efxInitialized = true;
+
+        // Enable HRTF and expanded source pool for all users
+        enableHrtf();
 
         // HRTF and source pool expansion are now handled via alsoft.ini
         // (placed in %AppData%/alsoft.ini). This avoids alcResetDeviceSOFT
@@ -379,7 +383,7 @@ public class AudioEngine {
                 { 0, 0, 1 }, { 0, 0, -1 }
         };
 
-        int maxDist = 20; // 20 blocks max for early reflections radius
+        int maxDist = 10; // 10 blocks max for early reflections radius
         float minDist = maxDist;
 
         for (int i = 0; i < 6; i++) {
@@ -423,7 +427,7 @@ public class AudioEngine {
         // The venue preset already sets a baseline (1.0x) for the room's average
         // reflectivity.
         // When you walk close to a wall, we BOOST the early reflections up to 2.5x.
-        float dynamicReflGain = baseReflGain * (1.0f + (distanceFactor * 1.5f));
+        float dynamicReflGain = baseReflGain * (1.0f + (distanceFactor * 0.6f));
         dynamicReflGain = Math.max(0.0f, Math.min(3.16f, dynamicReflGain));
 
         // Safely pass to the render thread instead of calling OpenAL directly
@@ -1177,6 +1181,9 @@ public class AudioEngine {
         createStreamBufferForType(trackId, rawData, TYPE_MID);
         createStreamBufferForType(trackId, rawData, TYPE_LINE);
         createStreamBufferForType(trackId, rawData, TYPE_NORMAL);
+
+        // Free the native PCM buffer to prevent memory leak
+        MemoryUtil.memFree(rawData.pcmData);
     }
 
     private void createStreamBufferForType(String trackId, OggDecoder.RawTrackData rawData, String type) {

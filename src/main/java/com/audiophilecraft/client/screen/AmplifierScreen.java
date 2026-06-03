@@ -37,7 +37,7 @@ public class AmplifierScreen extends HandledScreen<AmplifierScreenHandler> {
 
     // --- Dynamic Background Variables (Static for Tablet persistence) ---
     private static String currentParsedVideoId = null;
-    private static boolean isFetchingThumbnail = false;
+    private static volatile boolean isFetchingThumbnail = false; // volatile: written by background thread, read by render thread
     private static volatile long thumbnailFetchVersion = 0;
     private static int[] targetColors = new int[] { 0xFF333333, 0xFF555555, 0xFF444444, 0xFF333333 }; // Default gray
     private static int[] currentColors = new int[] { 0xFF333333, 0xFF555555, 0xFF444444, 0xFF333333 };
@@ -49,8 +49,8 @@ public class AmplifierScreen extends HandledScreen<AmplifierScreenHandler> {
     private long lastTypedTime = 0;
     private String lastSearchedQuery = "";
     private boolean isDropdownOpen = false;
-    private boolean isSearching = false;
-    private java.util.List<com.audiophilecraft.util.YouTubeSearcher.SearchResult> searchResults = new java.util.ArrayList<>();
+    private volatile boolean isSearching = false; // volatile: written by background thread, read by render thread
+    private volatile java.util.List<com.audiophilecraft.util.YouTubeSearcher.SearchResult> searchResults = new java.util.ArrayList<>(); // volatile: assigned from background thread, iterated on render thread
 
     // --- Decoupled Play variables (Static for persistence) ---
     private static String activePlayUrl = "";

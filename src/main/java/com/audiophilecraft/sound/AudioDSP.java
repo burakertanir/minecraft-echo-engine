@@ -261,6 +261,12 @@ public class AudioDSP {
                     a2 = (A + 1) - (A - 1) * cosW0 - 2 * Math.sqrt(A) * alpha;
                     break;
                 case LOW_SHELF:
+                    b0 = A * ((A + 1) - (A - 1) * cosW0 + 2 * Math.sqrt(A) * alpha);
+                    b1 = 2 * A * ((A - 1) - (A + 1) * cosW0);
+                    b2 = A * ((A + 1) - (A - 1) * cosW0 - 2 * Math.sqrt(A) * alpha);
+                    a0 = (A + 1) + (A - 1) * cosW0 + 2 * Math.sqrt(A) * alpha;
+                    a1 = -2 * ((A - 1) + (A + 1) * cosW0);
+                    a2 = (A + 1) + (A - 1) * cosW0 - 2 * Math.sqrt(A) * alpha;
                     break;
             }
             this.b0 = b0 / a0;
