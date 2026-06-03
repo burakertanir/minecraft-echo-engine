@@ -28,6 +28,7 @@ public class AmplifierScreenHandler extends ScreenHandler {
     public AmplifierScreenHandler(int syncId, PlayerInventory inventory, ScreenHandlerContext context) {
         super(ModScreenHandlers.AMPLIFIER_SCREEN_HANDLER, syncId);
         this.context = context;
+        this.hand = Hand.MAIN_HAND;
     }
 
     public Hand getHand() {

@@ -31,6 +31,8 @@ public class YouTubeSearcher {
             String encodedQuery = URLEncoder.encode(query, StandardCharsets.UTF_8.toString());
             URL url = new URL("https://www.youtube.com/results?search_query=" + encodedQuery);
             HttpURLConnection conn = (HttpURLConnection) url.openConnection();
+            conn.setConnectTimeout(8000);
+            conn.setReadTimeout(8000);
             conn.setRequestProperty("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36");
             conn.setRequestProperty("Accept-Language", "en-US,en;q=0.9");
             

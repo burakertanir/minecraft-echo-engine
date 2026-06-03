@@ -41,7 +41,7 @@ public class InternetAudioLoader {
         playerManager.registerSourceManager(new HttpAudioSourceManager());
     }
 
-    public static InternetAudioLoader getInstance() {
+    public static synchronized InternetAudioLoader getInstance() {
         if (INSTANCE == null) {
             INSTANCE = new InternetAudioLoader();
         }

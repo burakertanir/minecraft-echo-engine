@@ -52,7 +52,7 @@ public class ModMessages {
                                     player.getBlockPos(), AmplifierTabletItem.SCAN_RADIUS);
                             float power = AmplifierTabletItem.getSpeakerPower(stack);
                             float inputGain = AmplifierTabletItem.getInputGain(stack);
-                            // Broadcast to nearby players only (within 64 blocks)
+                            // Broadcast to all online players so everyone hears the music
                             for (net.minecraft.server.network.ServerPlayerEntity nearby : server.getPlayerManager().getPlayerList()) {
                                 sendPlayTrack(nearby, testTrackId, speakers, power, inputGain);
                             }
@@ -73,7 +73,7 @@ public class ModMessages {
                                     player.getBlockPos(), AmplifierTabletItem.SCAN_RADIUS);
                             float power = AmplifierTabletItem.getSpeakerPower(stack);
                             float inputGain = AmplifierTabletItem.getInputGain(stack);
-                            // Broadcast to nearby players only (within 64 blocks)
+                            // Broadcast to all online players so everyone hears the music
                             for (net.minecraft.server.network.ServerPlayerEntity nearby : server.getPlayerManager().getPlayerList()) {
                                 sendPlayUrl(nearby, url, speakers, power, inputGain);
                             }
@@ -153,7 +153,7 @@ public class ModMessages {
                             !(offStack.getItem() instanceof AmplifierTabletItem)) {
                             return; // Ignore if not holding tablet
                         }
-                        // Echo to nearby players only (within 64 blocks)
+                        // Echo to all online players so everyone's seek stays in sync
                         PacketByteBuf syncBuf = PacketByteBufs.create();
                         syncBuf.writeFloat(targetTime);
                         for (net.minecraft.server.network.ServerPlayerEntity nearby : server.getPlayerManager().getPlayerList()) {
