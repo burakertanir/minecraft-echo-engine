@@ -115,29 +115,40 @@ public class InternetAudioLoader {
             AudioTrackInfo info = track.getInfo();
             String title = info.title;
 
-            // LavaPlayer outputs stereo PCM at 48kHz by default (Opus standard)
-            // Output format: 2 channels, 16-bit signed, 48000 Hz
+            // LavaPlayer outputs stereo PCM at the source's native sample rate
             int sampleRate = 48000;
             int channels = 2;
 
             // Estimate buffer size: duration (ms) * sampleRate / 1000 * channels
             long durationMs = track.getDuration();
             if (durationMs <= 0 || durationMs > 60 * 60 * 1000) {
-                // Cap at 60 minutes to prevent OOM
                 durationMs = 60 * 60 * 1000;
             }
 
             int estimatedSamples = (int) ((durationMs / 1000.0) * sampleRate * channels);
-            // Use a growing list instead of fixed array to handle variable bitrate
             java.util.List<short[]> chunks = new java.util.ArrayList<>();
             int totalSamples = 0;
 
-            // Create a player and play the track through it
             var player = playerManager.createPlayer();
             try {
                 player.playTrack(track);
 
-                // Read all frames
+                // Read first frame to get real sample rate (VBR fix)
+                AudioFrame firstFrame = player.provide(5000, java.util.concurrent.TimeUnit.MILLISECONDS);
+                if (firstFrame != null && firstFrame.getFormat() != null) {
+                    sampleRate = firstFrame.getFormat().sampleRate;
+                    channels = firstFrame.getFormat().channelCount;
+                    // Reprocess first frame
+                    byte[] data = firstFrame.getData();
+                    if (data != null && data.length > 0) {
+                        short[] samples = new short[data.length / 2];
+                        ByteBuffer.wrap(data).order(ByteOrder.BIG_ENDIAN).asShortBuffer().get(samples);
+                        chunks.add(samples);
+                        totalSamples += samples.length;
+                    }
+                }
+
+                // Read remaining frames
                 while (true) {
                     AudioFrame frame = player.provide(5000, java.util.concurrent.TimeUnit.MILLISECONDS);
 
@@ -198,16 +209,6 @@ public class InternetAudioLoader {
                 monoData[i] = (short) mono;
             }
             stereoData = null; // Free stereo data
-
-            // CRITICAL FIX: LavaPlayer does NOT resample to 48kHz!
-            // The output frames contain samples at the SOURCE's native rate,
-            // regardless of the configured output format.
-            // We must derive the actual sample rate from the track duration.
-            double trackDurationSec = durationMs / 1000.0;
-            if (trackDurationSec > 0 && monoSamples > 0) {
-                int actualSampleRate = (int) Math.round(monoSamples / trackDurationSec);
-                sampleRate = actualSampleRate;
-            }
 
             callback.onTrackLoaded(monoData, sampleRate, title);
 

@@ -41,10 +41,10 @@ public class AudioEngine {
     // Global Pause State
     private volatile boolean isPaused = false;
 
-    // Seek Atomicity Guard — prevents audio thread from feeding sources mid-seek
+    // Seek Atomicity Guard â€” prevents audio thread from feeding sources mid-seek
     private volatile boolean isSeeking = false;
 
-    // Track Generation — increments on each playTrack(), used to discard stale venue scan callbacks
+    // Track Generation â€” increments on each playTrack(), used to discard stale venue scan callbacks
     private volatile int trackGeneration = 0;
 
     // Underwater State (for global HF filtering)
@@ -68,9 +68,9 @@ public class AudioEngine {
     private final List<StreamSource> streamSources = new java.util.concurrent.CopyOnWriteArrayList<>();
 
     // Time Tracking
-    private volatile long streamStartTime = 0; // Absolute start time (nanoTime) � volatile: written by main thread, read by audio thread
+    private volatile long streamStartTime = 0; // Absolute start time (nanoTime) ï¿½ volatile: written by main thread, read by audio thread
     private volatile boolean isPlaying = false; // volatile: written by main thread, read by audio thread
-    private static final double BUFFER_LOOKAHEAD = 0.5; // Low-latency pipeline: 6 initial + 3 precomputed buffers ×
+    private static final double BUFFER_LOOKAHEAD = 0.5; // Low-latency pipeline: 6 initial + 3 precomputed buffers Ã—
                                                         // 1024 = 9216 samples (~0.19s) PLUS delay headroom
     private long pauseStartTimestamp = 0; // Track when pause started
 
@@ -151,7 +151,7 @@ public class AudioEngine {
                             org.lwjgl.openal.ALC11.ALC_MONO_SOURCES, 1024,
                             0
                     };
-                    System.out.println("[enableHrtf] Calling alcResetDeviceSOFT(HRTF=TRUE, MONO=512)...");
+                    System.out.println("[enableHrtf] Calling alcResetDeviceSOFT(HRTF=TRUE, MONO=1024)...");
                     boolean success = SOFTHRTF.alcResetDeviceSOFT(device, attrs);
                     int postResetError = ALC10.alcGetError(device);
                     System.out.println("[enableHrtf] alcResetDeviceSOFT returned: " + success
@@ -270,14 +270,14 @@ public class AudioEngine {
 
             if (alGetError() != AL_NO_ERROR) {
                 System.err.println("AudioEngine: Failed to create aux slot");
-                // Cleanup
+                alDeleteEffects(reverbEffectId);
+                reverbEffectId = 0;
                 return;
             }
 
             // Attach effect to slot
             alAuxiliaryEffectSloti(auxSlotId, AL_EFFECTSLOT_EFFECT, reverbEffectId);
 
-            int errCheck = alGetError();
         } catch (Exception e) {
             System.err.println("AudioEngine: EFX init failed: " + e.getMessage());
             reverbEffectId = 0;
@@ -567,12 +567,12 @@ public class AudioEngine {
         // listenerPos stores the REAL position for physics/distance calculations
         this.listenerPos = pos;
 
-        // ═══════════════════════════════════════════════════════════════
+        // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
         // HRTF Y-AXIS FLATTENING (Listener-Side)
-        // ═══════════════════════════════════════════════════════════════
+        // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
         // HRTF uses the elevation angle between listener and source positions.
         // Adjusting source Y doesn't work well because HRTF is angle-based:
-        // if source is directly above, scaling Y doesn't change the 90° angle.
+        // if source is directly above, scaling Y doesn't change the 90Â° angle.
         //
         // Instead, we shift the LISTENER Y that OpenAL sees toward the
         // weighted average Y of active sources. This directly changes the
@@ -580,7 +580,7 @@ public class AudioEngine {
         //
         // Factor 0.4 = listener Y moves 40% toward the average source Y.
         // Result: HRTF perceives sources as being much closer to ear level.
-        // ═══════════════════════════════════════════════════════════════
+        // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
         float openAlListenerY = (float) pos.y;
         if (!streamSources.isEmpty()) {
             double avgSourceY = 0;
@@ -711,7 +711,7 @@ public class AudioEngine {
         return smoothedUnderwaterHF;
     }
 
-    // --- MIXER STATE (Client-Side Only — No Network Required) ---
+    // --- MIXER STATE (Client-Side Only â€” No Network Required) ---
     private volatile float mixerGainSub = 1.0f;
     private volatile float mixerGainMid = 1.0f;
     private volatile float mixerGainLine = 1.0f;
@@ -1063,11 +1063,16 @@ public class AudioEngine {
      * Phase 1: Smooth listener position (kill FPS jitter).
      * Phase 2: Pre-computes PCM data for all active sources with up-to-date
      * distance.
-     * Phase 3: Feeds the pre-computed data to OpenAL (unqueue → fill → queue).
+     * Phase 3: Feeds the pre-computed data to OpenAL (unqueue â†’ fill â†’ queue).
      * All phases run entirely on this thread, making audio independent from the
      * render thread. Minecraft can freeze for seconds without audio dropping out.
      */
     private void processAudioBackground() {
+        // Respect interrupt: executor shutdown will interrupt us
+        if (Thread.interrupted()) {
+            Thread.currentThread().interrupt();
+            return;
+        }
         try {
             // CRITICAL: Respect game pause and load state.
             if (isPaused)
@@ -1089,11 +1094,11 @@ public class AudioEngine {
                 }
             }
 
-            // ═══════════════════════════════════════════════════════════════
+            // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
             // PHASE 1: Smooth listener position (lock-free volatile read)
-            // alpha = 0.35 at 200Hz → effective time constant ~14ms
+            // alpha = 0.35 at 200Hz â†’ effective time constant ~14ms
             // Eats Minecraft's per-frame jitter without adding latency.
-            // ═══════════════════════════════════════════════════════════════
+            // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
             Vec3d rawPos = this.listenerPos;
             Vec3d prev = this.smoothedListenerPos;
             double alpha = 0.35;
@@ -1103,15 +1108,15 @@ public class AudioEngine {
                     prev.z + (rawPos.z - prev.z) * alpha);
             Vec3d currentPos = this.smoothedListenerPos;
 
-            // ═══════════════════════════════════════════════════════════════
+            // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
             // GLOBAL MASTER CLOCK: Compute the single authoritative sample
             // position that ALL sources will use. This guarantees zero drift.
-            // ═══════════════════════════════════════════════════════════════
+            // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
             double globalSampleTime = currentWallTime * getSampleRateForClock();
 
             // NOTE: Early reflections are now mixed directly into
             // StreamSource.generatePcmBlock()
-            // as delayed signal taps — no separate OpenAL source feeding needed.
+            // as delayed signal taps â€” no separate OpenAL source feeding needed.
 
             // Unified Phase: Feed OpenAL with inline PCM generation using global clock.
             // Distance calculation is done inside each source's feed method.
@@ -1150,14 +1155,6 @@ public class AudioEngine {
             alDeleteEffects(reverbEffectId);
             reverbEffectId = 0;
         }
-        // Free cached OpenAL buffers to prevent GPU-side memory leak
-        for (Map<String, Integer> trackBuffers : bufferCache.values()) {
-            for (int bufferId : trackBuffers.values()) {
-                alDeleteBuffers(bufferId);
-            }
-        }
-        bufferCache.clear();
-
         // Free Stream Buffers (off-heap memory)
         for (AudioStreamBuffer buffer : streamBuffers.values()) {
             buffer.cleanup();
@@ -1166,8 +1163,6 @@ public class AudioEngine {
 
         efxInitialized = false;
     }
-
-    private final Map<String, Map<String, Integer>> bufferCache = new HashMap<>();
 
     // Speaker Types for Cache Keys
     private static final String TYPE_NORMAL = "normal";
@@ -1250,8 +1245,8 @@ public class AudioEngine {
         trackGeneration++;
 
         // Clear old venue scan data
-        AdvancedAcousticScanner.lastPointCloud = null;
-        AdvancedAcousticScanner.lastVenueBlocks = null;
+        AdvancedAcousticScanner.lastPointCloud.clear();
+        AdvancedAcousticScanner.lastVenueBlocks.clear();
         AdvancedAcousticScanner.lastSpeakers = speakers != null ? new java.util.ArrayList<>(speakers) : new java.util.ArrayList<>();
         venuePreset = null;
         venuePresetApplied = false;
@@ -1330,17 +1325,20 @@ public class AudioEngine {
         });
     }
 
-    // ═══════════════════════════════════════════════════════════════════
-    // SHARED HELPERS — Used by both playTrack() and playFromPcmData()
-    // ═══════════════════════════════════════════════════════════════════
+    // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+    // SHARED HELPERS â€” Used by both playTrack() and playFromPcmData()
+    // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
     /**
-     * Groups speaker positions into clusters based on proximity (≤8 blocks).
+     * Groups speaker positions into clusters based on proximity (â‰¤8 blocks).
      * Speakers in the same cluster share a leader for delay synchronization.
      */
     private List<List<BlockPos>> clusterSpeakers(List<BlockPos> speakers) {
+        // Sort for deterministic clustering (ConcurrentHashMap iteration order is not guaranteed)
+        java.util.List<BlockPos> sorted = new java.util.ArrayList<>(speakers);
+        java.util.Collections.sort(sorted, java.util.Comparator.comparingLong(net.minecraft.util.math.BlockPos::asLong));
         List<List<BlockPos>> clusters = new java.util.ArrayList<>();
-        for (BlockPos pos : speakers) {
+        for (BlockPos pos : sorted) {
             boolean added = false;
             for (List<BlockPos> cluster : clusters) {
                 for (BlockPos cPos : cluster) {
@@ -1421,7 +1419,7 @@ public class AudioEngine {
                     System.err.println("AudioEngine: OPENAL SOURCE LIMIT HIT! Failed at speaker #"
                             + (streamSources.size() + 1) + " of " + clusters.stream().mapToInt(List::size).sum()
                             + " (error=0x" + Integer.toHexString(err) + ")");
-                    // Clean up any sources created so far — partial playback is worse than silence
+                    // Clean up any sources created so far â€” partial playback is worse than silence
                     for (StreamSource s : streamSources) {
                         s.cleanup();
                     }
@@ -1646,7 +1644,7 @@ public class AudioEngine {
      * Alters the base physical stream clock so all nodes fast-forward
      * homogeneously.
      */
-    public void seek(double timeSeconds) {
+    public synchronized void seek(double timeSeconds) {
         if (!isPlaying)
             return;
 

@@ -16,22 +16,22 @@ import java.awt.image.BufferedImage;
 import javax.imageio.ImageIO;
 
 public class YouTubeThumbnailCache {
-    private static final int MAX_CACHE_SIZE = 50; // LRU eviction limit
+    private static final int MAX_CACHE_SIZE = 50;
+    private static final long TTL_MS = 300_000; // 5 minutes
     private static final Map<String, Identifier> cache = new LinkedHashMap<>(16, 0.75f, true) {
         @Override
         protected boolean removeEldestEntry(Map.Entry<String, Identifier> eldest) {
             if (size() > MAX_CACHE_SIZE) {
-                // Free GPU texture for evicted entry
                 try {
                     MinecraftClient.getInstance().getTextureManager().destroyTexture(eldest.getValue());
                 } catch (Exception e) {
-                    // Ignore cleanup errors
                 }
                 return true;
             }
             return false;
         }
     };
+    private static final Map<String, Long> cacheTime = new java.util.HashMap<>();
 
     public static Identifier getIdentifier(String videoId) {
         synchronized (cache) {
@@ -41,9 +41,18 @@ public class YouTubeThumbnailCache {
 
     public static BufferedImage loadAndCache(String videoId) {
         if (videoId == null) return null;
-        
+
         synchronized (cache) {
-            if (cache.containsKey(videoId)) return null;
+            if (cache.containsKey(videoId)) {
+                Long lastCached = cacheTime.get(videoId);
+                if (lastCached != null && System.currentTimeMillis() - lastCached < TTL_MS) {
+                    // Already cached, return null — colors already extracted
+                    return null;
+                }
+                // Expired: remove so it gets re-fetched
+                cache.remove(videoId);
+                cacheTime.remove(videoId);
+            }
         }
 
         try {
@@ -155,6 +164,7 @@ public class YouTubeThumbnailCache {
                     MinecraftClient.getInstance().getTextureManager().registerTexture(id, texture);
                     synchronized (cache) {
                         cache.put(videoId, id);
+                        cacheTime.put(videoId, System.currentTimeMillis());
                     }
                 } catch (Exception e) {
                     e.printStackTrace();

@@ -18,7 +18,7 @@ public class AudioStreamBuffer {
     public final int channels;
 
     // The Ring Buffer (Stores ~47 seconds of audio)
-    // 2097152 = 2^21 samples. At 44.1kHz -> ~47.5 seconds.
+    // 2097152 = 2^21 samples. At 48kHz -> ~43.7 seconds.
     // MUST BE A POWER OF TWO for bitwise masking.
     private final short[] ringBuffer;
     private final int bufferSize;
@@ -32,7 +32,7 @@ public class AudioStreamBuffer {
     private short[] pcmArray;
     private volatile int decodedLength = 0; // How many mono samples have been decoded so far
     private int totalExpectedSamples = 0; // Total expected samples (from OGG header)
-    private volatile int readCursor = 0; // Sequential read position for advance() - volatile: written by seekToTime (main thread), read by advance (audio thread)
+    private volatile long readCursor = 0; // Sequential read position for advance() - volatile: written by seekToTime (main thread), read by advance (audio thread)
 
     // Legacy mode (backward compatibility)
     private ShortBuffer fullPcmData; // Source data (entire track) — used by URL path
@@ -105,7 +105,7 @@ public class AudioStreamBuffer {
 
         // Reset read position
         if (pcmArray != null) {
-            this.readCursor = (int) targetCursor;
+            this.readCursor = targetCursor;
         } else if (fullPcmData != null) {
             fullPcmData.position((int) targetCursor);
         }
@@ -131,7 +131,7 @@ public class AudioStreamBuffer {
             for (int i = 0; i < samplesNeeded; i++) {
                 short sample = 0;
                 if (readCursor < currentDecoded) {
-                    sample = pcmArray[readCursor++];
+                    sample = pcmArray[(int) (readCursor++)];
                 } else if (readCursor < totalExpectedSamples) {
                     // Not yet decoded — output silence, don't advance read cursor
                     // This prevents skipping over not-yet-decoded audio

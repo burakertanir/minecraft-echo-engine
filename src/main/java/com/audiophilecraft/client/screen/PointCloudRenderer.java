@@ -54,16 +54,8 @@ public class PointCloudRenderer {
         float dotSize = Math.max(0.3f, scale * 0.3f);
         float glowSize = dotSize * 1.8f;
 
-        // Scissor
-        net.minecraft.client.MinecraftClient mc = net.minecraft.client.MinecraftClient.getInstance();
-        double guiScale = mc.getWindow().getScaleFactor();
-        GL11.glEnable(GL11.GL_SCISSOR_TEST);
-        GL11.glScissor(
-            (int)((x + 10) * guiScale),
-            (int)((mc.getWindow().getScaledHeight() - y - height + 30) * guiScale),
-            (int)((width - 20) * guiScale),
-            (int)((height - 60) * guiScale)
-        );
+        // Scissor clipping (DrawContext handles GUI-scale transform internally)
+        context.enableScissor(x + 10, y + 30, x + 10 + width - 20, y + 30 + height - 60);
 
         RenderSystem.enableBlend();
         RenderSystem.setShader(GameRenderer::getPositionColorProgram);
@@ -144,7 +136,7 @@ public class PointCloudRenderer {
         }
 
         RenderSystem.disableBlend();
-        GL11.glDisable(GL11.GL_SCISSOR_TEST);
+        context.disableScissor();
     }
 
     private static void rebuildCache(List<Vec3d> pointCloud) {
