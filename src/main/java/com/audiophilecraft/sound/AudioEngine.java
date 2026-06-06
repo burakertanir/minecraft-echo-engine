@@ -47,7 +47,7 @@ public class AudioEngine {
     private volatile boolean isPaused = false;
 
     // Seek Atomicity Guard â€” prevents audio thread from feeding sources mid-seek
-    private volatile boolean isSeeking = false;
+    // currentSession.isSeeking() in PlaybackSession
 
     // Track Generation â€” increments on each playTrack(), used to discard stale
     // venue scan callbacks
@@ -825,7 +825,7 @@ public class AudioEngine {
      * position.
      */
     public int getSampleRateForClock() {
-        for (AudioStreamBuffer buffer : streamBuffers.values()) {
+        for (AudioStreamBuffer buffer : currentSession.getStreamBuffers().values()) {
             if (buffer.sampleRate > 0) {
                 return buffer.sampleRate;
             }
@@ -1055,7 +1055,7 @@ public class AudioEngine {
             // SKIP: Don't feed sources while seek() is updating the global clock
             // and re-aligning speakers. Prevents underrun recovery from snapping
             // outputCursor to wrong positions mid-seek.
-            if (isSeeking)
+            if (currentSession.isSeeking())
                 return;
 
             // PHASE 0: Decode OGG on the background thread.
@@ -1442,7 +1442,7 @@ public class AudioEngine {
             this.streamStartTime = System.nanoTime();
 
             if (atomicStart) {
-                java.nio.IntBuffer sourceIds = org.lwjgl.BufferUtils.createIntBuffer(streamSources.size());
+                java.nio.IntBuffer sourceIds = org.lwjgl.BufferUtils.createIntBuffer(currentSession.getStreamSources().size());
                 for (StreamSource source : streamSources) {
                     org.lwjgl.openal.AL10.alSourcei(source.sourceId, org.lwjgl.openal.AL10.AL_LOOPING,
                             org.lwjgl.openal.AL10.AL_FALSE);
@@ -1593,7 +1593,7 @@ public class AudioEngine {
      * homogeneously.
      */
     public synchronized void seek(double timeSeconds) {
-        if (!isPlaying)
+        if (!currentSession.isPlaying())
             return;
 
         // Clamp to bounds
@@ -1617,10 +1617,10 @@ public class AudioEngine {
         // Without this, processAudioBackground() can fire mid-seek and cause
         // underrun recovery to snap outputCursor to the wrong position,
         // resulting in 3-4 speakers playing asynchronously.
-        isSeeking = true;
+        currentSession.setSeeking(true);
         try {
             // Nothing to seek if all sources were cleaned up (song ended naturally)
-            if (streamSources.isEmpty())
+            if (currentSession.getStreamSources().isEmpty())
                 return;
 
             // Shift absolute temporal timeline baseline
@@ -1628,11 +1628,11 @@ public class AudioEngine {
 
             // If the game is paused, adjust the pause tracker so it doesn't double-cancel
             // the seek on resume
-            if (isPaused) {
-                pauseStartTimestamp = now;
+            if (currentSession.isPaused()) {
+                currentSession.setPauseStartTimestamp(now);
             }
 
-            this.streamStartTime = now - (long) (timeSeconds * 1_000_000_000.0);
+            currentSession.setStreamStartTime(now - (long) (timeSeconds * 1_000_000_000.0));
 
             // Force raw JLayer decoder index jumps
             for (AudioStreamBuffer buffer : streamBuffers.values()) {
@@ -1651,7 +1651,7 @@ public class AudioEngine {
             // Broadcast snap offsets into ALL actively playing physical speakers locally
             // using atomic AL Source commands
             java.nio.IntBuffer sourceIds = org.lwjgl.BufferUtils.createIntBuffer(streamSources.size());
-            for (StreamSource source : streamSources) {
+            for (StreamSource source : currentSession.getStreamSources()) {
                 source.seekToTime(timeSeconds); // Aligns playhead and hardware queue internally (does NOT call
                                                 // alSourcePlay)
                 sourceIds.put(source.sourceId);
@@ -1659,7 +1659,7 @@ public class AudioEngine {
             sourceIds.flip();
             org.lwjgl.openal.AL10.alSourcePlayv(sourceIds); // ATOMIC HARDWARE START: NO SPEAKER PHASE STAGGER
         } finally {
-            isSeeking = false; // Resume audio thread feeding
+            currentSession.setSeeking(false); // Resume audio thread feeding
         }
     }
 }
