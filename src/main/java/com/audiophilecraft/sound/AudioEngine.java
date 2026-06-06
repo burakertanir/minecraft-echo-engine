@@ -1239,8 +1239,8 @@ public class AudioEngine {
 
         try {
             prepareStreamBuffers(trackId);
-            this.isPlaying = true;
-            this.isPaused = false;
+            currentSession.setPlaying(true);
+            currentSession.setPaused(false);
             for (AudioStreamBuffer buffer : streamBuffers.values()) {
                 if (buffer.sampleRate > 0)
                     buffer.syncToTime(BUFFER_LOOKAHEAD);
@@ -1519,8 +1519,8 @@ public class AudioEngine {
             createStreamBufferForType("url_track", rawData, TYPE_NORMAL);
             org.lwjgl.system.MemoryUtil.memFree(pcmBuffer);
 
-            this.isPlaying = true;
-            this.isPaused = false;
+            currentSession.setPlaying(true);
+            currentSession.setPaused(false);
             for (AudioStreamBuffer buffer : streamBuffers.values()) {
                 if (buffer.sampleRate > 0)
                     buffer.syncToTime(BUFFER_LOOKAHEAD);
