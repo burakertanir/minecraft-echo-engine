@@ -1439,7 +1439,7 @@ public class AudioEngine {
                 this.listenerPos = MinecraftClient.getInstance().cameraEntity.getPos();
                 this.smoothedListenerPos = this.listenerPos;
             }
-            this.streamStartTime = System.nanoTime();
+            currentSession.setStreamStartTime(System.nanoTime());
 
             if (atomicStart) {
                 java.nio.IntBuffer sourceIds = org.lwjgl.BufferUtils.createIntBuffer(currentSession.getStreamSources().size());
