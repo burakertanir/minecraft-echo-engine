@@ -1200,6 +1200,20 @@ public class AmplifierScreen extends HandledScreen<AmplifierScreenHandler> {
                     currentAdaptiveThemeColor, false);
         }
     }
+
+    // Logarithmic curve: slider 0..1 -> gain 0..1
+    // At slider 0.5 -> gain 0.1, slider 1.0 -> gain 1.0
+    // Matches human loudness perception
+    private static double gainToSlider(float linearGain) {
+        if (linearGain <= 0.001f) return 0.0;
+        double db = 20.0 * Math.log10(linearGain);
+        return Math.max(0.0, Math.min(1.0, (db + 40.0) / 40.0));
+    }
+    private static float sliderToGain(double sliderValue) {
+        double db = sliderValue * 40.0 - 40.0;
+        return (float) Math.pow(10, db / 20.0);
+    }
+
     private class MixerSliderWidget extends net.minecraft.client.gui.widget.SliderWidget {
         private final String speakerType;
         private final int typeIndex; // 0=Volume, 1..5=EQ Bands
@@ -1211,7 +1225,8 @@ public class AmplifierScreen extends HandledScreen<AmplifierScreenHandler> {
             this.typeIndex = typeIndex;
             // Load current value from AudioEngine
             if (typeIndex == 0) {
-                this.value = com.audiophilecraft.sound.AudioEngine.getInstance().getMixerGain(speakerType);
+                float linearGain = com.audiophilecraft.sound.AudioEngine.getInstance().getMixerGain(speakerType);
+                this.value = gainToSlider(linearGain);
             } else {
                 float db = com.audiophilecraft.sound.AudioEngine.getInstance().getEqDb(speakerType, typeIndex - 1);
                 this.value = (db + 12.0f) / 24.0f; // map -12..12 -> 0..1
@@ -1245,7 +1260,8 @@ public class AmplifierScreen extends HandledScreen<AmplifierScreenHandler> {
         protected void updateMessage() {
             String prefix = getPrefix();
             if (typeIndex == 0) {
-                this.setMessage(net.minecraft.text.Text.literal(prefix + (int)(this.value * 100) + "%"));
+                float displayGain = sliderToGain(this.value);
+                this.setMessage(net.minecraft.text.Text.literal(prefix + (int)(displayGain * 100) + "%"));
             } else {
                 float db = (float) (this.value * 24.0 - 12.0);
                 this.setMessage(net.minecraft.text.Text.literal(prefix + String.format("%.1f dB", db)));
@@ -1254,7 +1270,8 @@ public class AmplifierScreen extends HandledScreen<AmplifierScreenHandler> {
         @Override
         protected void applyValue() {
             if (typeIndex == 0) {
-                com.audiophilecraft.sound.AudioEngine.getInstance().setMixerGain(speakerType, (float) this.value);
+                float actualGain = sliderToGain(this.value);
+                com.audiophilecraft.sound.AudioEngine.getInstance().setMixerGain(speakerType, actualGain);
             } else {
                 float db = (float) (this.value * 24.0 - 12.0);
                 com.audiophilecraft.sound.AudioEngine.getInstance().setEqDb(speakerType, typeIndex - 1, db);
@@ -1271,7 +1288,7 @@ public class AmplifierScreen extends HandledScreen<AmplifierScreenHandler> {
             long now = System.currentTimeMillis();
             if (now - lastClickTime < 250) {
                 // Double click = reset to default
-                this.value = (this.typeIndex == 0) ? 1.0 : 0.5;
+                this.value = (this.typeIndex == 0) ? gainToSlider(1.0f) : 0.5;
                 this.applyValue();
                 this.updateMessage();
                 lastClickTime = 0;
