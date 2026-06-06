@@ -44,7 +44,6 @@ public class AudioEngine {
     private float listenerPitch = 0;
 
     // Global Pause State
-    private volatile boolean isPaused = false;
 
     // Seek Atomicity Guard â€” prevents audio thread from feeding sources mid-seek
     // currentSession.isSeeking() in PlaybackSession
@@ -71,18 +70,11 @@ public class AudioEngine {
     private final AdvancedAcousticScanner acousticScanner = new AdvancedAcousticScanner();
 
     // Streaming System
-    private final Map<String, AudioStreamBuffer> streamBuffers = new ConcurrentHashMap<>(); // Thread-safe: main thread
-                                                                                            // writes, audio thread
-                                                                                            // iterates
-    private final List<StreamSource> streamSources = new java.util.concurrent.CopyOnWriteArrayList<>();
 
     // Time Tracking
-    private volatile long streamStartTime = 0; // Absolute start time (nanoTime) ï¿½ volatile: written by main thread,
                                                // read by audio thread
-    private volatile boolean isPlaying = false; // volatile: written by main thread, read by audio thread
     private static final double BUFFER_LOOKAHEAD = 0.5; // Low-latency pipeline: 6 initial + 3 precomputed buffers Ã—
                                                         // 1024 = 9216 samples (~0.19s) PLUS delay headroom
-    private long pauseStartTimestamp = 0; // Track when pause started
 
     // Background Audio Thread (pre-computes PCM buffers off main thread)
     private ScheduledExecutorService audioThread;
@@ -591,10 +583,10 @@ public class AudioEngine {
         // Result: HRTF perceives sources as being much closer to ear level.
         // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
         float openAlListenerY = (float) pos.y;
-        if (!streamSources.isEmpty()) {
+        if (!currentSession.getStreamSources().isEmpty()) {
             double avgSourceY = 0;
             int count = 0;
-            for (StreamSource s : streamSources) {
+            for (StreamSource s : currentSession.getStreamSources()) {
                 if (s.isValid && !s.isFinished) {
                     avgSourceY += s.getPos().getY() + 0.5;
                     count++;
@@ -810,13 +802,13 @@ public class AudioEngine {
     /**
      * Thread-safe wall-clock time since playback started.
      * Audio thread calls this to derive globalSampleTime for ALL sources.
-     * Pause duration is already factored out via streamStartTime offset.
+     * Pause duration is already factored out via currentSession.getStreamStartTime() offset.
      * Returns 0.0 if not playing.
      */
     public double getTimeSinceStart() {
-        if (!isPlaying || streamStartTime == 0)
+        if (!currentSession.isPlaying() || currentSession.getStreamStartTime() == 0)
             return 0.0;
-        return (System.nanoTime() - streamStartTime) / 1_000_000_000.0;
+        return (System.nanoTime() - currentSession.getStreamStartTime()) / 1_000_000_000.0;
     }
 
     /**
@@ -842,24 +834,24 @@ public class AudioEngine {
         MinecraftClient mc = MinecraftClient.getInstance();
         boolean gamePaused = mc.isPaused();
 
-        if (gamePaused != isPaused) {
-            isPaused = gamePaused;
-            if (isPaused) {
+        if (gamePaused != currentSession.isPaused()) {
+            currentSession.setPaused(gamePaused);
+            if (currentSession.isPaused()) {
                 // Game Just Paused: Record timestamp
-                pauseStartTimestamp = System.nanoTime();
+                currentSession.setPauseStartTimestamp(System.nanoTime());
                 pauseAll();
             } else {
                 // Game Just Resumed: Calculate duration and shift start time
-                if (pauseStartTimestamp > 0 && streamStartTime > 0) {
-                    long pauseDuration = System.nanoTime() - pauseStartTimestamp;
-                    streamStartTime += pauseDuration; // "Freeze" the timeline during pause
+                if (currentSession.getPauseStartTimestamp() > 0 && currentSession.getStreamStartTime() > 0) {
+                    long pauseDuration = System.nanoTime() - currentSession.getPauseStartTimestamp();
+                    currentSession.setStreamStartTime(currentSession.getStreamStartTime() + pauseDuration); // "Freeze" the timeline during pause
                 }
                 resumeAll();
             }
         }
 
         // Don't update logic if paused
-        if (isPaused) {
+        if (currentSession.isPaused()) {
             lastTickTime = System.nanoTime(); // Reset delta tracking when paused
             return;
         }
@@ -871,26 +863,26 @@ public class AudioEngine {
 
         double timeSinceStart = 0;
         // Absolute Time Synchronization (Fixes Speed & Lag Issues)
-        if (isPlaying && streamStartTime != 0) {
+        if (currentSession.isPlaying() && currentSession.getStreamStartTime() != 0) {
             long now = System.nanoTime();
-            timeSinceStart = (now - streamStartTime) / 1_000_000_000.0;
+            timeSinceStart = (now - currentSession.getStreamStartTime()) / 1_000_000_000.0;
 
             // FREEZE DETECTION REMOVED: With global master clock (globalSampleTime
             // derived from nanoTime), all sources ALWAYS share the same
             // timeline. Inter-source drift is mathematically impossible.
         }
 
-        for (StreamSource source : streamSources) {
+        for (StreamSource source : currentSession.getStreamSources()) {
             // Pass current time (not lookahead) to source for playback
             if (!source.update(world, this.listenerPos, timeSinceStart)) {
                 // Sound finished or invalid
                 source.cleanup();
-                streamSources.remove(source);
+                currentSession.getStreamSources().remove(source);
             }
         }
 
         // Apply Listener-based Early Reflections dynamically every tick
-        if (isPlaying) {
+        if (currentSession.isPlaying()) {
             updateListenerReflections(world);
         }
 
@@ -899,7 +891,7 @@ public class AudioEngine {
         // preset.
         // Otherwise, the player will be stuck with the stadium reverb forever.
         // Guard: only clear if we were actually playing (not during device recovery)
-        if (isPlaying && streamSources.isEmpty() && this.venuePreset != null) {
+        if (currentSession.isPlaying() && currentSession.getStreamSources().isEmpty() && this.venuePreset != null) {
             this.venuePreset = null;
             this.venuePresetApplied = false;
         }
@@ -921,14 +913,14 @@ public class AudioEngine {
         // by the walls. It should not hang in the player's ears like an artificial
         // overlay.
         float maxOcclusion = 0.0f;
-        for (StreamSource source : streamSources) {
+        for (StreamSource source : currentSession.getStreamSources()) {
             if (source.currentOcclusion > maxOcclusion) {
                 maxOcclusion = source.currentOcclusion;
             }
         }
 
         // If not playing anything, keep maxOcclusion at 1.0 so ambient sound is normal
-        if (streamSources.isEmpty()) {
+        if (currentSession.getStreamSources().isEmpty()) {
             maxOcclusion = 1.0f;
         }
 
@@ -944,7 +936,7 @@ public class AudioEngine {
      * Pauses all active audio sources (Game Paused).
      */
     public void pauseAll() {
-        for (StreamSource sound : streamSources) {
+        for (StreamSource sound : currentSession.getStreamSources()) {
             sound.pause();
         }
         // Mute aux effect slots to kill reverb tails during pause
@@ -961,7 +953,7 @@ public class AudioEngine {
         if (auxSlotId != 0) {
             alAuxiliaryEffectSlotf(auxSlotId, AL_EFFECTSLOT_GAIN, 1.0f);
         }
-        for (StreamSource sound : streamSources) {
+        for (StreamSource sound : currentSession.getStreamSources()) {
             sound.resume();
         }
     }
@@ -981,13 +973,13 @@ public class AudioEngine {
             audioThread = null;
         }
 
-        for (StreamSource sound : streamSources) {
+        for (StreamSource sound : currentSession.getStreamSources()) {
             sound.cleanup();
         }
         currentSession.getStreamSources().clear();
-        isPaused = false;
-        isPlaying = false;
-        streamStartTime = 0;
+        currentSession.setPaused(false);
+        currentSession.setPlaying(false);
+        currentSession.setStreamStartTime(0);
 
         // Clear venue preset so reverb falls back to listener-based scanner
         this.venuePreset = null;
@@ -1049,7 +1041,7 @@ public class AudioEngine {
         }
         try {
             // CRITICAL: Respect game pause and load state.
-            if (isPaused)
+            if (currentSession.isPaused())
                 return;
 
             // SKIP: Don't feed sources while seek() is updating the global clock
@@ -1062,7 +1054,7 @@ public class AudioEngine {
             // If the main thread hangs (32 chunks), OGG decoding will continue flawlessly
             // preventing IIR filter math explosions due to audio dropouts.
             double currentWallTime = getTimeSinceStart();
-            for (AudioStreamBuffer buffer : streamBuffers.values()) {
+            for (AudioStreamBuffer buffer : currentSession.getStreamBuffers().values()) {
                 if (buffer.sampleRate > 0) {
                     buffer.syncToTime(currentWallTime + BUFFER_LOOKAHEAD);
                 }
@@ -1096,7 +1088,7 @@ public class AudioEngine {
             // Distance calculation is done inside each source's feed method.
             reusableRestartBuffer.clear();
 
-            for (StreamSource source : streamSources) {
+            for (StreamSource source : currentSession.getStreamSources()) {
                 if (source.feedOpenALFromAudioThread(globalSampleTime, currentPos)) {
                     // Prevent overflow in extreme situations
                     if (reusableRestartBuffer.remaining() > 0) {
@@ -1131,10 +1123,10 @@ public class AudioEngine {
             reverbEffectId = 0;
         }
         // Free Stream Buffers (off-heap memory)
-        for (AudioStreamBuffer buffer : streamBuffers.values()) {
+        for (AudioStreamBuffer buffer : currentSession.getStreamBuffers().values()) {
             buffer.cleanup();
         }
-        streamBuffers.clear();
+        currentSession.getStreamBuffers().clear();
 
         efxInitialized = false;
         openAL.destroy(0, 0);
@@ -1148,10 +1140,10 @@ public class AudioEngine {
 
     // Stream Buffers Management
     public void prepareStreamBuffers(String trackId) {
-        for (AudioStreamBuffer buffer : streamBuffers.values()) {
+        for (AudioStreamBuffer buffer : currentSession.getStreamBuffers().values()) {
             buffer.cleanup();
         }
-        streamBuffers.clear();
+        currentSession.getStreamBuffers().clear();
 
         // Load Raw Data once
         OggDecoder.RawTrackData rawData = OggDecoder.loadOgg("sounds/" + trackId + ".ogg");
@@ -1187,7 +1179,7 @@ public class AudioEngine {
         pcm.flip();
 
         buffer.setSourceData(pcm);
-        streamBuffers.put(type, buffer);
+        currentSession.getStreamBuffers().put(type, buffer);
     }
 
     public void applyDspForType(short[] audioData, int sampleRate, String speakerType) {
@@ -1241,7 +1233,7 @@ public class AudioEngine {
             prepareStreamBuffers(trackId);
             currentSession.setPlaying(true);
             currentSession.setPaused(false);
-            for (AudioStreamBuffer buffer : streamBuffers.values()) {
+            for (AudioStreamBuffer buffer : currentSession.getStreamBuffers().values()) {
                 if (buffer.sampleRate > 0)
                     buffer.syncToTime(BUFFER_LOOKAHEAD);
             }
@@ -1259,7 +1251,7 @@ public class AudioEngine {
     }
 
     public void updateInputGain(float gain) {
-        for (StreamSource ss : streamSources) {
+        for (StreamSource ss : currentSession.getStreamSources()) {
             ss.inputGain = gain;
         }
     }
@@ -1270,7 +1262,7 @@ public class AudioEngine {
      * Smoothing is handled inside StreamSource.updatePhysics().
      */
     public void updatePower(float power) {
-        for (StreamSource ss : streamSources) {
+        for (StreamSource ss : currentSession.getStreamSources()) {
             ss.power = power;
         }
     }
@@ -1307,7 +1299,8 @@ public class AudioEngine {
     // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
     // SHARED HELPERS â€” Used by both playTrack() and playFromPcmData()
     // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
-public void createSourcesFromClusters(List<List<BlockPos>> clusters, int[] counts,
+
+public void createSourcesFromClusters(List<List<BlockPos>> clusters, int[] counts,
             World world, float power, float inputGain) {
         for (List<BlockPos> cluster : clusters) {
             StreamSource leaderSource = null;
@@ -1345,9 +1338,9 @@ public class AudioEngine {
                     }
                 }
 
-                AudioStreamBuffer buffer = streamBuffers.get(speakerType);
+                AudioStreamBuffer buffer = currentSession.getStreamBuffers().get(speakerType);
                 if (buffer == null)
-                    buffer = streamBuffers.get(TYPE_NORMAL);
+                    buffer = currentSession.getStreamBuffers().get(TYPE_NORMAL);
                 if (buffer == null)
                     continue;
 
@@ -1355,15 +1348,15 @@ public class AudioEngine {
                 int err = alGetError();
                 if (err != AL_NO_ERROR) {
                     System.err.println("AudioEngine: OPENAL SOURCE LIMIT HIT! Failed at speaker #"
-                            + (streamSources.size() + 1) + " of " + clusters.stream().mapToInt(List::size).sum()
+                            + (currentSession.getStreamSources().size() + 1) + " of " + clusters.stream().mapToInt(List::size).sum()
                             + " (error=0x" + Integer.toHexString(err) + ")");
                     // Clean up any sources created so far â€” partial playback is worse than
                     // silence
-                    for (StreamSource s : streamSources) {
+                    for (StreamSource s : currentSession.getStreamSources()) {
                         s.cleanup();
                     }
-                    streamSources.clear();
-                    isPlaying = false;
+                    currentSession.getStreamSources().clear();
+                    currentSession.setPlaying(false);
                     break;
                 }
 
@@ -1417,7 +1410,7 @@ public class AudioEngine {
                 StreamSource ss = new StreamSource(sourceId, buffer, pos, power, baseMaxDist * power,
                         baseRefDist * power, dirX, dirY, dirZ, speakerType, filterId, sendFilterId,
                         inputGain, sampleShiftMs, speakerCount, leaderSource, cluster.size());
-                streamSources.add(ss);
+                currentSession.getStreamSources().add(ss);
 
                 if (leaderSource == null)
                     leaderSource = ss;
@@ -1443,7 +1436,7 @@ public class AudioEngine {
 
             if (atomicStart) {
                 java.nio.IntBuffer sourceIds = org.lwjgl.BufferUtils.createIntBuffer(currentSession.getStreamSources().size());
-                for (StreamSource source : streamSources) {
+                for (StreamSource source : currentSession.getStreamSources()) {
                     org.lwjgl.openal.AL10.alSourcei(source.sourceId, org.lwjgl.openal.AL10.AL_LOOPING,
                             org.lwjgl.openal.AL10.AL_FALSE);
                     sourceIds.put(source.sourceId);
@@ -1451,16 +1444,16 @@ public class AudioEngine {
                 sourceIds.flip();
                 org.lwjgl.openal.AL10.alSourcePlayv(sourceIds);
             } else {
-                for (StreamSource source : streamSources) {
+                for (StreamSource source : currentSession.getStreamSources()) {
                     source.start();
                 }
             }
             startAudioThread();
         };
 
-        if (!streamSources.isEmpty() && world != null) {
-            Vec3d probePos = calculateVenueProbe(streamSources);
-            Vec3d stageDir = calculateStageDirection(streamSources);
+        if (!currentSession.getStreamSources().isEmpty() && world != null) {
+            Vec3d probePos = calculateVenueProbe(currentSession.getStreamSources());
+            Vec3d stageDir = calculateStageDirection(currentSession.getStreamSources());
 
             int gen = trackGeneration;
             java.util.concurrent.CompletableFuture.supplyAsync(() -> {
@@ -1509,10 +1502,10 @@ public class AudioEngine {
             rawData.format = org.lwjgl.openal.AL10.AL_FORMAT_MONO16;
 
             // Prepare stream buffers
-            for (AudioStreamBuffer buffer : streamBuffers.values()) {
+            for (AudioStreamBuffer buffer : currentSession.getStreamBuffers().values()) {
                 buffer.cleanup();
             }
-            streamBuffers.clear();
+            currentSession.getStreamBuffers().clear();
             createStreamBufferForType("url_track", rawData, TYPE_SUB);
             createStreamBufferForType("url_track", rawData, TYPE_MID);
             createStreamBufferForType("url_track", rawData, TYPE_LINE);
@@ -1521,7 +1514,7 @@ public class AudioEngine {
 
             currentSession.setPlaying(true);
             currentSession.setPaused(false);
-            for (AudioStreamBuffer buffer : streamBuffers.values()) {
+            for (AudioStreamBuffer buffer : currentSession.getStreamBuffers().values()) {
                 if (buffer.sampleRate > 0)
                     buffer.syncToTime(BUFFER_LOOKAHEAD);
             }
@@ -1559,7 +1552,7 @@ public class AudioEngine {
         float dirY = sinT;
         float dirZ = vec.getZ() * cosT;
 
-        for (StreamSource ss : streamSources) {
+        for (StreamSource ss : currentSession.getStreamSources()) {
             if (ss.pos.equals(speakerPos) && !TYPE_SUB.equals(ss.speakerType)) {
                 alSource3f(ss.sourceId, AL_DIRECTION, dirX, dirY, dirZ);
             }
@@ -1570,9 +1563,9 @@ public class AudioEngine {
      * Fetch Total Duration in Seconds for the currently playing track.
      */
     public double getTotalPlaybackDuration() {
-        if (!isPlaying || streamBuffers.isEmpty())
+        if (!currentSession.isPlaying() || currentSession.getStreamBuffers().isEmpty())
             return 0.0;
-        AudioStreamBuffer buf = streamBuffers.values().iterator().next();
+        AudioStreamBuffer buf = currentSession.getStreamBuffers().values().iterator().next();
         return buf != null ? buf.getTotalDurationSeconds() : 0.0;
     }
 
@@ -1580,10 +1573,10 @@ public class AudioEngine {
      * Fetch Current Playback Time in Seconds.
      */
     public double getCurrentPlaybackTime() {
-        if (!isPlaying || streamStartTime == 0)
+        if (!currentSession.isPlaying() || currentSession.getStreamStartTime() == 0)
             return 0.0;
         long now = System.nanoTime();
-        double timeSinceStart = (now - streamStartTime) / 1_000_000_000.0;
+        double timeSinceStart = (now - currentSession.getStreamStartTime()) / 1_000_000_000.0;
         return timeSinceStart;
     }
 
@@ -1635,7 +1628,7 @@ public class AudioEngine {
             currentSession.setStreamStartTime(now - (long) (timeSeconds * 1_000_000_000.0));
 
             // Force raw JLayer decoder index jumps
-            for (AudioStreamBuffer buffer : streamBuffers.values()) {
+            for (AudioStreamBuffer buffer : currentSession.getStreamBuffers().values()) {
                 // Buffer up to 0.1s INTO THE PAST to cushion StreamSource physics delays.
                 // When speakers simulate spatial distance, they read slightly backwards in the
                 // ring buffer.
@@ -1650,7 +1643,7 @@ public class AudioEngine {
 
             // Broadcast snap offsets into ALL actively playing physical speakers locally
             // using atomic AL Source commands
-            java.nio.IntBuffer sourceIds = org.lwjgl.BufferUtils.createIntBuffer(streamSources.size());
+            java.nio.IntBuffer sourceIds = org.lwjgl.BufferUtils.createIntBuffer(currentSession.getStreamSources().size());
             for (StreamSource source : currentSession.getStreamSources()) {
                 source.seekToTime(timeSeconds); // Aligns playhead and hardware queue internally (does NOT call
                                                 // alSourcePlay)
