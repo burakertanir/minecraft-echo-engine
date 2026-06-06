@@ -984,7 +984,7 @@ public class AudioEngine {
         for (StreamSource sound : streamSources) {
             sound.cleanup();
         }
-        streamSources.clear();
+        currentSession.getStreamSources().clear();
         isPaused = false;
         isPlaying = false;
         streamStartTime = 0;
