@@ -31,6 +31,9 @@ import static org.lwjgl.openal.AL11.*;
 public class AudioEngine {
     private static AudioEngine INSTANCE;
 
+    // Active playback session
+    private final PlaybackSession currentSession = new PlaybackSession(this);
+
     // Listener state (delegated to ListenerController)
     private final ListenerController listener = ListenerController.getInstance();
     // (kept for gradual migration)
@@ -719,79 +722,43 @@ public class AudioEngine {
     }
 
     // --- MIXER STATE (Client-Side Only â€” No Network Required) ---
-    private volatile float mixerGainSub = 1.0f;
-    private volatile float mixerGainMid = 1.0f;
-    private volatile float mixerGainLine = 1.0f;
 
     // Mid/Side (Direct/Reverb) Mute States
-    private volatile boolean midMuted = false;
-    private volatile boolean sideMuted = false;
 
     public boolean isMidMuted() {
-        return midMuted;
+        return currentSession.isMidMuted();
     }
 
     public void setMidMuted(boolean muted) {
-        this.midMuted = muted;
+        currentSession.setMidMuted(muted);
     }
 
     public boolean isSideMuted() {
-        return sideMuted;
+        return currentSession.isSideMuted();
     }
 
     public void setSideMuted(boolean muted) {
-        this.sideMuted = muted;
+        currentSession.setSideMuted(muted);
     }
 
     // 5-Band Parametric EQ per speaker type (dB, range: -12 to +12)
-    private volatile float[] subEq = new float[5];
-    private volatile float[] midEq = new float[5];
-    private volatile float[] lineEq = new float[5];
 
     public float getMixerGain(String speakerType) {
-        if ("sub".equals(speakerType))
-            return mixerGainSub;
-        if ("mid".equals(speakerType))
-            return mixerGainMid;
-        if ("line".equals(speakerType))
-            return mixerGainLine;
-        return 1.0f;
+        return currentSession.getMixerGain(speakerType);
     }
 
     public void setMixerGain(String speakerType, float gain) {
-        gain = Math.max(0.0f, Math.min(gain, 1.0f));
-        if ("sub".equals(speakerType))
-            mixerGainSub = gain;
-        else if ("mid".equals(speakerType))
-            mixerGainMid = gain;
-        else if ("line".equals(speakerType))
-            mixerGainLine = gain;
+        currentSession.setMixerGain(speakerType, gain);
     }
 
     /** Get EQ dB for a speaker type and band (0 to 4) */
     public synchronized float getEqDb(String speakerType, int band) {
-        if (band < 0 || band > 4)
-            return 0f;
-        if ("sub".equals(speakerType))
-            return subEq[band];
-        if ("mid".equals(speakerType))
-            return midEq[band];
-        if ("line".equals(speakerType))
-            return lineEq[band];
-        return 0f;
+        return currentSession.getEqDb(speakerType, band);
     }
 
     /** Set EQ dB for a speaker type and band (0 to 4). Range: -12 to +12 */
     public synchronized void setEqDb(String speakerType, int band, float db) {
-        if (band < 0 || band > 4)
-            return;
-        db = Math.max(-12f, Math.min(db, 12f));
-        if ("sub".equals(speakerType))
-            subEq[band] = db;
-        else if ("mid".equals(speakerType))
-            midEq[band] = db;
-        else if ("line".equals(speakerType))
-            lineEq[band] = db;
+        currentSession.setEqDb(speakerType, band, db);
     }
 
     // Q (Bandwidth) per speaker type and band (range: 0.1 to 10.0, default: 1.0)
