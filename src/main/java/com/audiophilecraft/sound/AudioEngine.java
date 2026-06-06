@@ -1,4 +1,4 @@
-package com.audiophilecraft.sound;
+﻿package com.audiophilecraft.sound;
 
 import net.minecraft.client.MinecraftClient;
 import net.minecraft.util.math.BlockPos;
@@ -44,7 +44,8 @@ public class AudioEngine {
     // Seek Atomicity Guard â€” prevents audio thread from feeding sources mid-seek
     private volatile boolean isSeeking = false;
 
-    // Track Generation â€” increments on each playTrack(), used to discard stale venue scan callbacks
+    // Track Generation â€” increments on each playTrack(), used to discard stale
+    // venue scan callbacks
     private volatile int trackGeneration = 0;
 
     // Underwater State (for global HF filtering)
@@ -64,11 +65,14 @@ public class AudioEngine {
     private final AdvancedAcousticScanner acousticScanner = new AdvancedAcousticScanner();
 
     // Streaming System
-    private final Map<String, AudioStreamBuffer> streamBuffers = new ConcurrentHashMap<>(); // Thread-safe: main thread writes, audio thread iterates
+    private final Map<String, AudioStreamBuffer> streamBuffers = new ConcurrentHashMap<>(); // Thread-safe: main thread
+                                                                                            // writes, audio thread
+                                                                                            // iterates
     private final List<StreamSource> streamSources = new java.util.concurrent.CopyOnWriteArrayList<>();
 
     // Time Tracking
-    private volatile long streamStartTime = 0; // Absolute start time (nanoTime) ï¿½ volatile: written by main thread, read by audio thread
+    private volatile long streamStartTime = 0; // Absolute start time (nanoTime) ï¿½ volatile: written by main thread,
+                                               // read by audio thread
     private volatile boolean isPlaying = false; // volatile: written by main thread, read by audio thread
     private static final double BUFFER_LOOKAHEAD = 0.5; // Low-latency pipeline: 6 initial + 3 precomputed buffers Ã—
                                                         // 1024 = 9216 samples (~0.19s) PLUS delay headroom
@@ -88,7 +92,6 @@ public class AudioEngine {
     private AdvancedAcousticScanner.VenueDescriptor storedVenueDescriptor = null;
     private net.minecraft.util.math.Vec3d storedVenueProbePos = null;
     private long lastConfigGeneration = 0;
-
 
     // Direct buffer allocation caching (Prevents native memory JVM GC thrashing in
     // hot loop)
@@ -1137,7 +1140,8 @@ public class AudioEngine {
                 org.lwjgl.openal.AL10.alSourcePlayv(reusableRestartBuffer); // ATOMIC RESTART
             }
         } catch (Exception e) {
-            // Swallow: ConcurrentModification during stopAll is harmless
+            System.err.println("[AudioEngine] processAudioBackground failed: " + e.getMessage());
+            e.printStackTrace();
         }
     }
 
@@ -1239,7 +1243,6 @@ public class AudioEngine {
         AudioDSP.applyPeakLimiter(audioData, 0.98f);
     }
 
-
     public void playTrack(String trackId, List<BlockPos> speakers, float power, float inputGain) {
         stopAll();
         trackGeneration++;
@@ -1247,24 +1250,28 @@ public class AudioEngine {
         // Clear old venue scan data
         AdvancedAcousticScanner.lastPointCloud.clear();
         AdvancedAcousticScanner.lastVenueBlocks.clear();
-        AdvancedAcousticScanner.lastSpeakers = speakers != null ? new java.util.ArrayList<>(speakers) : new java.util.ArrayList<>();
+        AdvancedAcousticScanner.lastSpeakers = speakers != null ? new java.util.ArrayList<>(speakers)
+                : new java.util.ArrayList<>();
         venuePreset = null;
         venuePresetApplied = false;
         storedVenueDescriptor = null;
         storedVenueProbePos = null;
         com.audiophilecraft.client.screen.PointCloudRenderer.invalidateCache();
 
-        while (alGetError() != AL_NO_ERROR) { /* drain */ }
+        while (alGetError() != AL_NO_ERROR) {
+            /* drain */ }
         initEfx();
 
-        if (speakers == null || speakers.isEmpty()) return;
+        if (speakers == null || speakers.isEmpty())
+            return;
 
         try {
             prepareStreamBuffers(trackId);
             this.isPlaying = true;
             this.isPaused = false;
             for (AudioStreamBuffer buffer : streamBuffers.values()) {
-                if (buffer.sampleRate > 0) buffer.syncToTime(BUFFER_LOOKAHEAD);
+                if (buffer.sampleRate > 0)
+                    buffer.syncToTime(BUFFER_LOOKAHEAD);
             }
 
             // Shared logic
@@ -1334,9 +1341,11 @@ public class AudioEngine {
      * Speakers in the same cluster share a leader for delay synchronization.
      */
     private List<List<BlockPos>> clusterSpeakers(List<BlockPos> speakers) {
-        // Sort for deterministic clustering (ConcurrentHashMap iteration order is not guaranteed)
+        // Sort for deterministic clustering (ConcurrentHashMap iteration order is not
+        // guaranteed)
         java.util.List<BlockPos> sorted = new java.util.ArrayList<>(speakers);
-        java.util.Collections.sort(sorted, java.util.Comparator.comparingLong(net.minecraft.util.math.BlockPos::asLong));
+        java.util.Collections.sort(sorted,
+                java.util.Comparator.comparingLong(net.minecraft.util.math.BlockPos::asLong));
         List<List<BlockPos>> clusters = new java.util.ArrayList<>();
         for (BlockPos pos : sorted) {
             boolean added = false;
@@ -1348,7 +1357,8 @@ public class AudioEngine {
                         break;
                     }
                 }
-                if (added) break;
+                if (added)
+                    break;
             }
             if (!added) {
                 List<BlockPos> newCluster = new java.util.ArrayList<>();
@@ -1367,17 +1377,22 @@ public class AudioEngine {
         if (world != null) {
             for (BlockPos pos : speakers) {
                 var block = world.getBlockState(pos).getBlock();
-                if (block instanceof com.audiophilecraft.block.SubwooferBlock) countSub++;
-                else if (block instanceof com.audiophilecraft.block.MidRangeBlock) countMid++;
-                else if (block instanceof com.audiophilecraft.block.LineArrayBlock) countLine++;
-                else countNormal++;
+                if (block instanceof com.audiophilecraft.block.SubwooferBlock)
+                    countSub++;
+                else if (block instanceof com.audiophilecraft.block.MidRangeBlock)
+                    countMid++;
+                else if (block instanceof com.audiophilecraft.block.LineArrayBlock)
+                    countLine++;
+                else
+                    countNormal++;
             }
         }
-        return new int[]{countSub, countMid, countLine, countNormal};
+        return new int[] { countSub, countMid, countLine, countNormal };
     }
 
     /**
-     * Creates OpenAL sources and StreamSource objects for all speakers in all clusters.
+     * Creates OpenAL sources and StreamSource objects for all speakers in all
+     * clusters.
      * Shared logic between OGG playback and URL/PCM playback.
      */
     private void createSourcesFromClusters(List<List<BlockPos>> clusters, int[] counts,
@@ -1395,11 +1410,20 @@ public class AudioEngine {
                     var blockState = world.getBlockState(pos);
                     var block = blockState.getBlock();
                     if (block instanceof com.audiophilecraft.block.SubwooferBlock) {
-                        speakerType = TYPE_SUB; baseRefDist = 10.0f; baseMaxDist = 85.0f; speakerCount = counts[0];
+                        speakerType = TYPE_SUB;
+                        baseRefDist = 10.0f;
+                        baseMaxDist = 85.0f;
+                        speakerCount = counts[0];
                     } else if (block instanceof com.audiophilecraft.block.MidRangeBlock) {
-                        speakerType = TYPE_MID; baseRefDist = 5.0f; baseMaxDist = 60.0f; speakerCount = counts[1];
+                        speakerType = TYPE_MID;
+                        baseRefDist = 5.0f;
+                        baseMaxDist = 60.0f;
+                        speakerCount = counts[1];
                     } else if (block instanceof com.audiophilecraft.block.LineArrayBlock) {
-                        speakerType = TYPE_LINE; baseRefDist = 3.0f; baseMaxDist = 50.0f; speakerCount = counts[2];
+                        speakerType = TYPE_LINE;
+                        baseRefDist = 3.0f;
+                        baseMaxDist = 50.0f;
+                        speakerCount = counts[2];
                     } else {
                         speakerCount = counts[3];
                     }
@@ -1410,8 +1434,10 @@ public class AudioEngine {
                 }
 
                 AudioStreamBuffer buffer = streamBuffers.get(speakerType);
-                if (buffer == null) buffer = streamBuffers.get(TYPE_NORMAL);
-                if (buffer == null) continue;
+                if (buffer == null)
+                    buffer = streamBuffers.get(TYPE_NORMAL);
+                if (buffer == null)
+                    continue;
 
                 int sourceId = alGenSources();
                 int err = alGetError();
@@ -1419,7 +1445,8 @@ public class AudioEngine {
                     System.err.println("AudioEngine: OPENAL SOURCE LIMIT HIT! Failed at speaker #"
                             + (streamSources.size() + 1) + " of " + clusters.stream().mapToInt(List::size).sum()
                             + " (error=0x" + Integer.toHexString(err) + ")");
-                    // Clean up any sources created so far â€” partial playback is worse than silence
+                    // Clean up any sources created so far â€” partial playback is worse than
+                    // silence
                     for (StreamSource s : streamSources) {
                         s.cleanup();
                     }
@@ -1480,7 +1507,8 @@ public class AudioEngine {
                         inputGain, sampleShiftMs, speakerCount, leaderSource, cluster.size());
                 streamSources.add(ss);
 
-                if (leaderSource == null) leaderSource = ss;
+                if (leaderSource == null)
+                    leaderSource = ss;
             }
         }
     }
@@ -1489,7 +1517,8 @@ public class AudioEngine {
      * Performs venue acoustic scan and starts playback.
      * If world is null or no sources exist, starts playback immediately.
      *
-     * @param atomicStart If true, uses alSourcePlayv for simultaneous start (URL path).
+     * @param atomicStart If true, uses alSourcePlayv for simultaneous start (URL
+     *                    path).
      *                    If false, uses source.start() individually (OGG path).
      */
     private void startPlaybackWithVenueScan(World world, List<BlockPos> speakers, boolean atomicStart) {
@@ -1503,7 +1532,8 @@ public class AudioEngine {
             if (atomicStart) {
                 java.nio.IntBuffer sourceIds = org.lwjgl.BufferUtils.createIntBuffer(streamSources.size());
                 for (StreamSource source : streamSources) {
-                    org.lwjgl.openal.AL10.alSourcei(source.sourceId, org.lwjgl.openal.AL10.AL_LOOPING, org.lwjgl.openal.AL10.AL_FALSE);
+                    org.lwjgl.openal.AL10.alSourcei(source.sourceId, org.lwjgl.openal.AL10.AL_LOOPING,
+                            org.lwjgl.openal.AL10.AL_FALSE);
                     sourceIds.put(source.sourceId);
                 }
                 sourceIds.flip();
@@ -1524,7 +1554,8 @@ public class AudioEngine {
             java.util.concurrent.CompletableFuture.supplyAsync(() -> {
                 return acousticScanner.scanVenue(world, probePos, stageDir);
             }).thenAcceptAsync(preset -> {
-                if (gen != trackGeneration) return; // stale callback
+                if (gen != trackGeneration)
+                    return; // stale callback
                 if (preset != null) {
                     this.venuePreset = preset;
                     this.storedVenueDescriptor = acousticScanner.getLastDescriptor();
@@ -1546,10 +1577,12 @@ public class AudioEngine {
     private void playFromPcmData(short[] pcmData, int sampleRate, List<BlockPos> speakers,
             float power, float inputGain) {
         stopAll();
-        while (alGetError() != AL_NO_ERROR) { /* drain */ }
+        while (alGetError() != AL_NO_ERROR) {
+            /* drain */ }
         initEfx();
 
-        if (speakers == null || speakers.isEmpty()) return;
+        if (speakers == null || speakers.isEmpty())
+            return;
 
         try {
             // Wrap PCM data into RawTrackData
@@ -1564,7 +1597,9 @@ public class AudioEngine {
             rawData.format = org.lwjgl.openal.AL10.AL_FORMAT_MONO16;
 
             // Prepare stream buffers
-            for (AudioStreamBuffer buffer : streamBuffers.values()) { buffer.cleanup(); }
+            for (AudioStreamBuffer buffer : streamBuffers.values()) {
+                buffer.cleanup();
+            }
             streamBuffers.clear();
             createStreamBufferForType("url_track", rawData, TYPE_SUB);
             createStreamBufferForType("url_track", rawData, TYPE_MID);
@@ -1575,7 +1610,8 @@ public class AudioEngine {
             this.isPlaying = true;
             this.isPaused = false;
             for (AudioStreamBuffer buffer : streamBuffers.values()) {
-                if (buffer.sampleRate > 0) buffer.syncToTime(BUFFER_LOOKAHEAD);
+                if (buffer.sampleRate > 0)
+                    buffer.syncToTime(BUFFER_LOOKAHEAD);
             }
 
             // Shared logic

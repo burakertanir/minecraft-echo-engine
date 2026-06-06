@@ -121,8 +121,8 @@ public class InternetAudioLoader {
 
             // Estimate buffer size: duration (ms) * sampleRate / 1000 * channels
             long durationMs = track.getDuration();
-            if (durationMs <= 0 || durationMs > 60 * 60 * 1000) {
-                durationMs = 60 * 60 * 1000;
+            if (durationMs <= 0 || durationMs > 20 * 60 * 1000) {
+                durationMs = 20 * 60 * 1000;
             }
 
             int estimatedSamples = (int) ((durationMs / 1000.0) * sampleRate * channels);
