@@ -70,13 +70,8 @@ public class StreamSource {
     private volatile float smoothedPower;
     private volatile float smoothedInputGain = 1.0f;
 
-    // Crossover Filters
-    private AudioDSP.BiquadFilter crossoverFilter1;
-    private AudioDSP.BiquadFilter crossoverFilter2;
-
-    // Live 5-Band Parametric EQ (updated from AudioEngine mixer panel)
-    private AudioDSP.BiquadFilter[] eqFilters = new AudioDSP.BiquadFilter[5];
-    private float[] lastEq = new float[5];
+    // DSP Pipeline (crossover -> EQ -> softclip -> limiter)
+    private final StreamDSPPipeline dspPipeline;
 
     // Reusable buffers (Optimization: avoids memAlloc/memFree every refill)
     private ShortBuffer reusablePcmBuffer;
@@ -130,25 +125,9 @@ public class StreamSource {
         this.inputGain = inputGain;
         this.smoothedInputGain = inputGain;
 
-        // Initialize Crossovers
-        if (streamBuffer != null && streamBuffer.sampleRate > 0) {
-            float sr = (float) streamBuffer.sampleRate;
-            if ("sub".equals(this.speakerType)) {
-                // 120Hz Low Pass, Q=0.707 (Butterworth)
-                this.crossoverFilter1 = new AudioDSP.BiquadFilter(AudioDSP.FilterType.LOW_PASS, sr, 120.0f, 0.707f,
-                        0.0f);
-            } else if ("mid".equals(this.speakerType)) {
-                // 120Hz High Pass & 4000Hz Low Pass
-                this.crossoverFilter1 = new AudioDSP.BiquadFilter(AudioDSP.FilterType.HIGH_PASS, sr, 120.0f, 0.707f,
-                        0.0f);
-                this.crossoverFilter2 = new AudioDSP.BiquadFilter(AudioDSP.FilterType.LOW_PASS, sr, 4000.0f, 0.707f,
-                        0.0f);
-            } else if ("line".equals(this.speakerType)) {
-                // 120Hz High Pass (Mid & Treble only)
-                this.crossoverFilter1 = new AudioDSP.BiquadFilter(AudioDSP.FilterType.HIGH_PASS, sr, 120.0f, 0.707f,
-                        0.0f);
-            }
-        }
+        // Initialize DSP pipeline
+        float sr = (streamBuffer != null && streamBuffer.sampleRate > 0) ? (float) streamBuffer.sampleRate : 44100f;
+        this.dspPipeline = new StreamDSPPipeline(this.speakerType, sr);
 
         // Allocate reusable buffers (once, not per-refill)
         this.reusablePcmBuffer = MemoryUtil.memAllocShort(STREAM_BUFFER_SIZE);
@@ -218,19 +197,10 @@ public class StreamSource {
         this.seekFadeSamplesRemaining = (long) (0.05 * streamBuffer.sampleRate);
 
         // Reset IIR filter state to prevent impulse ringing at splice
-        if (this.crossoverFilter1 != null) {
-            this.crossoverFilter1.reset();
+        if (this.dspPipeline != null) {
+            this.dspPipeline.reset();
         }
-        if (this.crossoverFilter2 != null) {
-            this.crossoverFilter2.reset();
-        }
-        for (int i = 0; i < 5; i++) {
-            if (this.eqFilters[i] != null) {
-                this.eqFilters[i].reset();
-            }
-        }
-
-        // Reset delay state so it re-initializes from current distance
+                // Reset delay state so it re-initializes from current distance
         this.lastRenderedDelaySamples = -1.0;
 
         // Flush OpenAL's queued buffers
@@ -1214,52 +1184,8 @@ public class StreamSource {
         // DSP STAGE (shared by all branches)
         // ═══════════════════════════════════════════════════════════════
         // DSP STAGE (shared by all branches)
-        // ═══════════════════════════════════════════════════════════════
-        AudioDSP.applyGain(output, this.smoothedInputGain);
-        if (this.crossoverFilter1 != null) {
-            this.crossoverFilter1.process(output);
-        }
-        if (this.crossoverFilter2 != null) {
-            this.crossoverFilter2.process(output);
-        }
-
-        // --- LIVE 5-BAND PARAMETRIC EQ (from Mixer Panel) ---
-        if (streamBuffer != null && streamBuffer.sampleRate > 0) {
-            float[] freqs = null;
-            if ("sub".equals(this.speakerType))
-                freqs = new float[] { 30f, 50f, 70f, 90f, 110f };
-            else if ("mid".equals(this.speakerType))
-                freqs = new float[] { 250f, 500f, 1000f, 2000f, 4000f };
-            else if ("line".equals(this.speakerType))
-                freqs = new float[] { 1000f, 3000f, 6000f, 10000f, 15000f };
-
-            if (freqs != null) {
-                for (int i = 0; i < 5; i++) {
-                    float db = AudioEngine.getInstance().getEqDb(this.speakerType, i);
-                    // Rebuild filters only when dB values change (avoids per-buffer overhead)
-                    if (db != lastEq[i] || eqFilters[i] == null) {
-                        lastEq[i] = db;
-                        if (Math.abs(db) > 0.1f) {
-                            eqFilters[i] = new AudioDSP.BiquadFilter(AudioDSP.FilterType.PEAKING_EQ,
-                                    (float) streamBuffer.sampleRate, freqs[i], 1.0f, db);
-                        } else {
-                            eqFilters[i] = null;
-                        }
-                    }
-                    if (eqFilters[i] != null) {
-                        eqFilters[i].process(output);
-                    }
-                }
-            }
-        }
-
-        if (this.smoothedPower > 5.0f) {
-            float drive = 1.0f + ((this.smoothedPower - 5.0f) * 0.1f);
-            AudioDSP.applySoftClip(output, drive);
-        }
-        AudioDSP.applyPeakLimiter(output, 0.98f);
-
-        if (finished) {
+        // DSP pipeline
+        this.dspPipeline.process(output, (float) streamBuffer.sampleRate, this.smoothedInputGain, this.smoothedPower);        if (finished) {
             isFinished = true;
         }
 
