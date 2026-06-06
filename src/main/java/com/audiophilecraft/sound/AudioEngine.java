@@ -1,4 +1,4 @@
-﻿package com.audiophilecraft.sound;
+package com.audiophilecraft.sound;
 
 import net.minecraft.client.MinecraftClient;
 import net.minecraft.util.math.BlockPos;
@@ -55,6 +55,7 @@ public class AudioEngine {
     // --- Master Reverb Occlusion ---
     private float smoothedMasterOcclusion = 1.0f;
 
+    private final OpenALContextManager openAL = OpenALContextManager.getInstance();
     // EFX EAX Reverb System
     private int reverbEffectId = 0;
     private int auxSlotId = 0;
@@ -1166,6 +1167,7 @@ public class AudioEngine {
         streamBuffers.clear();
 
         efxInitialized = false;
+        openAL.destroy(0, 0);
     }
 
     // Speaker Types for Cache Keys
