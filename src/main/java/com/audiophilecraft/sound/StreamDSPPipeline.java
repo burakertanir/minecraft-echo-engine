@@ -10,6 +10,7 @@ public class StreamDSPPipeline {
     private final AudioDSP.BiquadFilter crossoverFilter2;
     private final AudioDSP.BiquadFilter[] eqFilters = new AudioDSP.BiquadFilter[5];
     private final float[] lastEq = new float[5];
+    private final float[] lastQ = new float[] { 1f, 1f, 1f, 1f, 1f };
     private final float[] eqFrequencies;
     private final String speakerType;
 
@@ -50,11 +51,13 @@ public class StreamDSPPipeline {
 
         for (int i = 0; i < 5; i++) {
             float db = AudioEngine.getInstance().getEqDb(speakerType, i);
-            if (db != lastEq[i] || eqFilters[i] == null) {
+            float q = AudioEngine.getInstance().getEqQ(speakerType, i);
+            if (db != lastEq[i] || q != lastQ[i] || eqFilters[i] == null) {
                 lastEq[i] = db;
+                lastQ[i] = q;
                 if (Math.abs(db) > 0.1f) {
                     eqFilters[i] = new AudioDSP.BiquadFilter(AudioDSP.FilterType.PEAKING_EQ,
-                            sampleRate, eqFrequencies[i], 1.0f, db);
+                            sampleRate, eqFrequencies[i], q, db);
                 } else {
                     eqFilters[i] = null;
                 }

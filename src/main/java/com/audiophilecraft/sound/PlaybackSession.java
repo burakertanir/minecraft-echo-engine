@@ -67,10 +67,15 @@ public class PlaybackSession {
     private volatile boolean midMuted = false;
     private volatile boolean sideMuted = false;
 
-    // 5-band EQ
+    // 5-band EQ (dB)
     private volatile float[] subEq = new float[5];
     private volatile float[] midEq = new float[5];
     private volatile float[] lineEq = new float[5];
+
+    // 5-band EQ Q (bandwidth), default 1.0
+    private volatile float[] subEqQ = new float[] { 1f, 1f, 1f, 1f, 1f };
+    private volatile float[] midEqQ = new float[] { 1f, 1f, 1f, 1f, 1f };
+    private volatile float[] lineEqQ = new float[] { 1f, 1f, 1f, 1f, 1f };
 
     public PlaybackSession(AudioEngine engine) {
         this.engine = engine;
@@ -176,16 +181,82 @@ public class PlaybackSession {
         }
     }
 
+    private float[] getEqQArray(String speakerType) {
+        switch (speakerType) {
+            case "sub":  return subEqQ;
+            case "mid":  return midEqQ;
+            case "line": return lineEqQ;
+            default:     return null;
+        }
+    }
+
+    public synchronized float getEqQ(String speakerType, int band) {
+        if (band < 0 || band > 4) return 1f;
+        float[] eq = getEqQArray(speakerType);
+        return eq != null ? eq[band] : 1f;
+    }
+
+    public synchronized void setEqQ(String speakerType, int band, float q) {
+        if (band < 0 || band > 4) return;
+        q = Math.max(0.1f, Math.min(q, 10.0f));
+        float[] eq = getEqQArray(speakerType);
+        if (eq != null) eq[band] = q;
+    }
+
     // --- Cleanup ---
 
     public void stopAll() {
         for (StreamSource source : streamSources) {
             if (source.isValid) {
                 alSourceStop(source.sourceId);
+                source.cleanup();
             }
         }
         streamSources.clear();
         streamBuffers.clear();
         isPlaying = false;
+        venuePreset = null;
+        venuePresetApplied = false;
+    }
+
+    /**
+     * Start playing a track through this session.
+     * Delegates to AudioEngine for OpenAL/EFX/thread orchestration.
+     */
+    public void playTrack(String trackId, List<BlockPos> speakers, float power, float inputGain) {
+        engine.stopAll();
+        incrementTrackGeneration();
+
+        AdvancedAcousticScanner.lastPointCloud.clear();
+        AdvancedAcousticScanner.lastVenueBlocks.clear();
+        AdvancedAcousticScanner.lastSpeakers = speakers != null ? new java.util.ArrayList<>(speakers)
+                : new java.util.ArrayList<>();
+        setVenuePreset(null);
+        setVenuePresetApplied(false);
+        setStoredVenueDescriptor(null);
+        setStoredVenueProbePos(null);
+        com.audiophilecraft.client.screen.PointCloudRenderer.invalidateCache();
+
+        while (alGetError() != AL_NO_ERROR) { /* drain */ }
+        engine.initEfx();
+
+        if (speakers == null || speakers.isEmpty()) return;
+
+        try {
+            engine.prepareStreamBuffers(trackId);
+            setPlaying(true);
+            setPaused(false);
+            for (AudioStreamBuffer buffer : streamBuffers.values()) {
+                if (buffer.sampleRate > 0) buffer.syncToTime(BUFFER_LOOKAHEAD);
+            }
+
+            World world = MinecraftClient.getInstance().world;
+            int[] counts = SpeakerClusterer.countSpeakerTypes(speakers, world);
+            List<List<BlockPos>> clusters = SpeakerClusterer.clusterSpeakers(speakers);
+            engine.createSourcesFromClusters(clusters, counts, world, power, inputGain);
+            engine.startPlaybackWithVenueScan(world, speakers, false);
+        } catch (Exception e) {
+            e.printStackTrace();
+        }
     }
 }

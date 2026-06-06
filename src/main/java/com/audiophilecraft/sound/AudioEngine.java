@@ -215,7 +215,7 @@ public class AudioEngine {
      * Initialize OpenAL EFX with EAX Reverb for physics-based room simulation.
      * Called lazily on first playTrack().
      */
-    private void initEfx() {
+    public void initEfx() {
         if (efxInitialized)
             return;
         efxInitialized = true;
@@ -1147,7 +1147,7 @@ public class AudioEngine {
     private static final String TYPE_LINE = "line";
 
     // Stream Buffers Management
-    private void prepareStreamBuffers(String trackId) {
+    public void prepareStreamBuffers(String trackId) {
         for (AudioStreamBuffer buffer : streamBuffers.values()) {
             buffer.cleanup();
         }
@@ -1190,7 +1190,7 @@ public class AudioEngine {
         streamBuffers.put(type, buffer);
     }
 
-    private void applyDspForType(short[] audioData, int sampleRate, String speakerType) {
+    public void applyDspForType(short[] audioData, int sampleRate, String speakerType) {
         // Pre-gain for headroom: fixed at 0.60 for all incoming tracks
         AudioDSP.applyGain(audioData, 0.60f);
         if (TYPE_SUB.equals(speakerType)) {
@@ -1307,7 +1307,7 @@ public class AudioEngine {
     // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
     // SHARED HELPERS â€” Used by both playTrack() and playFromPcmData()
     // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
-private void createSourcesFromClusters(List<List<BlockPos>> clusters, int[] counts,
+public void createSourcesFromClusters(List<List<BlockPos>> clusters, int[] counts,
             World world, float power, float inputGain) {
         for (List<BlockPos> cluster : clusters) {
             StreamSource leaderSource = null;
@@ -1433,7 +1433,7 @@ public class AudioEngine {
      *                    path).
      *                    If false, uses source.start() individually (OGG path).
      */
-    private void startPlaybackWithVenueScan(World world, List<BlockPos> speakers, boolean atomicStart) {
+    public void startPlaybackWithVenueScan(World world, List<BlockPos> speakers, boolean atomicStart) {
         Runnable startPlayback = () -> {
             if (MinecraftClient.getInstance().cameraEntity != null) {
                 this.listenerPos = MinecraftClient.getInstance().cameraEntity.getPos();
@@ -1486,7 +1486,7 @@ public class AudioEngine {
      * Play from raw mono PCM data (used by InternetAudioLoader callback).
      * Creates DSP-processed stream buffers and spawns StreamSources.
      */
-    private void playFromPcmData(short[] pcmData, int sampleRate, List<BlockPos> speakers,
+    public void playFromPcmData(short[] pcmData, int sampleRate, List<BlockPos> speakers,
             float power, float inputGain) {
         stopAll();
         while (alGetError() != AL_NO_ERROR) {
