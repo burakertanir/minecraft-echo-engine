@@ -31,7 +31,9 @@ import static org.lwjgl.openal.AL11.*;
 public class AudioEngine {
     private static AudioEngine INSTANCE;
 
-    // Listener state (volatile: written by render thread, read by audio thread)
+    // Listener state (delegated to ListenerController)
+    private final ListenerController listener = ListenerController.getInstance();
+    // (kept for gradual migration)
     private volatile Vec3d listenerPos = Vec3d.ZERO;
     private volatile Vec3d smoothedListenerPos = Vec3d.ZERO;
     private float listenerYaw = 0;
@@ -607,6 +609,7 @@ public class AudioEngine {
         // with the HRTF/OpenAL 3D spatializer when rotating the camera.
         this.listenerYaw = yaw;
         this.listenerPitch = pitch;
+        listener.update(pos, yaw, pitch);
 
         float useYaw = yaw;
         float usePitch = pitch;
@@ -712,7 +715,7 @@ public class AudioEngine {
 
     /** Returns the smoothed underwater HF gain (0.08 = submerged, 1.0 = normal) */
     public float getUnderwaterHFGain() {
-        return smoothedUnderwaterHF;
+        return listener.getUnderwaterHFGain();
     }
 
     // --- MIXER STATE (Client-Side Only â€” No Network Required) ---
@@ -1278,8 +1281,8 @@ public class AudioEngine {
 
             // Shared logic
             World world = MinecraftClient.getInstance().world;
-            int[] counts = countSpeakerTypes(speakers, world);
-            List<List<BlockPos>> clusters = clusterSpeakers(speakers);
+            int[] counts = SpeakerClusterer.countSpeakerTypes(speakers, world);
+            List<List<BlockPos>> clusters = SpeakerClusterer.clusterSpeakers(speakers);
             createSourcesFromClusters(clusters, counts, world, power, inputGain);
             startPlaybackWithVenueScan(world, speakers, false);
 
@@ -1337,67 +1340,7 @@ public class AudioEngine {
     // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
     // SHARED HELPERS â€” Used by both playTrack() and playFromPcmData()
     // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
-
-    /**
-     * Groups speaker positions into clusters based on proximity (â‰¤8 blocks).
-     * Speakers in the same cluster share a leader for delay synchronization.
-     */
-    private List<List<BlockPos>> clusterSpeakers(List<BlockPos> speakers) {
-        // Sort for deterministic clustering (ConcurrentHashMap iteration order is not
-        // guaranteed)
-        java.util.List<BlockPos> sorted = new java.util.ArrayList<>(speakers);
-        java.util.Collections.sort(sorted,
-                java.util.Comparator.comparingLong(net.minecraft.util.math.BlockPos::asLong));
-        List<List<BlockPos>> clusters = new java.util.ArrayList<>();
-        for (BlockPos pos : sorted) {
-            boolean added = false;
-            for (List<BlockPos> cluster : clusters) {
-                for (BlockPos cPos : cluster) {
-                    if (cPos.getSquaredDistance(pos) <= 8.0) {
-                        cluster.add(pos);
-                        added = true;
-                        break;
-                    }
-                }
-                if (added)
-                    break;
-            }
-            if (!added) {
-                List<BlockPos> newCluster = new java.util.ArrayList<>();
-                newCluster.add(pos);
-                clusters.add(newCluster);
-            }
-        }
-        return clusters;
-    }
-
-    /**
-     * Counts speakers by type: [sub, mid, line, normal].
-     */
-    private int[] countSpeakerTypes(List<BlockPos> speakers, World world) {
-        int countSub = 0, countMid = 0, countLine = 0, countNormal = 0;
-        if (world != null) {
-            for (BlockPos pos : speakers) {
-                var block = world.getBlockState(pos).getBlock();
-                if (block instanceof com.audiophilecraft.block.SubwooferBlock)
-                    countSub++;
-                else if (block instanceof com.audiophilecraft.block.MidRangeBlock)
-                    countMid++;
-                else if (block instanceof com.audiophilecraft.block.LineArrayBlock)
-                    countLine++;
-                else
-                    countNormal++;
-            }
-        }
-        return new int[] { countSub, countMid, countLine, countNormal };
-    }
-
-    /**
-     * Creates OpenAL sources and StreamSource objects for all speakers in all
-     * clusters.
-     * Shared logic between OGG playback and URL/PCM playback.
-     */
-    private void createSourcesFromClusters(List<List<BlockPos>> clusters, int[] counts,
+private void createSourcesFromClusters(List<List<BlockPos>> clusters, int[] counts,
             World world, float power, float inputGain) {
         for (List<BlockPos> cluster : clusters) {
             StreamSource leaderSource = null;
@@ -1618,8 +1561,8 @@ public class AudioEngine {
 
             // Shared logic
             World world = MinecraftClient.getInstance().world;
-            int[] counts = countSpeakerTypes(speakers, world);
-            List<List<BlockPos>> clusters = clusterSpeakers(speakers);
+            int[] counts = SpeakerClusterer.countSpeakerTypes(speakers, world);
+            List<List<BlockPos>> clusters = SpeakerClusterer.clusterSpeakers(speakers);
             createSourcesFromClusters(clusters, counts, world, power, inputGain);
             startPlaybackWithVenueScan(world, speakers, true);
 
