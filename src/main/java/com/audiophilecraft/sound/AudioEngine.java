@@ -1278,17 +1278,42 @@ public class AudioEngine {
      * @param inputGain Input gain multiplier
      */
     public void playFromUrl(String url, List<BlockPos> speakers, float power, float inputGain) {
-
-        InternetAudioLoader.getInstance().loadTrack(url, new InternetAudioLoader.TrackLoadCallback() {
+        InternetAudioLoader.getInstance().loadTrackStreaming(url, new InternetAudioLoader.StreamingCallback() {
             @Override
-            public void onTrackLoaded(short[] pcmData, int sampleRate, String trackTitle) {
-
-                // Execute on the main client thread to avoid OpenAL threading issues
-                MinecraftClient.getInstance().execute(() -> {
-                    playFromPcmData(pcmData, sampleRate, speakers, power, inputGain);
-                });
+            public void onReady(short[] pcmArray, int decodedSamples, int totalExpected, int sampleRate, String title) {
+                AudioStreamBuffer sharedBuf = new AudioStreamBuffer("url_stream", sampleRate);
+                sharedBuf.initStreaming(pcmArray, decodedSamples, totalExpected);
+                currentSession.getStreamBuffers().clear();
+                currentSession.getStreamBuffers().put(TYPE_SUB, sharedBuf);
+                currentSession.getStreamBuffers().put(TYPE_MID, sharedBuf);
+                currentSession.getStreamBuffers().put(TYPE_LINE, sharedBuf);
+                currentSession.getStreamBuffers().put(TYPE_NORMAL, sharedBuf);
+                stopAll();
+                trackGeneration++;
+                AdvancedAcousticScanner.lastPointCloud.clear();
+                AdvancedAcousticScanner.lastVenueBlocks.clear();
+                AdvancedAcousticScanner.lastSpeakers = speakers != null ? new java.util.ArrayList<>(speakers) : new java.util.ArrayList<>();
+                venuePreset = null; venuePresetApplied = false;
+                storedVenueDescriptor = null; storedVenueProbePos = null;
+                com.audiophilecraft.client.screen.PointCloudRenderer.invalidateCache();
+                while (alGetError() != AL_NO_ERROR) { /* drain */ }
+                initEfx();
+                if (speakers == null || speakers.isEmpty()) return;
+                currentSession.setPlaying(true);
+                currentSession.setPaused(false);
+                sharedBuf.syncToTime(BUFFER_LOOKAHEAD);
+                World world = MinecraftClient.getInstance().world;
+                int[] counts = SpeakerClusterer.countSpeakerTypes(speakers, world);
+                List<List<BlockPos>> clusters = SpeakerClusterer.clusterSpeakers(speakers);
+                createSourcesFromClusters(clusters, counts, world, power, inputGain);
+                startPlaybackWithVenueScan(world, speakers, false);
             }
-
+            @Override
+            public void onMoreData(int totalDecoded) {
+                AudioStreamBuffer buf = currentSession.getStreamBuffers().get(TYPE_NORMAL);
+                if (buf != null) buf.updateDecodedLength(totalDecoded);
+            }
+            @Override public void onComplete() {}
             @Override
             public void onFailed(String reason) {
                 System.err.println("AudioEngine: URL load failed: " + reason);

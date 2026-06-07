@@ -57,6 +57,13 @@ public class InternetAudioLoader {
         void onFailed(String reason);
     }
 
+    public interface StreamingCallback {
+        void onReady(short[] pcmArray, int decodedSamples, int totalExpected, int sampleRate, String title);
+        void onMoreData(int totalDecoded);
+        void onComplete();
+        void onFailed(String reason);
+    }
+
     /**
      * Load and decode audio from a URL asynchronously.
      * The entire track is downloaded & decoded to PCM, then passed to the callback.
@@ -106,7 +113,76 @@ public class InternetAudioLoader {
         });
     }
 
+        public void loadTrackStreaming(String url, StreamingCallback callback) {
+        playerManager.loadItem(url, new AudioLoadResultHandler() {
+            @Override public void trackLoaded(AudioTrack track) { CompletableFuture.runAsync(() -> decodeTrackStreaming(track, callback)); }
+            @Override public void playlistLoaded(AudioPlaylist playlist) {
+                if (playlist.getTracks().isEmpty()) { callback.onFailed("Playlist empty"); return; }
+                AudioTrack s = playlist.getSelectedTrack(); if (s == null) s = playlist.getTracks().get(0);
+                final AudioTrack t = s; CompletableFuture.runAsync(() -> decodeTrackStreaming(t, callback));
+            }
+            @Override public void noMatches() { callback.onFailed("No matches: " + url); }
+            @Override public void loadFailed(FriendlyException ex) { callback.onFailed("Load failed: " + ex.getMessage()); }
+        });
+    }
+
+    private void decodeTrackStreaming(AudioTrack track, StreamingCallback callback) {
+        int sampleRate = 48000; int channels = 2; int totalDecoded = 0; short[] pcm = null;
+        int prebufferTarget; String title = track.getInfo().title;
+        var player = playerManager.createPlayer();
+        try {
+            player.playTrack(track);
+            AudioFrame first = player.provide(5000, java.util.concurrent.TimeUnit.MILLISECONDS);
+            if (first != null && first.getFormat() != null) {
+                sampleRate = first.getFormat().sampleRate; channels = first.getFormat().channelCount;
+            }
+            prebufferTarget = 10 * sampleRate;
+            long durMs = track.getDuration(); if (durMs <= 0 || durMs > 20*60*1000) durMs = 20*60*1000;
+            int totalExpected = (int)(durMs / 1000.0 * sampleRate);
+            pcm = new short[totalExpected];
+            if (first != null && first.getData() != null && first.getData().length > 0) {
+                totalDecoded += copyFrameToPcm(first, pcm, totalDecoded, channels);
+            }
+            while (totalDecoded < prebufferTarget) {
+                AudioFrame f = player.provide(5000, java.util.concurrent.TimeUnit.MILLISECONDS);
+                if (f == null || f.getData() == null) { if (player.getPlayingTrack() == null) break; continue; }
+                totalDecoded += copyFrameToPcm(f, pcm, totalDecoded, channels);
+            }
+            if (totalDecoded == 0) { callback.onFailed("0 samples decoded"); return; }
+            final int prebuffered = totalDecoded; final int finalSR = sampleRate;
+            final short[] pcmFinal = pcm;
+            net.minecraft.client.MinecraftClient.getInstance().execute(() -> callback.onReady(pcmFinal, prebuffered, totalExpected, finalSR, title));
+            while (true) {
+                AudioFrame f = player.provide(5000, java.util.concurrent.TimeUnit.MILLISECONDS);
+                if (f == null) { if (player.getPlayingTrack() == null) break; f = player.provide(10000, java.util.concurrent.TimeUnit.MILLISECONDS); if (f == null) break; }
+                if (f.getData() == null || f.getData().length == 0) continue;
+                totalDecoded += copyFrameToPcm(f, pcm, totalDecoded, channels);
+                final int td = totalDecoded;
+                net.minecraft.client.MinecraftClient.getInstance().execute(() -> callback.onMoreData(td));
+                if (totalDecoded >= totalExpected) break;
+            }
+            net.minecraft.client.MinecraftClient.getInstance().execute(() -> callback.onComplete());
+        } catch (Exception e) {
+            e.printStackTrace();
+            net.minecraft.client.MinecraftClient.getInstance().execute(() -> callback.onFailed(e.getMessage()));
+        } finally { player.destroy(); }
+    }
+
+    private int copyFrameToPcm(AudioFrame frame, short[] dest, int offset, int channels) {
+        byte[] data = frame.getData(); if (data == null) return 0;
+        short[] samples = new short[data.length / 2];
+        java.nio.ByteBuffer.wrap(data).order(java.nio.ByteOrder.BIG_ENDIAN).asShortBuffer().get(samples);
+        int count = samples.length / channels;
+        for (int i = 0; i < count && offset + i < dest.length; i++) {
+            int sum = samples[i * channels] + (channels >= 2 ? samples[i * channels + 1] : samples[i * channels]);
+            int mono = Math.round(sum * (1.0f / channels));
+            dest[offset + i] = (short) Math.max(-32768, Math.min(32767, mono));
+        }
+        return Math.min(count, dest.length - offset);
+    }
+
     /**
+     * Decode an AudioTrack to mono PCM/**
      * Decode an AudioTrack to mono PCM (16-bit signed, native sample rate).
      * This blocks until the entire track is decoded.
      */
