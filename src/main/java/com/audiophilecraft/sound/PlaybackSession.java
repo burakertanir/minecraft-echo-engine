@@ -46,10 +46,6 @@ public class PlaybackSession {
     private net.minecraft.util.math.Vec3d storedVenueProbePos = null;
     private long lastConfigGeneration = 0;
 
-    // Dynamic early reflections
-    private volatile float currentReflGain = -1.0f;
-    private volatile float currentReflDelay = -1.0f;
-
     // Time tracking
     private volatile long streamStartTime = 0;
     private volatile boolean isPlaying = false;
@@ -64,8 +60,8 @@ public class PlaybackSession {
     private volatile float mixerGainSub = 1.0f;
     private volatile float mixerGainMid = 1.0f;
     private volatile float mixerGainLine = 1.0f;
-    private volatile boolean midMuted = false;
-    private volatile boolean sideMuted = false;
+    private boolean midMuted = false;
+    private boolean sideMuted = false;
 
     // 5-band EQ (dB)
     private volatile float[] subEq = new float[5];
@@ -73,9 +69,9 @@ public class PlaybackSession {
     private volatile float[] lineEq = new float[5];
 
     // 5-band EQ Q (bandwidth), default 1.0
-    private volatile float[] subEqQ = new float[] { 1f, 1f, 1f, 1f, 1f };
-    private volatile float[] midEqQ = new float[] { 1f, 1f, 1f, 1f, 1f };
-    private volatile float[] lineEqQ = new float[] { 1f, 1f, 1f, 1f, 1f };
+    private float[] subEqQ = new float[] { 1f, 1f, 1f, 1f, 1f };
+    private float[] midEqQ = new float[] { 1f, 1f, 1f, 1f, 1f };
+    private float[] lineEqQ = new float[] { 1f, 1f, 1f, 1f, 1f };
 
     public PlaybackSession(AudioEngine engine) {
         this.engine = engine;
@@ -108,11 +104,6 @@ public class PlaybackSession {
     public void setLastConfigGeneration(long g) { this.lastConfigGeneration = g; }
 
     // --- Reflections ---
-
-    public float getCurrentReflGain() { return currentReflGain; }
-    public void setCurrentReflGain(float g) { this.currentReflGain = g; }
-    public float getCurrentReflDelay() { return currentReflDelay; }
-    public void setCurrentReflDelay(float d) { this.currentReflDelay = d; }
 
     // --- Clock ---
 

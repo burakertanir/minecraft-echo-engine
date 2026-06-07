@@ -1033,7 +1033,7 @@ public class AudioEngine {
      * All phases run entirely on this thread, making audio independent from the
      * render thread. Minecraft can freeze for seconds without audio dropping out.
      */
-    private void processAudioBackground() {
+    private synchronized void processAudioBackground() {
         // Respect interrupt: executor shutdown will interrupt us
         if (Thread.interrupted()) {
             Thread.currentThread().interrupt();

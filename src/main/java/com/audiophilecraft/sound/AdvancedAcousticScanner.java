@@ -658,7 +658,7 @@ public class AdvancedAcousticScanner {
      * Center probe gets 2x weight.
      */
     // Live Tuning: store last descriptor for regeneration
-    private VenueDescriptor lastDescriptor = null;
+    private volatile VenueDescriptor lastDescriptor = null;
     private Vec3d lastProbePos = null;
     public static java.util.List<Vec3d> lastPointCloud = java.util.Collections.synchronizedList(new java.util.ArrayList<>());
     public static volatile java.util.Set<net.minecraft.util.math.BlockPos> lastVenueBlocks = new java.util.HashSet<>();

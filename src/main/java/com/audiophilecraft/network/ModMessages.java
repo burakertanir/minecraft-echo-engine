@@ -93,7 +93,9 @@ public class ModMessages {
                             PacketByteBuf syncBuf = PacketByteBufs.create();
                             syncBuf.writeInt(handOrdinal);
                             syncBuf.writeFloat(power);
-                            ServerPlayNetworking.send(player, S2C_SYNC_POWER, syncBuf);
+                            for (net.minecraft.server.network.ServerPlayerEntity nearby : server.getPlayerManager().getPlayerList()) {
+                            ServerPlayNetworking.send(nearby, S2C_SYNC_POWER, syncBuf);
+                        }
                         }
                     });
                 });
@@ -110,7 +112,9 @@ public class ModMessages {
                             PacketByteBuf syncBuf = PacketByteBufs.create();
                             syncBuf.writeInt(handOrdinal);
                             syncBuf.writeFloat(gain);
-                            ServerPlayNetworking.send(player, S2C_SYNC_INPUT_GAIN, syncBuf);
+                            for (net.minecraft.server.network.ServerPlayerEntity nearby : server.getPlayerManager().getPlayerList()) {
+                            ServerPlayNetworking.send(nearby, S2C_SYNC_INPUT_GAIN, syncBuf);
+                        }
                         }
                     });
                 });
