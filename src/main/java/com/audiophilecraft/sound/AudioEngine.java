@@ -32,7 +32,8 @@ public class AudioEngine {
     private static AudioEngine INSTANCE;
 
     // Active playback session
-    private final PlaybackSession currentSession = new PlaybackSession(this);
+    private final java.util.Map<java.util.UUID, PlaybackSession> sessions = new java.util.concurrent.ConcurrentHashMap<>();
+    private java.util.UUID activeSessionId = null;
 
     // Listener state (delegated to ListenerController)
     private final ListenerController listener = ListenerController.getInstance();
@@ -46,7 +47,7 @@ public class AudioEngine {
     // Global Pause State
 
     // Seek Atomicity Guard â€” prevents audio thread from feeding sources mid-seek
-    // currentSession.isSeeking() in PlaybackSession
+    // getActiveSession().isSeeking() in PlaybackSession
 
     // Track Generation â€” increments on each playTrack(), used to discard stale
     // venue scan callbacks
@@ -98,6 +99,12 @@ public class AudioEngine {
     private AudioEngine() {
         // Private constructor for singleton
     }
+    private static final java.util.UUID DEFAULT_SID = java.util.UUID.fromString("00000000-0000-0000-0000-000000000001");
+    public PlaybackSession getActiveSession() {
+        if (activeSessionId == null) activeSessionId = DEFAULT_SID;
+        return sessions.computeIfAbsent(activeSessionId, k -> new PlaybackSession(this));
+    }
+    public void ensureActiveSession(java.util.UUID id) { activeSessionId = id; sessions.computeIfAbsent(id, k -> new PlaybackSession(this)); }
 
     public static synchronized AudioEngine getInstance() {
         if (INSTANCE == null) {
@@ -564,6 +571,7 @@ public class AudioEngine {
      * Called every render frame.
      */
     public void updateListener(Vec3d pos, float yaw, float pitch) {
+        if (getActiveSession() == null) return;
         // Position - Update instantly
         // listenerPos stores the REAL position for physics/distance calculations
         this.listenerPos = pos;
@@ -583,10 +591,10 @@ public class AudioEngine {
         // Result: HRTF perceives sources as being much closer to ear level.
         // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
         float openAlListenerY = (float) pos.y;
-        if (!currentSession.getStreamSources().isEmpty()) {
+        if (!getActiveSession().getStreamSources().isEmpty()) {
             double avgSourceY = 0;
             int count = 0;
-            for (StreamSource s : currentSession.getStreamSources()) {
+            for (StreamSource s : getActiveSession().getStreamSources()) {
                 if (s.isValid && !s.isFinished) {
                     avgSourceY += s.getPos().getY() + 0.5;
                     count++;
@@ -718,39 +726,39 @@ public class AudioEngine {
     // Mid/Side (Direct/Reverb) Mute States
 
     public boolean isMidMuted() {
-        return currentSession.isMidMuted();
+        return getActiveSession().isMidMuted();
     }
 
     public void setMidMuted(boolean muted) {
-        currentSession.setMidMuted(muted);
+        getActiveSession().setMidMuted(muted);
     }
 
     public boolean isSideMuted() {
-        return currentSession.isSideMuted();
+        return getActiveSession().isSideMuted();
     }
 
     public void setSideMuted(boolean muted) {
-        currentSession.setSideMuted(muted);
+        getActiveSession().setSideMuted(muted);
     }
 
     // 5-Band Parametric EQ per speaker type (dB, range: -12 to +12)
 
     public float getMixerGain(String speakerType) {
-        return currentSession.getMixerGain(speakerType);
+        return getActiveSession().getMixerGain(speakerType);
     }
 
     public void setMixerGain(String speakerType, float gain) {
-        currentSession.setMixerGain(speakerType, gain);
+        getActiveSession().setMixerGain(speakerType, gain);
     }
 
     /** Get EQ dB for a speaker type and band (0 to 4) */
     public synchronized float getEqDb(String speakerType, int band) {
-        return currentSession.getEqDb(speakerType, band);
+        return getActiveSession().getEqDb(speakerType, band);
     }
 
     /** Set EQ dB for a speaker type and band (0 to 4). Range: -12 to +12 */
     public synchronized void setEqDb(String speakerType, int band, float db) {
-        currentSession.setEqDb(speakerType, band, db);
+        getActiveSession().setEqDb(speakerType, band, db);
     }
 
     // Q (Bandwidth) per speaker type and band (range: 0.1 to 10.0, default: 1.0)
@@ -789,7 +797,7 @@ public class AudioEngine {
      * Called every render frame.
      */
     public void updateGains() {
-        if (this.listenerPos == null)
+        if (getActiveSession() == null || this.listenerPos == null)
             return;
 
         // Ensure venue reverb is applied if a preset exists
@@ -802,13 +810,13 @@ public class AudioEngine {
     /**
      * Thread-safe wall-clock time since playback started.
      * Audio thread calls this to derive globalSampleTime for ALL sources.
-     * Pause duration is already factored out via currentSession.getStreamStartTime() offset.
+     * Pause duration is already factored out via getActiveSession().getStreamStartTime() offset.
      * Returns 0.0 if not playing.
      */
     public double getTimeSinceStart() {
-        if (!currentSession.isPlaying() || currentSession.getStreamStartTime() == 0)
+        if (getActiveSession() == null || !getActiveSession().isPlaying() || getActiveSession().getStreamStartTime() == 0)
             return 0.0;
-        return (System.nanoTime() - currentSession.getStreamStartTime()) / 1_000_000_000.0;
+        return (System.nanoTime() - getActiveSession().getStreamStartTime()) / 1_000_000_000.0;
     }
 
     /**
@@ -817,7 +825,7 @@ public class AudioEngine {
      * position.
      */
     public int getSampleRateForClock() {
-        for (AudioStreamBuffer buffer : currentSession.getStreamBuffers().values()) {
+        for (AudioStreamBuffer buffer : getActiveSession().getStreamBuffers().values()) {
             if (buffer.sampleRate > 0) {
                 return buffer.sampleRate;
             }
@@ -834,24 +842,24 @@ public class AudioEngine {
         MinecraftClient mc = MinecraftClient.getInstance();
         boolean gamePaused = mc.isPaused();
 
-        if (gamePaused != currentSession.isPaused()) {
-            currentSession.setPaused(gamePaused);
-            if (currentSession.isPaused()) {
+        if (gamePaused != getActiveSession().isPaused()) {
+            getActiveSession().setPaused(gamePaused);
+            if (getActiveSession().isPaused()) {
                 // Game Just Paused: Record timestamp
-                currentSession.setPauseStartTimestamp(System.nanoTime());
+                getActiveSession().setPauseStartTimestamp(System.nanoTime());
                 pauseAll();
             } else {
                 // Game Just Resumed: Calculate duration and shift start time
-                if (currentSession.getPauseStartTimestamp() > 0 && currentSession.getStreamStartTime() > 0) {
-                    long pauseDuration = System.nanoTime() - currentSession.getPauseStartTimestamp();
-                    currentSession.setStreamStartTime(currentSession.getStreamStartTime() + pauseDuration); // "Freeze" the timeline during pause
+                if (getActiveSession().getPauseStartTimestamp() > 0 && getActiveSession().getStreamStartTime() > 0) {
+                    long pauseDuration = System.nanoTime() - getActiveSession().getPauseStartTimestamp();
+                    getActiveSession().setStreamStartTime(getActiveSession().getStreamStartTime() + pauseDuration); // "Freeze" the timeline during pause
                 }
                 resumeAll();
             }
         }
 
         // Don't update logic if paused
-        if (currentSession.isPaused()) {
+        if (getActiveSession().isPaused()) {
             lastTickTime = System.nanoTime(); // Reset delta tracking when paused
             return;
         }
@@ -863,26 +871,26 @@ public class AudioEngine {
 
         double timeSinceStart = 0;
         // Absolute Time Synchronization (Fixes Speed & Lag Issues)
-        if (currentSession.isPlaying() && currentSession.getStreamStartTime() != 0) {
+        if (getActiveSession().isPlaying() && getActiveSession().getStreamStartTime() != 0) {
             long now = System.nanoTime();
-            timeSinceStart = (now - currentSession.getStreamStartTime()) / 1_000_000_000.0;
+            timeSinceStart = (now - getActiveSession().getStreamStartTime()) / 1_000_000_000.0;
 
             // FREEZE DETECTION REMOVED: With global master clock (globalSampleTime
             // derived from nanoTime), all sources ALWAYS share the same
             // timeline. Inter-source drift is mathematically impossible.
         }
 
-        for (StreamSource source : currentSession.getStreamSources()) {
+        for (StreamSource source : getActiveSession().getStreamSources()) {
             // Pass current time (not lookahead) to source for playback
             if (!source.update(world, this.listenerPos, timeSinceStart)) {
                 // Sound finished or invalid
                 source.cleanup();
-                currentSession.getStreamSources().remove(source);
+                getActiveSession().getStreamSources().remove(source);
             }
         }
 
         // Apply Listener-based Early Reflections dynamically every tick
-        if (currentSession.isPlaying()) {
+        if (getActiveSession().isPlaying()) {
             updateListenerReflections(world);
         }
 
@@ -891,7 +899,7 @@ public class AudioEngine {
         // preset.
         // Otherwise, the player will be stuck with the stadium reverb forever.
         // Guard: only clear if we were actually playing (not during device recovery)
-        if (currentSession.isPlaying() && currentSession.getStreamSources().isEmpty() && this.venuePreset != null) {
+        if (getActiveSession().isPlaying() && getActiveSession().getStreamSources().isEmpty() && this.venuePreset != null) {
             this.venuePreset = null;
             this.venuePresetApplied = false;
         }
@@ -913,14 +921,14 @@ public class AudioEngine {
         // by the walls. It should not hang in the player's ears like an artificial
         // overlay.
         float maxOcclusion = 0.0f;
-        for (StreamSource source : currentSession.getStreamSources()) {
+        for (StreamSource source : getActiveSession().getStreamSources()) {
             if (source.currentOcclusion > maxOcclusion) {
                 maxOcclusion = source.currentOcclusion;
             }
         }
 
         // If not playing anything, keep maxOcclusion at 1.0 so ambient sound is normal
-        if (currentSession.getStreamSources().isEmpty()) {
+        if (getActiveSession().getStreamSources().isEmpty()) {
             maxOcclusion = 1.0f;
         }
 
@@ -936,7 +944,8 @@ public class AudioEngine {
      * Pauses all active audio sources (Game Paused).
      */
     public void pauseAll() {
-        for (StreamSource sound : currentSession.getStreamSources()) {
+        if (getActiveSession() == null) return;
+        for (StreamSource sound : getActiveSession().getStreamSources()) {
             sound.pause();
         }
         // Mute aux effect slots to kill reverb tails during pause
@@ -949,11 +958,12 @@ public class AudioEngine {
      * Resumes all active audio sources (Game Unpaused).
      */
     public void resumeAll() {
+        if (getActiveSession() == null) return;
         // Restore aux effect slot gain before resuming sources
         if (auxSlotId != 0) {
             alAuxiliaryEffectSlotf(auxSlotId, AL_EFFECTSLOT_GAIN, 1.0f);
         }
-        for (StreamSource sound : currentSession.getStreamSources()) {
+        for (StreamSource sound : getActiveSession().getStreamSources()) {
             sound.resume();
         }
     }
@@ -962,6 +972,7 @@ public class AudioEngine {
      * Stops all active audio sources immediately.
      */
     public void stopAll() {
+        if (getActiveSession() == null) return;
         // Shutdown background audio thread first
         if (audioThread != null) {
             audioThread.shutdownNow();
@@ -973,13 +984,13 @@ public class AudioEngine {
             audioThread = null;
         }
 
-        for (StreamSource sound : currentSession.getStreamSources()) {
+        for (StreamSource sound : getActiveSession().getStreamSources()) {
             sound.cleanup();
         }
-        currentSession.getStreamSources().clear();
-        currentSession.setPaused(false);
-        currentSession.setPlaying(false);
-        currentSession.setStreamStartTime(0);
+        getActiveSession().getStreamSources().clear();
+        getActiveSession().setPaused(false);
+        getActiveSession().setPlaying(false);
+        getActiveSession().setStreamStartTime(0);
 
         // Clear venue preset so reverb falls back to listener-based scanner
         this.venuePreset = null;
@@ -1034,6 +1045,7 @@ public class AudioEngine {
      * render thread. Minecraft can freeze for seconds without audio dropping out.
      */
     private synchronized void processAudioBackground() {
+        if (getActiveSession() == null) return;
         // Respect interrupt: executor shutdown will interrupt us
         if (Thread.interrupted()) {
             Thread.currentThread().interrupt();
@@ -1041,20 +1053,20 @@ public class AudioEngine {
         }
         try {
             // CRITICAL: Respect game pause and load state.
-            if (currentSession.isPaused())
+            if (getActiveSession().isPaused())
                 return;
 
             // SKIP: Don't feed sources while seek() is updating the global clock
             // and re-aligning speakers. Prevents underrun recovery from snapping
             // outputCursor to wrong positions mid-seek.
-            if (currentSession.isSeeking())
+            if (getActiveSession().isSeeking())
                 return;
 
             // PHASE 0: Decode OGG on the background thread.
             // If the main thread hangs (32 chunks), OGG decoding will continue flawlessly
             // preventing IIR filter math explosions due to audio dropouts.
             double currentWallTime = getTimeSinceStart();
-            for (AudioStreamBuffer buffer : currentSession.getStreamBuffers().values()) {
+            for (AudioStreamBuffer buffer : getActiveSession().getStreamBuffers().values()) {
                 if (buffer.sampleRate > 0) {
                     buffer.syncToTime(currentWallTime + BUFFER_LOOKAHEAD);
                 }
@@ -1088,7 +1100,7 @@ public class AudioEngine {
             // Distance calculation is done inside each source's feed method.
             reusableRestartBuffer.clear();
 
-            for (StreamSource source : currentSession.getStreamSources()) {
+            for (StreamSource source : getActiveSession().getStreamSources()) {
                 if (source.feedOpenALFromAudioThread(globalSampleTime, currentPos)) {
                     // Prevent overflow in extreme situations
                     if (reusableRestartBuffer.remaining() > 0) {
@@ -1123,10 +1135,10 @@ public class AudioEngine {
             reverbEffectId = 0;
         }
         // Free Stream Buffers (off-heap memory)
-        for (AudioStreamBuffer buffer : currentSession.getStreamBuffers().values()) {
+        for (AudioStreamBuffer buffer : getActiveSession().getStreamBuffers().values()) {
             buffer.cleanup();
         }
-        currentSession.getStreamBuffers().clear();
+        getActiveSession().getStreamBuffers().clear();
 
         efxInitialized = false;
         openAL.destroy(0, 0);
@@ -1140,10 +1152,10 @@ public class AudioEngine {
 
     // Stream Buffers Management
     public void prepareStreamBuffers(String trackId) {
-        for (AudioStreamBuffer buffer : currentSession.getStreamBuffers().values()) {
+        for (AudioStreamBuffer buffer : getActiveSession().getStreamBuffers().values()) {
             buffer.cleanup();
         }
-        currentSession.getStreamBuffers().clear();
+        getActiveSession().getStreamBuffers().clear();
 
         // Load Raw Data once
         OggDecoder.RawTrackData rawData = OggDecoder.loadOgg("sounds/" + trackId + ".ogg");
@@ -1179,7 +1191,7 @@ public class AudioEngine {
         pcm.flip();
 
         buffer.setSourceData(pcm);
-        currentSession.getStreamBuffers().put(type, buffer);
+        getActiveSession().getStreamBuffers().put(type, buffer);
     }
 
     public void applyDspForType(short[] audioData, int sampleRate, String speakerType) {
@@ -1231,9 +1243,9 @@ public class AudioEngine {
 
         try {
             prepareStreamBuffers(trackId);
-            currentSession.setPlaying(true);
-            currentSession.setPaused(false);
-            for (AudioStreamBuffer buffer : currentSession.getStreamBuffers().values()) {
+            getActiveSession().setPlaying(true);
+            getActiveSession().setPaused(false);
+            for (AudioStreamBuffer buffer : getActiveSession().getStreamBuffers().values()) {
                 if (buffer.sampleRate > 0)
                     buffer.syncToTime(BUFFER_LOOKAHEAD);
             }
@@ -1251,7 +1263,8 @@ public class AudioEngine {
     }
 
     public void updateInputGain(float gain) {
-        for (StreamSource ss : currentSession.getStreamSources()) {
+        if (getActiveSession() == null) return;
+        for (StreamSource ss : getActiveSession().getStreamSources()) {
             ss.inputGain = gain;
         }
     }
@@ -1262,7 +1275,8 @@ public class AudioEngine {
      * Smoothing is handled inside StreamSource.updatePhysics().
      */
     public void updatePower(float power) {
-        for (StreamSource ss : currentSession.getStreamSources()) {
+        if (getActiveSession() == null) return;
+        for (StreamSource ss : getActiveSession().getStreamSources()) {
             ss.power = power;
         }
     }
@@ -1283,11 +1297,11 @@ public class AudioEngine {
             public void onReady(short[] pcmArray, int decodedSamples, int totalExpected, int sampleRate, String title) {
                 AudioStreamBuffer sharedBuf = new AudioStreamBuffer("url_stream", sampleRate);
                 sharedBuf.initStreaming(pcmArray, decodedSamples, totalExpected);
-                currentSession.getStreamBuffers().clear();
-                currentSession.getStreamBuffers().put(TYPE_SUB, sharedBuf);
-                currentSession.getStreamBuffers().put(TYPE_MID, sharedBuf);
-                currentSession.getStreamBuffers().put(TYPE_LINE, sharedBuf);
-                currentSession.getStreamBuffers().put(TYPE_NORMAL, sharedBuf);
+                getActiveSession().getStreamBuffers().clear();
+                getActiveSession().getStreamBuffers().put(TYPE_SUB, sharedBuf);
+                getActiveSession().getStreamBuffers().put(TYPE_MID, sharedBuf);
+                getActiveSession().getStreamBuffers().put(TYPE_LINE, sharedBuf);
+                getActiveSession().getStreamBuffers().put(TYPE_NORMAL, sharedBuf);
                 stopAll();
                 trackGeneration++;
                 AdvancedAcousticScanner.lastPointCloud.clear();
@@ -1299,8 +1313,8 @@ public class AudioEngine {
                 while (alGetError() != AL_NO_ERROR) { /* drain */ }
                 initEfx();
                 if (speakers == null || speakers.isEmpty()) return;
-                currentSession.setPlaying(true);
-                currentSession.setPaused(false);
+                getActiveSession().setPlaying(true);
+                getActiveSession().setPaused(false);
                 sharedBuf.syncToTime(BUFFER_LOOKAHEAD);
                 World world = MinecraftClient.getInstance().world;
                 int[] counts = SpeakerClusterer.countSpeakerTypes(speakers, world);
@@ -1310,7 +1324,7 @@ public class AudioEngine {
             }
             @Override
             public void onMoreData(int totalDecoded) {
-                AudioStreamBuffer buf = currentSession.getStreamBuffers().get(TYPE_NORMAL);
+                AudioStreamBuffer buf = getActiveSession().getStreamBuffers().get(TYPE_NORMAL);
                 if (buf != null) buf.updateDecodedLength(totalDecoded);
             }
             @Override public void onComplete() {}
@@ -1363,9 +1377,9 @@ public void createSourcesFromClusters(List<List<BlockPos>> clusters, int[] count
                     }
                 }
 
-                AudioStreamBuffer buffer = currentSession.getStreamBuffers().get(speakerType);
+                AudioStreamBuffer buffer = getActiveSession().getStreamBuffers().get(speakerType);
                 if (buffer == null)
-                    buffer = currentSession.getStreamBuffers().get(TYPE_NORMAL);
+                    buffer = getActiveSession().getStreamBuffers().get(TYPE_NORMAL);
                 if (buffer == null)
                     continue;
 
@@ -1373,15 +1387,15 @@ public void createSourcesFromClusters(List<List<BlockPos>> clusters, int[] count
                 int err = alGetError();
                 if (err != AL_NO_ERROR) {
                     System.err.println("AudioEngine: OPENAL SOURCE LIMIT HIT! Failed at speaker #"
-                            + (currentSession.getStreamSources().size() + 1) + " of " + clusters.stream().mapToInt(List::size).sum()
+                            + (getActiveSession().getStreamSources().size() + 1) + " of " + clusters.stream().mapToInt(List::size).sum()
                             + " (error=0x" + Integer.toHexString(err) + ")");
                     // Clean up any sources created so far â€” partial playback is worse than
                     // silence
-                    for (StreamSource s : currentSession.getStreamSources()) {
+                    for (StreamSource s : getActiveSession().getStreamSources()) {
                         s.cleanup();
                     }
-                    currentSession.getStreamSources().clear();
-                    currentSession.setPlaying(false);
+                    getActiveSession().getStreamSources().clear();
+                    getActiveSession().setPlaying(false);
                     break;
                 }
 
@@ -1435,7 +1449,7 @@ public void createSourcesFromClusters(List<List<BlockPos>> clusters, int[] count
                 StreamSource ss = new StreamSource(sourceId, buffer, pos, power, baseMaxDist * power,
                         baseRefDist * power, dirX, dirY, dirZ, speakerType, filterId, sendFilterId,
                         inputGain, sampleShiftMs, speakerCount, leaderSource, cluster.size());
-                currentSession.getStreamSources().add(ss);
+                getActiveSession().getStreamSources().add(ss);
 
                 if (leaderSource == null)
                     leaderSource = ss;
@@ -1457,11 +1471,11 @@ public void createSourcesFromClusters(List<List<BlockPos>> clusters, int[] count
                 this.listenerPos = MinecraftClient.getInstance().cameraEntity.getPos();
                 this.smoothedListenerPos = this.listenerPos;
             }
-            currentSession.setStreamStartTime(System.nanoTime());
+            getActiveSession().setStreamStartTime(System.nanoTime());
 
             if (atomicStart) {
-                java.nio.IntBuffer sourceIds = org.lwjgl.BufferUtils.createIntBuffer(currentSession.getStreamSources().size());
-                for (StreamSource source : currentSession.getStreamSources()) {
+                java.nio.IntBuffer sourceIds = org.lwjgl.BufferUtils.createIntBuffer(getActiveSession().getStreamSources().size());
+                for (StreamSource source : getActiveSession().getStreamSources()) {
                     org.lwjgl.openal.AL10.alSourcei(source.sourceId, org.lwjgl.openal.AL10.AL_LOOPING,
                             org.lwjgl.openal.AL10.AL_FALSE);
                     sourceIds.put(source.sourceId);
@@ -1469,16 +1483,16 @@ public void createSourcesFromClusters(List<List<BlockPos>> clusters, int[] count
                 sourceIds.flip();
                 org.lwjgl.openal.AL10.alSourcePlayv(sourceIds);
             } else {
-                for (StreamSource source : currentSession.getStreamSources()) {
+                for (StreamSource source : getActiveSession().getStreamSources()) {
                     source.start();
                 }
             }
             startAudioThread();
         };
 
-        if (!currentSession.getStreamSources().isEmpty() && world != null) {
-            Vec3d probePos = calculateVenueProbe(currentSession.getStreamSources());
-            Vec3d stageDir = calculateStageDirection(currentSession.getStreamSources());
+        if (!getActiveSession().getStreamSources().isEmpty() && world != null) {
+            Vec3d probePos = calculateVenueProbe(getActiveSession().getStreamSources());
+            Vec3d stageDir = calculateStageDirection(getActiveSession().getStreamSources());
 
             int gen = trackGeneration;
             java.util.concurrent.CompletableFuture.supplyAsync(() -> {
@@ -1527,19 +1541,19 @@ public void createSourcesFromClusters(List<List<BlockPos>> clusters, int[] count
             rawData.format = org.lwjgl.openal.AL10.AL_FORMAT_MONO16;
 
             // Prepare stream buffers
-            for (AudioStreamBuffer buffer : currentSession.getStreamBuffers().values()) {
+            for (AudioStreamBuffer buffer : getActiveSession().getStreamBuffers().values()) {
                 buffer.cleanup();
             }
-            currentSession.getStreamBuffers().clear();
+            getActiveSession().getStreamBuffers().clear();
             createStreamBufferForType("url_track", rawData, TYPE_SUB);
             createStreamBufferForType("url_track", rawData, TYPE_MID);
             createStreamBufferForType("url_track", rawData, TYPE_LINE);
             createStreamBufferForType("url_track", rawData, TYPE_NORMAL);
             org.lwjgl.system.MemoryUtil.memFree(pcmBuffer);
 
-            currentSession.setPlaying(true);
-            currentSession.setPaused(false);
-            for (AudioStreamBuffer buffer : currentSession.getStreamBuffers().values()) {
+            getActiveSession().setPlaying(true);
+            getActiveSession().setPaused(false);
+            for (AudioStreamBuffer buffer : getActiveSession().getStreamBuffers().values()) {
                 if (buffer.sampleRate > 0)
                     buffer.syncToTime(BUFFER_LOOKAHEAD);
             }
@@ -1561,6 +1575,7 @@ public void createSourcesFromClusters(List<List<BlockPos>> clusters, int[] count
      * immediately. Called from the client UI or network packets.
      */
     public void updateSpeakerTilt(BlockPos speakerPos, int tiltDeg) {
+        if (getActiveSession() == null) return;
         net.minecraft.client.world.ClientWorld world = net.minecraft.client.MinecraftClient.getInstance().world;
         if (world == null)
             return;
@@ -1577,7 +1592,7 @@ public void createSourcesFromClusters(List<List<BlockPos>> clusters, int[] count
         float dirY = sinT;
         float dirZ = vec.getZ() * cosT;
 
-        for (StreamSource ss : currentSession.getStreamSources()) {
+        for (StreamSource ss : getActiveSession().getStreamSources()) {
             if (ss.pos.equals(speakerPos) && !TYPE_SUB.equals(ss.speakerType)) {
                 alSource3f(ss.sourceId, AL_DIRECTION, dirX, dirY, dirZ);
             }
@@ -1588,9 +1603,9 @@ public void createSourcesFromClusters(List<List<BlockPos>> clusters, int[] count
      * Fetch Total Duration in Seconds for the currently playing track.
      */
     public double getTotalPlaybackDuration() {
-        if (!currentSession.isPlaying() || currentSession.getStreamBuffers().isEmpty())
+        if (getActiveSession() == null || !getActiveSession().isPlaying() || getActiveSession().getStreamBuffers().isEmpty())
             return 0.0;
-        AudioStreamBuffer buf = currentSession.getStreamBuffers().values().iterator().next();
+        AudioStreamBuffer buf = getActiveSession().getStreamBuffers().values().iterator().next();
         return buf != null ? buf.getTotalDurationSeconds() : 0.0;
     }
 
@@ -1598,10 +1613,10 @@ public void createSourcesFromClusters(List<List<BlockPos>> clusters, int[] count
      * Fetch Current Playback Time in Seconds.
      */
     public double getCurrentPlaybackTime() {
-        if (!currentSession.isPlaying() || currentSession.getStreamStartTime() == 0)
+        if (getActiveSession() == null || !getActiveSession().isPlaying() || getActiveSession().getStreamStartTime() == 0)
             return 0.0;
         long now = System.nanoTime();
-        double timeSinceStart = (now - currentSession.getStreamStartTime()) / 1_000_000_000.0;
+        double timeSinceStart = (now - getActiveSession().getStreamStartTime()) / 1_000_000_000.0;
         return timeSinceStart;
     }
 
@@ -1611,7 +1626,7 @@ public void createSourcesFromClusters(List<List<BlockPos>> clusters, int[] count
      * homogeneously.
      */
     public synchronized void seek(double timeSeconds) {
-        if (!currentSession.isPlaying())
+        if (getActiveSession() == null || !getActiveSession().isPlaying())
             return;
 
         // Clamp to bounds
@@ -1635,10 +1650,10 @@ public void createSourcesFromClusters(List<List<BlockPos>> clusters, int[] count
         // Without this, processAudioBackground() can fire mid-seek and cause
         // underrun recovery to snap outputCursor to the wrong position,
         // resulting in 3-4 speakers playing asynchronously.
-        currentSession.setSeeking(true);
+        getActiveSession().setSeeking(true);
         try {
             // Nothing to seek if all sources were cleaned up (song ended naturally)
-            if (currentSession.getStreamSources().isEmpty())
+            if (getActiveSession().getStreamSources().isEmpty())
                 return;
 
             // Shift absolute temporal timeline baseline
@@ -1646,14 +1661,14 @@ public void createSourcesFromClusters(List<List<BlockPos>> clusters, int[] count
 
             // If the game is paused, adjust the pause tracker so it doesn't double-cancel
             // the seek on resume
-            if (currentSession.isPaused()) {
-                currentSession.setPauseStartTimestamp(now);
+            if (getActiveSession().isPaused()) {
+                getActiveSession().setPauseStartTimestamp(now);
             }
 
-            currentSession.setStreamStartTime(now - (long) (timeSeconds * 1_000_000_000.0));
+            getActiveSession().setStreamStartTime(now - (long) (timeSeconds * 1_000_000_000.0));
 
             // Force raw JLayer decoder index jumps
-            for (AudioStreamBuffer buffer : currentSession.getStreamBuffers().values()) {
+            for (AudioStreamBuffer buffer : getActiveSession().getStreamBuffers().values()) {
                 // Buffer up to 0.1s INTO THE PAST to cushion StreamSource physics delays.
                 // When speakers simulate spatial distance, they read slightly backwards in the
                 // ring buffer.
@@ -1668,8 +1683,8 @@ public void createSourcesFromClusters(List<List<BlockPos>> clusters, int[] count
 
             // Broadcast snap offsets into ALL actively playing physical speakers locally
             // using atomic AL Source commands
-            java.nio.IntBuffer sourceIds = org.lwjgl.BufferUtils.createIntBuffer(currentSession.getStreamSources().size());
-            for (StreamSource source : currentSession.getStreamSources()) {
+            java.nio.IntBuffer sourceIds = org.lwjgl.BufferUtils.createIntBuffer(getActiveSession().getStreamSources().size());
+            for (StreamSource source : getActiveSession().getStreamSources()) {
                 source.seekToTime(timeSeconds); // Aligns playhead and hardware queue internally (does NOT call
                                                 // alSourcePlay)
                 sourceIds.put(source.sourceId);
@@ -1677,7 +1692,7 @@ public void createSourcesFromClusters(List<List<BlockPos>> clusters, int[] count
             sourceIds.flip();
             org.lwjgl.openal.AL10.alSourcePlayv(sourceIds); // ATOMIC HARDWARE START: NO SPEAKER PHASE STAGGER
         } finally {
-            currentSession.setSeeking(false); // Resume audio thread feeding
+            getActiveSession().setSeeking(false); // Resume audio thread feeding
         }
     }
 }
