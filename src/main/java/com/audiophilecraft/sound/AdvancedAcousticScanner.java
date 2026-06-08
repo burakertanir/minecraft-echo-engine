@@ -902,10 +902,32 @@ public class AdvancedAcousticScanner {
         float effectiveVolume = vVolume * effectiveEnclosure;
         float effectiveMeanDist = vMeanDist * (float) Math.sqrt(effectiveEnclosure);
 
-        boolean tier7 = (effectiveVolume > cfg.tier7_volumeThreshold || effectiveMeanDist > cfg.tier7_distThreshold)
+        boolean tier10 = (effectiveVolume > cfg.tier10_volumeThreshold || effectiveMeanDist > cfg.tier10_distThreshold) && !isOpenAir;
+        boolean tier9 = (effectiveVolume > cfg.tier9_volumeThreshold || effectiveMeanDist > cfg.tier9_distThreshold) && !isOpenAir;
+        boolean tier8 = (effectiveVolume > cfg.tier8_volumeThreshold || effectiveMeanDist > cfg.tier8_distThreshold) && !isOpenAir;
+                boolean tier7 = (effectiveVolume > cfg.tier7_volumeThreshold || effectiveMeanDist > cfg.tier7_distThreshold)
                 && !isOpenAir;
 
         String tierName = "";
+        if (tier10) {
+            tierName = "TIER 10 (INFINITE CATHEDRAL / VOID)";
+            vGain = Math.max(cfg.tier10_minGain, baseEnclosureMultiplier * cfg.tier10_gainMul);
+            vReflGain = Math.max(0.0f, reflectionMaterialFactor * cfg.tier10_reflGainMul);
+            float maxLate10 = effectiveEnclosure > 0.8f ? cfg.tier10_maxLateMultiplier_highEncl : cfg.tier10_maxLateMultiplier_lowEncl;
+            lateReverbMultiplier = Math.min(cfg.tier10_lateReverbMul + (roomFactor * cfg.tier10_lateReverbRoomScale), maxLate10);
+        } else if (tier9) {
+            tierName = "TIER 9 (MEGA COMPLEX / CITY BLOCK)";
+            vGain = Math.max(cfg.tier9_minGain, baseEnclosureMultiplier * cfg.tier9_gainMul);
+            vReflGain = Math.max(0.0f, reflectionMaterialFactor * cfg.tier9_reflGainMul);
+            float maxLate9 = effectiveEnclosure > 0.8f ? cfg.tier9_maxLateMultiplier_highEncl : cfg.tier9_maxLateMultiplier_lowEncl;
+            lateReverbMultiplier = Math.min(cfg.tier9_lateReverbMul + (roomFactor * cfg.tier9_lateReverbRoomScale), maxLate9);
+        } else if (tier8) {
+            tierName = "TIER 8 (COLOSSAL DOME / HANGAR)";
+            vGain = Math.max(cfg.tier8_minGain, baseEnclosureMultiplier * cfg.tier8_gainMul);
+            vReflGain = Math.max(0.0f, reflectionMaterialFactor * cfg.tier8_reflGainMul);
+            float maxLate8 = effectiveEnclosure > 0.8f ? cfg.tier8_maxLateMultiplier_highEncl : cfg.tier8_maxLateMultiplier_lowEncl;
+            lateReverbMultiplier = Math.min(cfg.tier8_lateReverbMul + (roomFactor * cfg.tier8_lateReverbRoomScale), maxLate8);
+        } else 
         if (tier7) {
             tierName = "TIER 7 (MASSIVE STADIUM)";
             // TIER 7: MASSIVE ENCLOSED STADIUM (Live Tunable)

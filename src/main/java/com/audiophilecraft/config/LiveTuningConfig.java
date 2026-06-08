@@ -181,10 +181,48 @@ public class LiveTuningConfig {
         public float tier7_lateReverbRoomScale = 0.70f;
         public float tier7_maxLateMultiplier_highEncl = 2.0f;
         public float tier7_maxLateMultiplier_lowEncl = 2.8f;
+
+
+        // --- TIER 8: COLOSSAL DOME / HANGAR ---
+        public float tier8_minGain = 0.22f;
+        public float tier8_gainMul = 0.40f;
+        public float tier8_reflGainMul = 0.38f;
+        public float tier8_reflGainMax = 1.00f;
+        public float tier8_lateReverbMul = 1.50f;
+        public float tier8_lateReverbRoomScale = 0.80f;
+        public float tier8_maxLateMultiplier_highEncl = 2.5f;
+        public float tier8_maxLateMultiplier_lowEncl = 3.5f;
+
+        // --- TIER 9: MEGA COMPLEX / CITY BLOCK ---
+        public float tier9_minGain = 0.25f;
+        public float tier9_gainMul = 0.35f;
+        public float tier9_reflGainMul = 0.32f;
+        public float tier9_reflGainMax = 1.00f;
+        public float tier9_lateReverbMul = 1.70f;
+        public float tier9_lateReverbRoomScale = 0.90f;
+        public float tier9_maxLateMultiplier_highEncl = 3.0f;
+        public float tier9_maxLateMultiplier_lowEncl = 4.2f;
+
+        // --- TIER 10: INFINITE CATHEDRAL / VOID ---
+        public float tier10_minGain = 0.28f;
+        public float tier10_gainMul = 0.30f;
+        public float tier10_reflGainMul = 0.25f;
+        public float tier10_reflGainMax = 1.00f;
+        public float tier10_lateReverbMul = 2.00f;
+        public float tier10_lateReverbRoomScale = 1.00f;
+        public float tier10_maxLateMultiplier_highEncl = 3.5f;
+        public float tier10_maxLateMultiplier_lowEncl = 5.0f;
 
         // Tier Thresholds
         public float tier7_volumeThreshold = 200000.0f;
         public float tier7_distThreshold = 35.0f;
+
+        public float tier8_volumeThreshold = 500000.0f;
+        public float tier8_distThreshold = 55.0f;
+        public float tier9_volumeThreshold = 1200000.0f;
+        public float tier9_distThreshold = 80.0f;
+        public float tier10_volumeThreshold = 3000000.0f;
+        public float tier10_distThreshold = 120.0f;
         public float tier6_volumeThreshold = 60000.0f;
         public float tier6_distThreshold = 22.0f;
         public float tier5_volumeThreshold = 15000.0f;
@@ -607,6 +645,45 @@ public class LiveTuningConfig {
                                 writeParam(w, "tier7_maxLateMultiplier_lowEncl", c.tier7_maxLateMultiplier_lowEncl,
                                                 "Yarim acik stadyumda gec yanki ust siniri.");
                                 w.println();
+                                w.println();
+
+                                // Tier 8
+                                w.println("  // --- TIER 8: COLOSSAL DOME / HANGAR (55+ blok) ---");
+                                w.println("  // Devasa kapali kubbe veya ucak hangari. Muazzam yanki.");
+                                writeParam(w, "tier8_minGain", c.tier8_minGain, "Minimum yanki hacmi.");
+                                writeParam(w, "tier8_gainMul", c.tier8_gainMul, "Yanki hacim carpani.");
+                                writeParam(w, "tier8_reflGainMul", c.tier8_reflGainMul, "Erken yansima gucu carpani.");
+                                writeParam(w, "tier8_reflGainMax", c.tier8_reflGainMax, "Erken yansima maksimum siniri.");
+                                writeParam(w, "tier8_lateReverbMul", c.tier8_lateReverbMul, "Gec yanki carpani.");
+                                writeParam(w, "tier8_lateReverbRoomScale", c.tier8_lateReverbRoomScale, "Oda boyutunun gec yanki etkisi.");
+                                writeParam(w, "tier8_maxLateMultiplier_highEncl", c.tier8_maxLateMultiplier_highEncl, "Tam kapali kubbe gec yanki ust siniri.");
+                                writeParam(w, "tier8_maxLateMultiplier_lowEncl", c.tier8_maxLateMultiplier_lowEncl, "Yarim acik kubbe gec yanki ust siniri.");
+                                w.println();
+
+                                // Tier 9
+                                w.println("  // --- TIER 9: MEGA COMPLEX / CITY BLOCK (80+ blok) ---");
+                                w.println("  // Sehir blogu veya dev kompleks. Epic yanki dunyasi.");
+                                writeParam(w, "tier9_minGain", c.tier9_minGain, "Minimum yanki hacmi.");
+                                writeParam(w, "tier9_gainMul", c.tier9_gainMul, "Yanki hacim carpani.");
+                                writeParam(w, "tier9_reflGainMul", c.tier9_reflGainMul, "Erken yansima gucu carpani.");
+                                writeParam(w, "tier9_reflGainMax", c.tier9_reflGainMax, "Erken yansima maksimum siniri.");
+                                writeParam(w, "tier9_lateReverbMul", c.tier9_lateReverbMul, "Gec yanki carpani.");
+                                writeParam(w, "tier9_lateReverbRoomScale", c.tier9_lateReverbRoomScale, "Oda boyutunun gec yanki etkisi.");
+                                writeParam(w, "tier9_maxLateMultiplier_highEncl", c.tier9_maxLateMultiplier_highEncl, "Tam kapali kompleks gec yanki ust siniri.");
+                                writeParam(w, "tier9_maxLateMultiplier_lowEncl", c.tier9_maxLateMultiplier_lowEncl, "Yarim acik kompleks gec yanki ust siniri.");
+                                w.println();
+
+                                // Tier 10
+                                w.println("  // --- TIER 10: INFINITE CATHEDRAL / VOID (120+ blok) ---");
+                                w.println("  // Sonsuz katedral veya dev bosluk. Mutlak yanki hakimiyeti.");
+                                writeParam(w, "tier10_minGain", c.tier10_minGain, "Minimum yanki hacmi.");
+                                writeParam(w, "tier10_gainMul", c.tier10_gainMul, "Yanki hacim carpani.");
+                                writeParam(w, "tier10_reflGainMul", c.tier10_reflGainMul, "Erken yansima gucu carpani.");
+                                writeParam(w, "tier10_reflGainMax", c.tier10_reflGainMax, "Erken yansima maksimum siniri.");
+                                writeParam(w, "tier10_lateReverbMul", c.tier10_lateReverbMul, "Gec yanki carpani.");
+                                writeParam(w, "tier10_lateReverbRoomScale", c.tier10_lateReverbRoomScale, "Oda boyutunun gec yanki etkisi.");
+                                writeParam(w, "tier10_maxLateMultiplier_highEncl", c.tier10_maxLateMultiplier_highEncl, "Tam kapali katedral gec yanki ust siniri.");
+                                writeParam(w, "tier10_maxLateMultiplier_lowEncl", c.tier10_maxLateMultiplier_lowEncl, "Yarim acik katedral gec yanki ust siniri.");
 
                                 // Tier Thresholds
                                 w.println("  // --- TIER SINIRLARI ---");
@@ -636,6 +713,12 @@ public class LiveTuningConfig {
                                 writeParam(w, "tier2_distThreshold", c.tier2_distThreshold,
                                                 "Tier 2 icin minimum mesafe. Bunun alti = Dolap (Tier 1).");
                                 w.println();
+                                writeParam(w, "tier8_volumeThreshold", c.tier8_volumeThreshold, "Tier 8 icin minimum hacim (blok^3).");
+                                writeParam(w, "tier8_distThreshold", c.tier8_distThreshold, "Tier 8 icin minimum mesafe (blok).");
+                                writeParam(w, "tier9_volumeThreshold", c.tier9_volumeThreshold, "Tier 9 icin minimum hacim (blok^3).");
+                                writeParam(w, "tier9_distThreshold", c.tier9_distThreshold, "Tier 9 icin minimum mesafe (blok).");
+                                writeParam(w, "tier10_volumeThreshold", c.tier10_volumeThreshold, "Tier 10 icin minimum hacim (blok^3).");
+                                writeParam(w, "tier10_distThreshold", c.tier10_distThreshold, "Tier 10 icin minimum mesafe (blok).");
 
                                 // Open Air Thresholds
                                 w.println("  // --- ACIK HAVA ESIKLERI ---");

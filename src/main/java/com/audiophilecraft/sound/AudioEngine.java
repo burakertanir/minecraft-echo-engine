@@ -973,16 +973,6 @@ public class AudioEngine {
      */
     public void stopAll() {
         if (getActiveSession() == null) return;
-        // Shutdown background audio thread first
-        if (audioThread != null) {
-            audioThread.shutdownNow();
-            try {
-                audioThread.awaitTermination(50, TimeUnit.MILLISECONDS);
-            } catch (InterruptedException ie) {
-                Thread.currentThread().interrupt();
-            }
-            audioThread = null;
-        }
 
         for (StreamSource sound : getActiveSession().getStreamSources()) {
             sound.cleanup();
@@ -997,6 +987,21 @@ public class AudioEngine {
         this.venuePresetApplied = false;
         this.storedVenueDescriptor = null;
         this.storedVenueProbePos = null;
+
+        // Only shut down audio thread if NO other session is still playing
+        boolean anyPlaying = false;
+        for (PlaybackSession s : sessions.values()) {
+            if (s.isPlaying()) { anyPlaying = true; break; }
+        }
+        if (!anyPlaying && audioThread != null) {
+            audioThread.shutdownNow();
+            try {
+                audioThread.awaitTermination(50, TimeUnit.MILLISECONDS);
+            } catch (InterruptedException ie) {
+                Thread.currentThread().interrupt();
+            }
+            audioThread = null;
+        }
     }
 
     /**
@@ -1331,6 +1336,13 @@ public class AudioEngine {
             @Override
             public void onFailed(String reason) {
                 System.err.println("AudioEngine: URL load failed: " + reason);
+                net.minecraft.client.MinecraftClient.getInstance().execute(() -> {
+                    if (net.minecraft.client.MinecraftClient.getInstance().player != null) {
+                        net.minecraft.client.MinecraftClient.getInstance().player.sendMessage(
+                            net.minecraft.text.Text.literal("HATA (CRITICAL DECODE ERROR): " + reason)
+                                .formatted(net.minecraft.util.Formatting.RED), false);
+                    }
+                });
             }
         });
     }
@@ -1496,7 +1508,15 @@ public void createSourcesFromClusters(List<List<BlockPos>> clusters, int[] count
 
             int gen = trackGeneration;
             java.util.concurrent.CompletableFuture.supplyAsync(() -> {
-                return acousticScanner.scanVenue(world, probePos, stageDir);
+                try {
+                    return acousticScanner.scanVenue(world, probePos, stageDir);
+                } catch (Exception e) {
+                    System.err.println("Venue scan crash: " + e.getMessage());
+                    return null;
+                }
+            }).exceptionally(ex -> {
+                System.err.println("Venue scan future failed: " + ex.getMessage());
+                return null;
             }).thenAcceptAsync(preset -> {
                 if (gen != trackGeneration)
                     return; // stale callback
@@ -1693,6 +1713,54 @@ public void createSourcesFromClusters(List<List<BlockPos>> clusters, int[] count
             org.lwjgl.openal.AL10.alSourcePlayv(sourceIds); // ATOMIC HARDWARE START: NO SPEAKER PHASE STAGGER
         } finally {
             getActiveSession().setSeeking(false); // Resume audio thread feeding
+        }
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // MULTIPLAYER SYNC METHODS
+    // Called by S2C packet handlers to update running sessions remotely.
+    // ═══════════════════════════════════════════════════════════════════════
+
+    public void seekForSession(java.util.UUID sessionUUID, float targetTime) {
+        PlaybackSession session = sessions.get(sessionUUID);
+        if (session != null) {
+            // Note: currently seek logic alters the base time of the stream.
+            // If true multi-session seeking is needed, it should be implemented in PlaybackSession.
+            // For now, if the session is active, we just call the global seek.
+            if (sessionUUID.equals(activeSessionId)) seek(targetTime);
+        }
+    }
+
+    public void setEqDbForSession(java.util.UUID sessionUUID, String speakerType, int band, float db) {
+        PlaybackSession session = sessions.get(sessionUUID);
+        if (session != null) session.setEqDb(speakerType, band, db);
+    }
+
+    public void setEqQForSession(java.util.UUID sessionUUID, String speakerType, int band, float q) {
+        // eqQ is currently global in AudioEngine
+        setEqQ(speakerType, band, q);
+    }
+
+    public void setMixerGainForSession(java.util.UUID sessionUUID, String speakerType, float gain) {
+        PlaybackSession session = sessions.get(sessionUUID);
+        if (session != null) session.setMixerGain(speakerType, gain);
+    }
+
+    public void updateInputGainForSession(java.util.UUID sessionUUID, float gain) {
+        PlaybackSession session = sessions.get(sessionUUID);
+        if (session != null) {
+            for (StreamSource source : session.getStreamSources()) {
+                source.inputGain = gain;
+            }
+        }
+    }
+
+    public void updatePowerForSession(java.util.UUID sessionUUID, float power) {
+        PlaybackSession session = sessions.get(sessionUUID);
+        if (session != null) {
+            for (StreamSource source : session.getStreamSources()) {
+                source.power = power;
+            }
         }
     }
 }

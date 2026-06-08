@@ -29,6 +29,9 @@ public class InternetAudioLoader {
     private final AudioPlayerManager playerManager;
 
     private InternetAudioLoader() {
+        // Force IPv4 to prevent Java network hangs on Windows (IPv6 timeouts)
+        System.setProperty("java.net.preferIPv4Stack", "true");
+
         playerManager = new DefaultAudioPlayerManager();
         // CRITICAL: Set output format to raw PCM (not Opus!)
         // LavaPlayer defaults to Opus which is encoded — we need raw PCM for OpenAL
@@ -143,12 +146,21 @@ public class InternetAudioLoader {
             if (first != null && first.getData() != null && first.getData().length > 0) {
                 totalDecoded += copyFrameToPcm(first, pcm, totalDecoded, channels);
             }
+            int timeouts = 0;
             while (totalDecoded < prebufferTarget) {
                 AudioFrame f = player.provide(5000, java.util.concurrent.TimeUnit.MILLISECONDS);
-                if (f == null || f.getData() == null) { if (player.getPlayingTrack() == null) break; continue; }
+                if (f == null || f.getData() == null) { 
+                    if (player.getPlayingTrack() == null) break; 
+                    timeouts++;
+                    if (timeouts > 4) { // 20 seconds
+                        throw new RuntimeException("Stream buffering timed out! (Network/IPv6 or Codec issue)");
+                    }
+                    continue; 
+                }
+                timeouts = 0;
                 totalDecoded += copyFrameToPcm(f, pcm, totalDecoded, channels);
             }
-            if (totalDecoded == 0) { callback.onFailed("0 samples decoded"); return; }
+            if (totalDecoded == 0) { throw new RuntimeException("0 samples decoded. Stream failed to start."); }
             final int prebuffered = totalDecoded; final int finalSR = sampleRate;
             final short[] pcmFinal = pcm;
             net.minecraft.client.MinecraftClient.getInstance().execute(() -> callback.onReady(pcmFinal, prebuffered, totalExpected, finalSR, title));
@@ -162,9 +174,10 @@ public class InternetAudioLoader {
                 if (totalDecoded >= totalExpected) break;
             }
             net.minecraft.client.MinecraftClient.getInstance().execute(() -> callback.onComplete());
-        } catch (Exception e) {
+        } catch (Throwable e) {
+            System.err.println("CRITICAL DECODE ERROR: " + e.toString());
             e.printStackTrace();
-            net.minecraft.client.MinecraftClient.getInstance().execute(() -> callback.onFailed(e.getMessage()));
+            net.minecraft.client.MinecraftClient.getInstance().execute(() -> callback.onFailed(e.toString()));
         } finally { player.destroy(); }
     }
 
@@ -288,10 +301,10 @@ public class InternetAudioLoader {
 
             callback.onTrackLoaded(monoData, sampleRate, title);
 
-        } catch (Exception e) {
-            System.err.println("InternetAudioLoader: Decode error: " + e.getMessage());
+        } catch (Throwable e) {
+            System.err.println("InternetAudioLoader: Decode error: " + e.toString());
             e.printStackTrace();
-            callback.onFailed("Decode error: " + e.getMessage());
+            callback.onFailed("Decode error: " + e.toString());
         }
     }
 

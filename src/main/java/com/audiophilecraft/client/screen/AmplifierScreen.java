@@ -1272,9 +1272,21 @@ public class AmplifierScreen extends HandledScreen<AmplifierScreenHandler> {
             if (typeIndex == 0) {
                 float actualGain = sliderToGain(this.value);
                 com.audiophilecraft.sound.AudioEngine.getInstance().setMixerGain(speakerType, actualGain);
+                // Send to server for multiplayer sync
+                net.minecraft.network.PacketByteBuf gainBuf = net.fabricmc.fabric.api.networking.v1.PacketByteBufs.create();
+                gainBuf.writeString(speakerType);
+                gainBuf.writeFloat(actualGain);
+                net.fabricmc.fabric.api.client.networking.v1.ClientPlayNetworking.send(com.audiophilecraft.network.ModMessages.C2S_UPDATE_MIXER_GAIN, gainBuf);
             } else {
                 float db = (float) (this.value * 24.0 - 12.0);
+                // Apply locally for instant feedback
                 com.audiophilecraft.sound.AudioEngine.getInstance().setEqDb(speakerType, typeIndex - 1, db);
+                // Send to server for multiplayer sync
+                net.minecraft.network.PacketByteBuf eqBuf = net.fabricmc.fabric.api.networking.v1.PacketByteBufs.create();
+                eqBuf.writeString(speakerType);
+                eqBuf.writeInt(typeIndex - 1);
+                eqBuf.writeFloat(db);
+                net.fabricmc.fabric.api.client.networking.v1.ClientPlayNetworking.send(com.audiophilecraft.network.ModMessages.C2S_UPDATE_EQ, eqBuf);
             }
         }
         public void setSliderValue(double raw) {
@@ -1364,6 +1376,12 @@ public class AmplifierScreen extends HandledScreen<AmplifierScreenHandler> {
                 q = 1.0f + (float) ((this.value - 0.5) * 18.0f);
             }
             com.audiophilecraft.sound.AudioEngine.getInstance().setEqQ(speakerType, typeIndex - 1, q);
+            // Send to server for multiplayer sync
+            net.minecraft.network.PacketByteBuf qBuf = net.fabricmc.fabric.api.networking.v1.PacketByteBufs.create();
+            qBuf.writeString(speakerType);
+            qBuf.writeInt(typeIndex - 1);
+            qBuf.writeFloat(q);
+            net.fabricmc.fabric.api.client.networking.v1.ClientPlayNetworking.send(com.audiophilecraft.network.ModMessages.C2S_UPDATE_EQ_Q, qBuf);
         }
         public void setSliderValue(double raw) {
             this.value = Math.max(0.0, Math.min(raw, 1.0));
