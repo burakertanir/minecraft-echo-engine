@@ -1,11 +1,11 @@
 package com.audiophilecraft;
 
+import com.audiophilecraft.network.ModMessages;
 import com.audiophilecraft.registry.ModBlockEntities;
 import com.audiophilecraft.registry.ModBlocks;
 import com.audiophilecraft.registry.ModItemGroups;
 import com.audiophilecraft.registry.ModItems;
 import com.audiophilecraft.registry.ModScreenHandlers;
-import com.audiophilecraft.network.ModMessages;
 import net.fabricmc.api.ModInitializer;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;

@@ -1,14 +1,15 @@
 package com.audiophilecraft.sound;
 
+import static org.lwjgl.openal.AL10.*;
+
+import java.nio.ByteBuffer;
+import java.nio.IntBuffer;
+import java.nio.ShortBuffer;
 import org.lwjgl.stb.STBVorbis;
 import org.lwjgl.stb.STBVorbisInfo;
 import org.lwjgl.system.MemoryStack;
 import org.lwjgl.system.MemoryUtil;
 import org.lwjgl.system.libc.LibCStdlib;
-import java.nio.ByteBuffer;
-import java.nio.IntBuffer;
-import java.nio.ShortBuffer;
-import static org.lwjgl.openal.AL10.*;
 
 public class OggDecoder {
 
@@ -55,8 +56,7 @@ public class OggDecoder {
             // Use a temporary interleaved buffer for decoding
             ShortBuffer tempBuf = MemoryUtil.memAllocShort(maxSamples * channels);
             try {
-                int samplesPerChannel = STBVorbis.stb_vorbis_get_samples_short_interleaved(
-                        handle, channels, tempBuf);
+                int samplesPerChannel = STBVorbis.stb_vorbis_get_samples_short_interleaved(handle, channels, tempBuf);
 
                 if (samplesPerChannel == 0) {
                     finished = true;
@@ -109,7 +109,9 @@ public class OggDecoder {
         ByteBuffer vorbisData = null;
         try {
             var id = new net.minecraft.util.Identifier("audiophilecraft", resourcePath);
-            var resource = net.minecraft.client.MinecraftClient.getInstance().getResourceManager().getResource(id);
+            var resource = net.minecraft.client.MinecraftClient.getInstance()
+                    .getResourceManager()
+                    .getResource(id);
 
             if (resource.isPresent()) {
                 try (var stream = resource.get().getInputStream()) {
@@ -159,7 +161,9 @@ public class OggDecoder {
             ByteBuffer vorbisData = null;
             try {
                 var id = new net.minecraft.util.Identifier("audiophilecraft", resourcePath);
-                var resource = net.minecraft.client.MinecraftClient.getInstance().getResourceManager().getResource(id);
+                var resource = net.minecraft.client.MinecraftClient.getInstance()
+                        .getResourceManager()
+                        .getResource(id);
 
                 if (resource.isPresent()) {
                     try (var stream = resource.get().getInputStream()) {
@@ -207,10 +211,8 @@ public class OggDecoder {
                     short right = rawAudio.get(i + 1);
                     int sum = (int) left + (int) right;
                     int mono = Math.round(sum * 0.5f);
-                    if (mono > 32767)
-                        mono = 32767;
-                    if (mono < -32768)
-                        mono = -32768;
+                    if (mono > 32767) mono = 32767;
+                    if (mono < -32768) mono = -32768;
                     monoAudio.put((short) mono);
                 }
                 monoAudio.flip();

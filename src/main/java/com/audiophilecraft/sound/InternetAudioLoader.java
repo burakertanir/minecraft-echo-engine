@@ -1,9 +1,9 @@
 package com.audiophilecraft.sound;
 
+import com.sedmelluq.discord.lavaplayer.format.StandardAudioDataFormats;
 import com.sedmelluq.discord.lavaplayer.player.AudioLoadResultHandler;
 import com.sedmelluq.discord.lavaplayer.player.AudioPlayerManager;
 import com.sedmelluq.discord.lavaplayer.player.DefaultAudioPlayerManager;
-import com.sedmelluq.discord.lavaplayer.format.StandardAudioDataFormats;
 import com.sedmelluq.discord.lavaplayer.source.http.HttpAudioSourceManager;
 import com.sedmelluq.discord.lavaplayer.source.soundcloud.SoundCloudAudioSourceManager;
 import com.sedmelluq.discord.lavaplayer.tools.FriendlyException;
@@ -12,7 +12,6 @@ import com.sedmelluq.discord.lavaplayer.track.AudioTrack;
 import com.sedmelluq.discord.lavaplayer.track.AudioTrackInfo;
 import com.sedmelluq.discord.lavaplayer.track.playback.AudioFrame;
 import dev.lavalink.youtube.YoutubeAudioSourceManager;
-
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
 import java.util.concurrent.CompletableFuture;
@@ -62,8 +61,11 @@ public class InternetAudioLoader {
 
     public interface StreamingCallback {
         void onReady(short[] pcmArray, int decodedSamples, int totalExpected, int sampleRate, String title);
+
         void onMoreData(int totalDecoded);
+
         void onComplete();
+
         void onFailed(String reason);
     }
 
@@ -116,32 +118,56 @@ public class InternetAudioLoader {
         });
     }
 
-        public void loadTrackStreaming(String url, StreamingCallback callback) {
+    public void loadTrackStreaming(String url, StreamingCallback callback) {
         playerManager.loadItem(url, new AudioLoadResultHandler() {
-            @Override public void trackLoaded(AudioTrack track) { CompletableFuture.runAsync(() -> decodeTrackStreaming(track, callback)); }
-            @Override public void playlistLoaded(AudioPlaylist playlist) {
-                if (playlist.getTracks().isEmpty()) { callback.onFailed("Playlist empty"); return; }
-                AudioTrack s = playlist.getSelectedTrack(); if (s == null) s = playlist.getTracks().get(0);
-                final AudioTrack t = s; CompletableFuture.runAsync(() -> decodeTrackStreaming(t, callback));
+            @Override
+            public void trackLoaded(AudioTrack track) {
+                CompletableFuture.runAsync(() -> decodeTrackStreaming(track, callback));
             }
-            @Override public void noMatches() { callback.onFailed("No matches: " + url); }
-            @Override public void loadFailed(FriendlyException ex) { callback.onFailed("Load failed: " + ex.getMessage()); }
+
+            @Override
+            public void playlistLoaded(AudioPlaylist playlist) {
+                if (playlist.getTracks().isEmpty()) {
+                    callback.onFailed("Playlist empty");
+                    return;
+                }
+                AudioTrack s = playlist.getSelectedTrack();
+                if (s == null) s = playlist.getTracks().get(0);
+                final AudioTrack t = s;
+                CompletableFuture.runAsync(() -> decodeTrackStreaming(t, callback));
+            }
+
+            @Override
+            public void noMatches() {
+                callback.onFailed("No matches: " + url);
+            }
+
+            @Override
+            public void loadFailed(FriendlyException ex) {
+                callback.onFailed("Load failed: " + ex.getMessage());
+            }
         });
     }
 
     private void decodeTrackStreaming(AudioTrack track, StreamingCallback callback) {
-        int sampleRate = 48000; int channels = 2; int totalDecoded = 0; short[] pcm = null;
-        int prebufferTarget; String title = track.getInfo().title;
+        int sampleRate = 48000;
+        int channels = 2;
+        int totalDecoded = 0;
+        short[] pcm = null;
+        int prebufferTarget;
+        String title = track.getInfo().title;
         var player = playerManager.createPlayer();
         try {
             player.playTrack(track);
             AudioFrame first = player.provide(5000, java.util.concurrent.TimeUnit.MILLISECONDS);
             if (first != null && first.getFormat() != null) {
-                sampleRate = first.getFormat().sampleRate; channels = first.getFormat().channelCount;
+                sampleRate = first.getFormat().sampleRate;
+                channels = first.getFormat().channelCount;
             }
             prebufferTarget = 10 * sampleRate;
-            long durMs = track.getDuration(); if (durMs <= 0 || durMs > 20*60*1000) durMs = 20*60*1000;
-            int totalExpected = (int)(durMs / 1000.0 * sampleRate);
+            long durMs = track.getDuration();
+            if (durMs <= 0 || durMs > 20 * 60 * 1000) durMs = 20 * 60 * 1000;
+            int totalExpected = (int) (durMs / 1000.0 * sampleRate);
             pcm = new short[totalExpected];
             if (first != null && first.getData() != null && first.getData().length > 0) {
                 totalDecoded += copyFrameToPcm(first, pcm, totalDecoded, channels);
@@ -149,24 +175,32 @@ public class InternetAudioLoader {
             int timeouts = 0;
             while (totalDecoded < prebufferTarget) {
                 AudioFrame f = player.provide(5000, java.util.concurrent.TimeUnit.MILLISECONDS);
-                if (f == null || f.getData() == null) { 
-                    if (player.getPlayingTrack() == null) break; 
+                if (f == null || f.getData() == null) {
+                    if (player.getPlayingTrack() == null) break;
                     timeouts++;
                     if (timeouts > 4) { // 20 seconds
                         throw new RuntimeException("Stream buffering timed out! (Network/IPv6 or Codec issue)");
                     }
-                    continue; 
+                    continue;
                 }
                 timeouts = 0;
                 totalDecoded += copyFrameToPcm(f, pcm, totalDecoded, channels);
             }
-            if (totalDecoded == 0) { throw new RuntimeException("0 samples decoded. Stream failed to start."); }
-            final int prebuffered = totalDecoded; final int finalSR = sampleRate;
+            if (totalDecoded == 0) {
+                throw new RuntimeException("0 samples decoded. Stream failed to start.");
+            }
+            final int prebuffered = totalDecoded;
+            final int finalSR = sampleRate;
             final short[] pcmFinal = pcm;
-            net.minecraft.client.MinecraftClient.getInstance().execute(() -> callback.onReady(pcmFinal, prebuffered, totalExpected, finalSR, title));
+            net.minecraft.client.MinecraftClient.getInstance()
+                    .execute(() -> callback.onReady(pcmFinal, prebuffered, totalExpected, finalSR, title));
             while (true) {
                 AudioFrame f = player.provide(5000, java.util.concurrent.TimeUnit.MILLISECONDS);
-                if (f == null) { if (player.getPlayingTrack() == null) break; f = player.provide(10000, java.util.concurrent.TimeUnit.MILLISECONDS); if (f == null) break; }
+                if (f == null) {
+                    if (player.getPlayingTrack() == null) break;
+                    f = player.provide(10000, java.util.concurrent.TimeUnit.MILLISECONDS);
+                    if (f == null) break;
+                }
                 if (f.getData() == null || f.getData().length == 0) continue;
                 totalDecoded += copyFrameToPcm(f, pcm, totalDecoded, channels);
                 final int td = totalDecoded;
@@ -178,13 +212,19 @@ public class InternetAudioLoader {
             System.err.println("CRITICAL DECODE ERROR: " + e.toString());
             e.printStackTrace();
             net.minecraft.client.MinecraftClient.getInstance().execute(() -> callback.onFailed(e.toString()));
-        } finally { player.destroy(); }
+        } finally {
+            player.destroy();
+        }
     }
 
     private int copyFrameToPcm(AudioFrame frame, short[] dest, int offset, int channels) {
-        byte[] data = frame.getData(); if (data == null) return 0;
+        byte[] data = frame.getData();
+        if (data == null) return 0;
         short[] samples = new short[data.length / 2];
-        java.nio.ByteBuffer.wrap(data).order(java.nio.ByteOrder.BIG_ENDIAN).asShortBuffer().get(samples);
+        java.nio.ByteBuffer.wrap(data)
+                .order(java.nio.ByteOrder.BIG_ENDIAN)
+                .asShortBuffer()
+                .get(samples);
         int count = samples.length / channels;
         for (int i = 0; i < count && offset + i < dest.length; i++) {
             int sum = samples[i * channels] + (channels >= 2 ? samples[i * channels + 1] : samples[i * channels]);
@@ -231,7 +271,10 @@ public class InternetAudioLoader {
                     byte[] data = firstFrame.getData();
                     if (data != null && data.length > 0) {
                         short[] samples = new short[data.length / 2];
-                        ByteBuffer.wrap(data).order(ByteOrder.BIG_ENDIAN).asShortBuffer().get(samples);
+                        ByteBuffer.wrap(data)
+                                .order(ByteOrder.BIG_ENDIAN)
+                                .asShortBuffer()
+                                .get(samples);
                         chunks.add(samples);
                         totalSamples += samples.length;
                     }
@@ -255,12 +298,14 @@ public class InternetAudioLoader {
                     }
 
                     byte[] data = frame.getData();
-                    if (data == null || data.length == 0)
-                        continue;
+                    if (data == null || data.length == 0) continue;
 
                     // Convert bytes to shorts (BIG-ENDIAN — LavaPlayer PCM_S16_BE format)
                     short[] samples = new short[data.length / 2];
-                    ByteBuffer.wrap(data).order(ByteOrder.BIG_ENDIAN).asShortBuffer().get(samples);
+                    ByteBuffer.wrap(data)
+                            .order(ByteOrder.BIG_ENDIAN)
+                            .asShortBuffer()
+                            .get(samples);
 
                     chunks.add(samples);
                     totalSamples += samples.length;
@@ -291,10 +336,8 @@ public class InternetAudioLoader {
                 int right = stereoData[i * 2 + 1];
                 int sum = (left + right);
                 int mono = Math.round(sum * 0.5f);
-                if (mono > 32767)
-                    mono = 32767;
-                if (mono < -32768)
-                    mono = -32768;
+                if (mono > 32767) mono = 32767;
+                if (mono < -32768) mono = -32768;
                 monoData[i] = (short) mono;
             }
             stereoData = null; // Free stereo data

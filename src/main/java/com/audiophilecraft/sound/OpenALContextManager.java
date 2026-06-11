@@ -31,8 +31,7 @@ public class OpenALContextManager {
      * Returns a result object with the created OpenAL IDs, or null on failure.
      */
     public synchronized InitResult initialize() {
-        if (initialized)
-            return new InitResult(0, 0); // Already done, return zero IDs
+        if (initialized) return new InitResult(0, 0); // Already done, return zero IDs
         initialized = true;
 
         enableHrtf();
@@ -117,8 +116,8 @@ public class OpenALContextManager {
             int preResetSources = ALC10.alcGetInteger(device, org.lwjgl.openal.ALC11.ALC_MONO_SOURCES);
             int preResetStereo = ALC10.alcGetInteger(device, org.lwjgl.openal.ALC11.ALC_STEREO_SOURCES);
             int preResetError = ALC10.alcGetError(device);
-            System.out.println("[enableHrtf] PRE-RESET: monoSources=" + preResetSources
-                    + " stereoSources=" + preResetStereo + " alcError=0x" + Integer.toHexString(preResetError));
+            System.out.println("[enableHrtf] PRE-RESET: monoSources=" + preResetSources + " stereoSources="
+                    + preResetStereo + " alcError=0x" + Integer.toHexString(preResetError));
 
             ALCCapabilities alcCaps = org.lwjgl.openal.ALC.createCapabilities(device);
             System.out.println("[enableHrtf] ALC_SOFT_HRTF=" + alcCaps.ALC_SOFT_HRTF);
@@ -129,15 +128,13 @@ public class OpenALContextManager {
 
                 if (numHrtf > 0) {
                     int[] attrs = {
-                            SOFTHRTF.ALC_HRTF_SOFT, ALC10.ALC_TRUE,
-                            org.lwjgl.openal.ALC11.ALC_MONO_SOURCES, 1024,
-                            0
+                        SOFTHRTF.ALC_HRTF_SOFT, ALC10.ALC_TRUE, org.lwjgl.openal.ALC11.ALC_MONO_SOURCES, 1024, 0
                     };
                     System.out.println("[enableHrtf] Calling alcResetDeviceSOFT(HRTF=TRUE, MONO=1024)...");
                     boolean success = SOFTHRTF.alcResetDeviceSOFT(device, attrs);
                     int postResetError = ALC10.alcGetError(device);
-                    System.out.println("[enableHrtf] alcResetDeviceSOFT returned: " + success
-                            + " alcError=0x" + Integer.toHexString(postResetError));
+                    System.out.println("[enableHrtf] alcResetDeviceSOFT returned: " + success + " alcError=0x"
+                            + Integer.toHexString(postResetError));
 
                     if (success) {
                         int hrtfStatus = ALC10.alcGetInteger(device, SOFTHRTF.ALC_HRTF_STATUS_SOFT);
@@ -151,25 +148,19 @@ public class OpenALContextManager {
                         System.err.println("[enableHrtf] alcResetDeviceSOFT FAILED! alcError=0x"
                                 + Integer.toHexString(postResetError));
                         System.err.println("[enableHrtf] Trying sources-only fallback...");
-                        int[] attrsNoHrtf = {
-                                org.lwjgl.openal.ALC11.ALC_MONO_SOURCES, 1024,
-                                0
-                        };
+                        int[] attrsNoHrtf = {org.lwjgl.openal.ALC11.ALC_MONO_SOURCES, 1024, 0};
                         boolean fallback = SOFTHRTF.alcResetDeviceSOFT(device, attrsNoHrtf);
                         int fallbackError = ALC10.alcGetError(device);
-                        System.out.println("[enableHrtf] Fallback reset returned: " + fallback
-                                + " alcError=0x" + Integer.toHexString(fallbackError));
+                        System.out.println("[enableHrtf] Fallback reset returned: " + fallback + " alcError=0x"
+                                + Integer.toHexString(fallbackError));
                     }
                 } else {
                     System.out.println("[enableHrtf] No HRTF profiles, trying sources-only...");
-                    int[] attrs = {
-                            org.lwjgl.openal.ALC11.ALC_MONO_SOURCES, 1024,
-                            0
-                    };
+                    int[] attrs = {org.lwjgl.openal.ALC11.ALC_MONO_SOURCES, 1024, 0};
                     boolean success = SOFTHRTF.alcResetDeviceSOFT(device, attrs);
                     int postError = ALC10.alcGetError(device);
-                    System.out.println("[enableHrtf] Sources-only reset returned: " + success
-                            + " alcError=0x" + Integer.toHexString(postError));
+                    System.out.println("[enableHrtf] Sources-only reset returned: " + success + " alcError=0x"
+                            + Integer.toHexString(postError));
                 }
             } else {
                 System.out.println("[enableHrtf] ALC_SOFT_HRTF not available, skipping.");

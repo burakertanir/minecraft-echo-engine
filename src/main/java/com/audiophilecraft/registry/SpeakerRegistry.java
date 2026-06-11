@@ -1,7 +1,5 @@
 package com.audiophilecraft.registry;
 
-import net.minecraft.util.math.BlockPos;
-
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
@@ -9,6 +7,7 @@ import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
+import net.minecraft.util.math.BlockPos;
 
 /**
  * Global registry of speaker positions, now tracking owner UUID per speaker.

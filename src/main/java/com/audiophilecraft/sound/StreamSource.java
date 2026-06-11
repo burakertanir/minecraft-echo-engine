@@ -1,15 +1,12 @@
 package com.audiophilecraft.sound;
 
+import static org.lwjgl.openal.AL10.*;
+
+import java.nio.IntBuffer;
+import java.nio.ShortBuffer;
 import net.minecraft.util.math.Vec3d;
 import org.lwjgl.BufferUtils;
 import org.lwjgl.system.MemoryUtil;
-
-import java.nio.ShortBuffer;
-import java.nio.IntBuffer;
-
-import static org.lwjgl.openal.AL10.*;
-import org.lwjgl.openal.AL11;
-import org.lwjgl.openal.EXTEfx;
 
 public class StreamSource {
     public final int sourceId;
@@ -65,6 +62,7 @@ public class StreamSource {
     // Logic Clustering
     public final StreamSource clusterLeader;
     public final boolean isLeader;
+    private final PlaybackSession session;
 
     // Smoothed versions for pop-free knob transitions
     private volatile float smoothedPower;
@@ -91,12 +89,26 @@ public class StreamSource {
     // Fast fade-in to prevent harsh waveform snap-pops on manual seeks
     private long seekFadeSamplesRemaining = 0;
 
-    public StreamSource(int sourceId, AudioStreamBuffer streamBuffer, net.minecraft.util.math.BlockPos pos,
-            float power, float maxDist, float refDist,
-            float dirX, float dirY, float dirZ, String speakerType,
-            int filterId, int sendFilterId,
-            float inputGain, int sampleShiftMs, int speakerCount,
-            StreamSource clusterLeader, int clusterSize) {
+    public StreamSource(
+            PlaybackSession session,
+            int sourceId,
+            AudioStreamBuffer streamBuffer,
+            net.minecraft.util.math.BlockPos pos,
+            float power,
+            float maxDist,
+            float refDist,
+            float dirX,
+            float dirY,
+            float dirZ,
+            String speakerType,
+            int filterId,
+            int sendFilterId,
+            float inputGain,
+            int sampleShiftMs,
+            int speakerCount,
+            StreamSource clusterLeader,
+            int clusterSize) {
+        this.session = session;
         this.sourceId = sourceId;
         this.streamBuffer = streamBuffer;
 
@@ -127,7 +139,7 @@ public class StreamSource {
 
         // Initialize DSP pipeline
         float sr = (streamBuffer != null && streamBuffer.sampleRate > 0) ? (float) streamBuffer.sampleRate : 44100f;
-        this.dspPipeline = new StreamDSPPipeline(this.speakerType, sr);
+        this.dspPipeline = new StreamDSPPipeline(this.session, this.speakerType, sr);
 
         // Allocate reusable buffers (once, not per-refill)
         this.reusablePcmBuffer = MemoryUtil.memAllocShort(STREAM_BUFFER_SIZE);
@@ -187,8 +199,7 @@ public class StreamSource {
      * Synchronized to prevent background AudioThread race conditions.
      */
     public synchronized void seekToTime(double timeSeconds) {
-        if (!isValid)
-            return;
+        if (!isValid) return;
 
         // CRITICAL: Reset finished state so seek works on ended tracks
         this.isFinished = false;
@@ -200,7 +211,7 @@ public class StreamSource {
         if (this.dspPipeline != null) {
             this.dspPipeline.reset();
         }
-                // Reset delay state so it re-initializes from current distance
+        // Reset delay state so it re-initializes from current distance
         this.lastRenderedDelaySamples = -1.0;
 
         // Flush OpenAL's queued buffers
@@ -214,7 +225,6 @@ public class StreamSource {
             org.lwjgl.openal.AL10.alSourceUnqueueBuffers(sourceId);
 
             queued--;
-
         }
 
         // Refill using global absolute positions from the seek target
@@ -234,8 +244,7 @@ public class StreamSource {
     }
 
     public synchronized boolean update(net.minecraft.world.World world, Vec3d listenerPos, double timeSeconds) {
-        if (!isValid)
-            return false;
+        if (!isValid) return false;
 
         // ═══════════════════════════════════════════════════════════════
         // DECOUPLED: Speaker = static registry entry.
@@ -251,15 +260,14 @@ public class StreamSource {
         if (world != null) {
             // Get the actual chunk object — if null or empty, chunk is unloaded → skip
             // check
-            net.minecraft.world.chunk.Chunk chunk = world.getChunk(
-                    pos.getX() >> 4, pos.getZ() >> 4,
-                    net.minecraft.world.chunk.ChunkStatus.FULL, false);
+            net.minecraft.world.chunk.Chunk chunk =
+                    world.getChunk(pos.getX() >> 4, pos.getZ() >> 4, net.minecraft.world.chunk.ChunkStatus.FULL, false);
             if (chunk != null && !(chunk instanceof net.minecraft.world.chunk.EmptyChunk)) {
                 net.minecraft.block.Block block = chunk.getBlockState(pos).getBlock();
-                if (!(block instanceof com.audiophilecraft.block.SubwooferBlock) &&
-                        !(block instanceof com.audiophilecraft.block.MidRangeBlock) &&
-                        !(block instanceof com.audiophilecraft.block.SpeakerBlock) &&
-                        !(block instanceof com.audiophilecraft.block.LineArrayBlock)) {
+                if (!(block instanceof com.audiophilecraft.block.SubwooferBlock)
+                        && !(block instanceof com.audiophilecraft.block.MidRangeBlock)
+                        && !(block instanceof com.audiophilecraft.block.SpeakerBlock)
+                        && !(block instanceof com.audiophilecraft.block.LineArrayBlock)) {
                     return false; // Block was genuinely broken or replaced, destroy source
                 }
             }
@@ -305,8 +313,8 @@ public class StreamSource {
     private long lastOcclusionCalcTick = -1;
     private Vec3d lastOcclusionListenerPos = null;
 
-    private void updatePhysics(net.minecraft.world.World world, Vec3d listenerPos, double distance, double dx,
-            double dy, double dz) {
+    private void updatePhysics(
+            net.minecraft.world.World world, Vec3d listenerPos, double distance, double dx, double dy, double dz) {
         com.audiophilecraft.config.LiveTuningConfig cfg = com.audiophilecraft.config.LiveTuningConfig.get();
 
         // --- SMOOTH POWER & INPUT GAIN ---
@@ -464,8 +472,7 @@ public class StreamSource {
                 double rdy = listenerPos.y - oy;
                 double rdz = listenerPos.z - oz;
                 double rayLen = Math.sqrt(rdx * rdx + rdy * rdy + rdz * rdz);
-                if (rayLen < 0.001)
-                    rayLen = 0.001;
+                if (rayLen < 0.001) rayLen = 0.001;
                 rdx /= rayLen;
                 rdy /= rayLen;
                 rdz /= rayLen;
@@ -488,8 +495,7 @@ public class StreamSource {
                     int bz = (int) Math.floor(oz + rdz * t);
 
                     // Skip the speaker block itself
-                    if (bx == pos.getX() && by == pos.getY() && bz == pos.getZ())
-                        continue;
+                    if (bx == pos.getX() && by == pos.getY() && bz == pos.getZ()) continue;
 
                     checkPos.set(bx, by, bz);
 
@@ -497,8 +503,8 @@ public class StreamSource {
                     int chunkZ = bz >> 4;
 
                     if (chunkX != lastChunkX || chunkZ != lastChunkZ) {
-                        currentChunk = world.getChunk(chunkX, chunkZ,
-                                net.minecraft.world.chunk.ChunkStatus.FULL, false);
+                        currentChunk =
+                                world.getChunk(chunkX, chunkZ, net.minecraft.world.chunk.ChunkStatus.FULL, false);
                         lastChunkX = chunkX;
                         lastChunkZ = chunkZ;
                     }
@@ -512,8 +518,7 @@ public class StreamSource {
                     } else {
                         net.minecraft.block.BlockState state = currentChunk.getBlockState(checkPos);
                         if (!state.isAir()) {
-                            float blockTransmission = AdvancedAcousticScanner.getBlockTransmission(
-                                    state, isSub);
+                            float blockTransmission = AdvancedAcousticScanner.getBlockTransmission(state, isSub);
                             // Only apply if it's an actual occluding material
                             if (blockTransmission < 1.0f) {
                                 solidStepCount++;
@@ -583,35 +588,45 @@ public class StreamSource {
         float effectiveRefDist = this.refDist;
         float baseMaxDist = 60.0f; // Default base max distance
 
-
         if ("sub".equals(this.speakerType)) {
             effectiveRefDist = cfg.sub_refDist * arrayMultiplier;
             baseMaxDist = cfg.sub_baseMaxDist * arrayMultiplier;
             // manualRolloff removed — dead code
 
-            org.lwjgl.openal.AL10.alSourcei(sourceId, org.lwjgl.openal.AL10.AL_SOURCE_RELATIVE,
-                    org.lwjgl.openal.AL10.AL_FALSE);
-            org.lwjgl.openal.AL10.alSource3f(sourceId, org.lwjgl.openal.AL10.AL_POSITION,
-                    (float) this.pos.getX() + 0.5f, (float) this.pos.getY() + 0.5f, (float) this.pos.getZ() + 0.5f);
+            org.lwjgl.openal.AL10.alSourcei(
+                    sourceId, org.lwjgl.openal.AL10.AL_SOURCE_RELATIVE, org.lwjgl.openal.AL10.AL_FALSE);
+            org.lwjgl.openal.AL10.alSource3f(
+                    sourceId,
+                    org.lwjgl.openal.AL10.AL_POSITION,
+                    (float) this.pos.getX() + 0.5f,
+                    (float) this.pos.getY() + 0.5f,
+                    (float) this.pos.getZ() + 0.5f);
 
         } else if ("mid".equals(this.speakerType)) {
             effectiveRefDist = cfg.mid_refDist * arrayMultiplier;
             baseMaxDist = cfg.mid_baseMaxDist * arrayMultiplier;
 
-
-            org.lwjgl.openal.AL10.alSourcei(sourceId, org.lwjgl.openal.AL10.AL_SOURCE_RELATIVE,
-                    org.lwjgl.openal.AL10.AL_FALSE);
-            org.lwjgl.openal.AL10.alSource3f(sourceId, org.lwjgl.openal.AL10.AL_POSITION,
-                    (float) this.pos.getX() + 0.5f, (float) this.pos.getY() + 0.5f, (float) this.pos.getZ() + 0.5f);
+            org.lwjgl.openal.AL10.alSourcei(
+                    sourceId, org.lwjgl.openal.AL10.AL_SOURCE_RELATIVE, org.lwjgl.openal.AL10.AL_FALSE);
+            org.lwjgl.openal.AL10.alSource3f(
+                    sourceId,
+                    org.lwjgl.openal.AL10.AL_POSITION,
+                    (float) this.pos.getX() + 0.5f,
+                    (float) this.pos.getY() + 0.5f,
+                    (float) this.pos.getZ() + 0.5f);
 
         } else { // Line Array
             effectiveRefDist = cfg.line_refDist * arrayMultiplier;
             baseMaxDist = cfg.line_baseMaxDist * arrayMultiplier;
 
-            org.lwjgl.openal.AL10.alSourcei(sourceId, org.lwjgl.openal.AL10.AL_SOURCE_RELATIVE,
-                    org.lwjgl.openal.AL10.AL_FALSE);
-            org.lwjgl.openal.AL10.alSource3f(sourceId, org.lwjgl.openal.AL10.AL_POSITION,
-                    (float) this.pos.getX() + 0.5f, (float) this.pos.getY() + 0.5f, (float) this.pos.getZ() + 0.5f);
+            org.lwjgl.openal.AL10.alSourcei(
+                    sourceId, org.lwjgl.openal.AL10.AL_SOURCE_RELATIVE, org.lwjgl.openal.AL10.AL_FALSE);
+            org.lwjgl.openal.AL10.alSource3f(
+                    sourceId,
+                    org.lwjgl.openal.AL10.AL_POSITION,
+                    (float) this.pos.getX() + 0.5f,
+                    (float) this.pos.getY() + 0.5f,
+                    (float) this.pos.getZ() + 0.5f);
         }
 
         // --- SOURCE RADIUS (Width/Spread) ---
@@ -653,10 +668,8 @@ public class StreamSource {
         // Mid = 1.8 (balanced mid-range rolloff)
         // Line = 2.0 (treble fades naturally, stays audible longer)
         double rolloffExponent = cfg.mid_rolloffExponent; // Mid default
-        if ("sub".equals(this.speakerType))
-            rolloffExponent = cfg.sub_rolloffExponent;
-        if ("line".equals(this.speakerType))
-            rolloffExponent = cfg.line_rolloffExponent;
+        if ("sub".equals(this.speakerType)) rolloffExponent = cfg.sub_rolloffExponent;
+        if ("line".equals(this.speakerType)) rolloffExponent = cfg.line_rolloffExponent;
 
         if (dist <= effectiveRefDist) {
             // Within Reference Distance — full volume
@@ -713,15 +726,13 @@ public class StreamSource {
         // --- FINAL GAIN CALCULATION ---
         // Gain = Power * Attenuation * Directionality * Boost * MixerGain
         float dspGain = 1.0f;
-        float mixerGain = AudioEngine.getInstance().getMixerGain(this.speakerType);
+        float mixerGain = this.session.getMixerGain(this.speakerType);
         // 1. Calculate Base Magnitude
         float targetGain = this.smoothedPower * attenuation * dirGain * proximityBoost * dspGain * mixerGain;
 
         // 2. Safety Clamps (Apply Before Occlusion!)
-        if (targetGain > 4.0f)
-            targetGain = 4.0f;
-        if (targetGain < 0.0f)
-            targetGain = 0.0f;
+        if (targetGain > 4.0f) targetGain = 4.0f;
+        if (targetGain < 0.0f) targetGain = 0.0f;
 
         // 3. APPLY OCCLUSION AS FINAL MULTIPLIER
         // Even if power=10 tries to push gain to 10.0, it gets clamped to 4.0 BEFORE
@@ -731,10 +742,8 @@ public class StreamSource {
         targetGain *= gainOcclusion;
 
         // Safety Clamps
-        if (targetGain > 4.0f)
-            targetGain = 4.0f;
-        if (targetGain < 0.0f)
-            targetGain = 0.0f;
+        if (targetGain > 4.0f) targetGain = 4.0f;
+        if (targetGain < 0.0f) targetGain = 0.0f;
 
         // Smoothing (Low factor to prevent zipper noise from discrete gain steps)
         // Accelerated from 0.12f to 0.40f: removes the 300ms sluggishness when walking
@@ -772,8 +781,7 @@ public class StreamSource {
         float absorbStart = dynamicMaxDist * 0.65f; // Start absorbing later (was 40%)
         if (dist > absorbStart && dist > nearFieldNoAbsorb) {
             float fadeRatio = (dist - absorbStart) / (dynamicMaxDist - absorbStart);
-            if (fadeRatio > 1.0f)
-                fadeRatio = 1.0f;
+            if (fadeRatio > 1.0f) fadeRatio = 1.0f;
 
             // Cosine Interpolation for Air Absorption (S-Curve)
             // Linear fade felt too "sharp" or sudden.
@@ -787,8 +795,7 @@ public class StreamSource {
         }
 
         // Safety Clamp
-        if (gainHF < 0.20f)
-            gainHF = 0.20f;
+        if (gainHF < 0.20f) gainHF = 0.20f;
 
         // Common HF Occlusion (applied to direct and reverb sends)
         // Walls cut treble brutally. Using the raw currentOcclusion with a harsher
@@ -931,8 +938,8 @@ public class StreamSource {
 
             // 1. Wet/Dry RATIO increases with distance
             float reverbEnergy = Math.min(1.0f, (float) Math.sqrt(attenuation));
-            float roomSend = cfg.reverb_send_near
-                    + ((1.0f - reverbEnergy) * (cfg.reverb_send_far - cfg.reverb_send_near));
+            float roomSend =
+                    cfg.reverb_send_near + ((1.0f - reverbEnergy) * (cfg.reverb_send_far - cfg.reverb_send_near));
 
             // 2. SOFT distance falloff: reverb drops MUCH slower than direct sound
             float softDistanceFalloff = (float) Math.pow(Math.max(0.001f, attenuation), 0.25f);
@@ -942,12 +949,10 @@ public class StreamSource {
 
             // 4. WET FLOOR: minimum reverb level inside the venue
             float wetFloor = 0.04f * reverbOcclusion;
-            if (sendGain < wetFloor)
-                sendGain = wetFloor;
+            if (sendGain < wetFloor) sendGain = wetFloor;
 
             // 5. RELAXED CAP
-            if (sendGain > 0.60f)
-                sendGain = 0.60f;
+            if (sendGain > 0.60f) sendGain = 0.60f;
 
             // Apply Side (Reverb) Mute
             if (AudioEngine.getInstance().isSideMuted()) {
@@ -960,12 +965,16 @@ public class StreamSource {
 
             // Apply filter for Room Send
             org.lwjgl.openal.EXTEfx.alFilterf(sendFilterId, org.lwjgl.openal.EXTEfx.AL_LOWPASS_GAIN, sendGain);
-            org.lwjgl.openal.EXTEfx.alFilterf(sendFilterId, org.lwjgl.openal.EXTEfx.AL_LOWPASS_GAINHF,
-                    unmutedDirectGainHF);
+            org.lwjgl.openal.EXTEfx.alFilterf(
+                    sendFilterId, org.lwjgl.openal.EXTEfx.AL_LOWPASS_GAINHF, unmutedDirectGainHF);
 
             // Send 0: Room Reverb
-            org.lwjgl.openal.AL11.alSource3i(sourceId, org.lwjgl.openal.EXTEfx.AL_AUXILIARY_SEND_FILTER,
-                    AudioEngine.getInstance().getAuxSlotId(), 0, sendFilterId);
+            org.lwjgl.openal.AL11.alSource3i(
+                    sourceId,
+                    org.lwjgl.openal.EXTEfx.AL_AUXILIARY_SEND_FILTER,
+                    AudioEngine.getInstance().getAuxSlotId(),
+                    0,
+                    sendFilterId);
         }
     }
 
@@ -1009,8 +1018,7 @@ public class StreamSource {
      * @return true if this source needs an atomic restart (underrun recovery)
      */
     public synchronized boolean feedOpenALFromAudioThread(double globalSampleTime, Vec3d listenerPos) {
-        if (!isValid)
-            return false;
+        if (!isValid) return false;
 
         // ═══════════════════════════════════════════════════════════════
         // DISTANCE CALCULATION: Done on audio thread at 200Hz.
@@ -1040,7 +1048,6 @@ public class StreamSource {
             } else {
 
                 this.delayDistanceSnapshot = ownDistance;
-
             }
         }
 
@@ -1115,8 +1122,7 @@ public class StreamSource {
      */
     private synchronized boolean generatePcmBlock(short[] output, double bufferStartSample) {
         double sampleRate = streamBuffer.sampleRate;
-        if (sampleRate <= 0)
-            return false;
+        if (sampleRate <= 0) return false;
 
         double speedOfSound = com.audiophilecraft.config.LiveTuningConfig.get().speedOfSound;
         double targetDelaySeconds = (delayDistanceSnapshot / speedOfSound) + (this.sampleShiftMs / 1000.0);
@@ -1144,10 +1150,8 @@ public class StreamSource {
             double delta = endDelay - currentDelay;
             double step = delta * 0.001; // ~50ms smooth approach curve
 
-            if (step > maxDeltaPerSample)
-                step = maxDeltaPerSample;
-            if (step < -maxDeltaPerSample)
-                step = -maxDeltaPerSample;
+            if (step > maxDeltaPerSample) step = maxDeltaPerSample;
+            if (step < -maxDeltaPerSample) step = -maxDeltaPerSample;
 
             currentDelay += step;
 
@@ -1185,7 +1189,8 @@ public class StreamSource {
         // ═══════════════════════════════════════════════════════════════
         // DSP STAGE (shared by all branches)
         // DSP pipeline
-        this.dspPipeline.process(output, (float) streamBuffer.sampleRate, this.smoothedInputGain, this.smoothedPower);        if (finished) {
+        this.dspPipeline.process(output, (float) streamBuffer.sampleRate, this.smoothedInputGain, this.smoothedPower);
+        if (finished) {
             isFinished = true;
         }
 
@@ -1231,8 +1236,7 @@ public class StreamSource {
     }
 
     public synchronized void cleanup() {
-        if (!isValid)
-            return; // Prevent double cleanup
+        if (!isValid) return; // Prevent double cleanup
 
         alSourceStop(sourceId);
 
@@ -1247,19 +1251,26 @@ public class StreamSource {
             org.lwjgl.openal.AL10.alSourceUnqueueBuffers(sourceId);
 
             queued--;
-
         }
 
         org.lwjgl.openal.AL10.alSourcei(sourceId, org.lwjgl.openal.AL10.AL_BUFFER, 0);
 
         // Detach filters/sends before deletion
         try {
-            org.lwjgl.openal.AL10.alSourcei(sourceId, org.lwjgl.openal.EXTEfx.AL_DIRECT_FILTER,
+            org.lwjgl.openal.AL10.alSourcei(
+                    sourceId, org.lwjgl.openal.EXTEfx.AL_DIRECT_FILTER, org.lwjgl.openal.EXTEfx.AL_FILTER_NULL);
+            org.lwjgl.openal.AL11.alSource3i(
+                    sourceId,
+                    org.lwjgl.openal.EXTEfx.AL_AUXILIARY_SEND_FILTER,
+                    0,
+                    0,
                     org.lwjgl.openal.EXTEfx.AL_FILTER_NULL);
-            org.lwjgl.openal.AL11.alSource3i(sourceId, org.lwjgl.openal.EXTEfx.AL_AUXILIARY_SEND_FILTER,
-                    0, 0, org.lwjgl.openal.EXTEfx.AL_FILTER_NULL);
-            org.lwjgl.openal.AL11.alSource3i(sourceId, org.lwjgl.openal.EXTEfx.AL_AUXILIARY_SEND_FILTER,
-                    0, 1, org.lwjgl.openal.EXTEfx.AL_FILTER_NULL);
+            org.lwjgl.openal.AL11.alSource3i(
+                    sourceId,
+                    org.lwjgl.openal.EXTEfx.AL_AUXILIARY_SEND_FILTER,
+                    0,
+                    1,
+                    org.lwjgl.openal.EXTEfx.AL_FILTER_NULL);
         } catch (Exception e) {
             System.err.println("StreamSource: Failed to detach filters/sends: " + e.getMessage());
         }
@@ -1271,10 +1282,8 @@ public class StreamSource {
         // Now safe to delete the buffers and filters
         alDeleteBuffers(buffers);
         try {
-            if (filterId != 0)
-                org.lwjgl.openal.EXTEfx.alDeleteFilters(filterId);
-            if (sendFilterId != 0)
-                org.lwjgl.openal.EXTEfx.alDeleteFilters(sendFilterId);
+            if (filterId != 0) org.lwjgl.openal.EXTEfx.alDeleteFilters(filterId);
+            if (sendFilterId != 0) org.lwjgl.openal.EXTEfx.alDeleteFilters(sendFilterId);
         } catch (Exception e) {
             System.err.println("StreamSource: Failed to delete filters: " + e.getMessage());
         }

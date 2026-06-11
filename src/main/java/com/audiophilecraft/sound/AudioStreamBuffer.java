@@ -6,7 +6,7 @@ import org.lwjgl.system.MemoryUtil;
 /**
  * Manages a global Ring Buffer for a specific audio track.
  * Supports both full-load and streaming (incremental decode) modes.
- * 
+ *
  * STREAMING MODE: Data is decoded in chunks on a background thread.
  * The ring buffer advance() reads from pcmArray up to decodedLength.
  * Samples beyond decodedLength return silence until decoded.
@@ -32,7 +32,9 @@ public class AudioStreamBuffer {
     private short[] pcmArray;
     private volatile int decodedLength = 0; // How many mono samples have been decoded so far
     private int totalExpectedSamples = 0; // Total expected samples (from OGG header)
-    private volatile long readCursor = 0; // Sequential read position for advance() - volatile: written by seekToTime (main thread), read by advance (audio thread)
+    private volatile long readCursor =
+            0; // Sequential read position for advance() - volatile: written by seekToTime (main thread), read by
+    // advance (audio thread)
 
     // Legacy mode (backward compatibility)
     private ShortBuffer fullPcmData; // Source data (entire track) — used by URL path
@@ -91,17 +93,14 @@ public class AudioStreamBuffer {
     }
 
     public void seekToTime(double timeSeconds) {
-        if (sampleRate <= 0)
-            return;
+        if (sampleRate <= 0) return;
 
         long targetCursor = (long) (timeSeconds * sampleRate);
 
         // Ensure within bounds
-        if (targetCursor < 0)
-            targetCursor = 0;
+        if (targetCursor < 0) targetCursor = 0;
         long maxSamples = getTotalSamples();
-        if (targetCursor > maxSamples - 1)
-            targetCursor = maxSamples - 1;
+        if (targetCursor > maxSamples - 1) targetCursor = maxSamples - 1;
 
         // Reset read position
         if (pcmArray != null) {
@@ -122,8 +121,7 @@ public class AudioStreamBuffer {
      * Called every tick by the audio thread.
      */
     public void advance(int samplesNeeded) {
-        if (samplesNeeded <= 0)
-            return;
+        if (samplesNeeded <= 0) return;
 
         if (pcmArray != null) {
             // ── STREAMING MODE ──
@@ -180,14 +178,12 @@ public class AudioStreamBuffer {
      * Reads a sample from the ring buffer at a specific absolute position.
      */
     public short getSample(long absolutePosition) {
-        if (absolutePosition < 0)
-            return 0;
+        if (absolutePosition < 0) return 0;
 
         long writeCursor = globalWriteCursor; // snapshot volatile once
 
         if (absolutePosition >= writeCursor) {
-            if (writeCursor <= 0)
-                return 0;
+            if (writeCursor <= 0) return 0;
             absolutePosition = writeCursor - 1;
         }
 
@@ -218,10 +214,8 @@ public class AudioStreamBuffer {
                 + y2 * ((f + 1) * f * (f - 2)) / (-2.0)
                 + y3 * ((f + 1) * f * (f - 1)) / (6.0);
 
-        if (out > 32767.0)
-            out = 32767.0;
-        if (out < -32768.0)
-            out = -32768.0;
+        if (out > 32767.0) out = 32767.0;
+        if (out < -32768.0) out = -32768.0;
         return (short) out;
     }
 
@@ -243,10 +237,8 @@ public class AudioStreamBuffer {
         double c3 = 0.5 * (y3 - y0) + 1.5 * (y1 - y2);
 
         double out = (((c3 * input + c2) * input + c1) * input + c0);
-        if (out > 32767.0)
-            out = 32767.0;
-        if (out < -32768.0)
-            out = -32768.0;
+        if (out > 32767.0) out = 32767.0;
+        if (out < -32768.0) out = -32768.0;
         return (short) out;
     }
 
@@ -255,8 +247,7 @@ public class AudioStreamBuffer {
     }
 
     public long getTotalSamples() {
-        if (pcmArray != null)
-            return totalExpectedSamples;
+        if (pcmArray != null) return totalExpectedSamples;
         return fullPcmData != null ? fullPcmData.limit() : 0;
     }
 

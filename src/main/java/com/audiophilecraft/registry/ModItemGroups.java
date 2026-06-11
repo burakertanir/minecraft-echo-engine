@@ -10,7 +10,8 @@ import net.minecraft.text.Text;
 import net.minecraft.util.Identifier;
 
 public class ModItemGroups {
-    public static final ItemGroup AUDIOPHILE_GROUP = Registry.register(Registries.ITEM_GROUP,
+    public static final ItemGroup AUDIOPHILE_GROUP = Registry.register(
+            Registries.ITEM_GROUP,
             new Identifier(AudiophileCraft.MOD_ID, "audiophile_group"),
             FabricItemGroup.builder()
                     .displayName(Text.translatable("itemgroup.audiophilecraft"))
@@ -20,7 +21,8 @@ public class ModItemGroups {
                         entries.add(ModBlocks.SUBWOOFER);
                         entries.add(ModBlocks.MID_RANGE);
                         entries.add(ModBlocks.LINE_ARRAY);
-                    }).build());
+                    })
+                    .build());
 
     public static void registerItemGroups() {
         AudiophileCraft.LOGGER.info("Registering Item Groups for " + AudiophileCraft.MOD_ID);

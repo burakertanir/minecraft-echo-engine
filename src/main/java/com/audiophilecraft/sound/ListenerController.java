@@ -1,10 +1,9 @@
 package com.audiophilecraft.sound;
 
+import static org.lwjgl.openal.AL10.*;
+
 import net.minecraft.client.MinecraftClient;
 import net.minecraft.util.math.Vec3d;
-import net.minecraft.world.World;
-
-import static org.lwjgl.openal.AL10.*;
 
 /**
  * Manages OpenAL listener position, orientation, and environmental state.
@@ -36,11 +35,25 @@ public class ListenerController {
 
     // --- Getters for audio thread (atomic volatile reads) ---
 
-    public Vec3d getPosition() { return position; }
-    public Vec3d getSmoothedPosition() { return smoothedPosition; }
-    public float getYaw() { return yaw; }
-    public float getPitch() { return pitch; }
-    public float getUnderwaterHFGain() { return underwaterHFGain; }
+    public Vec3d getPosition() {
+        return position;
+    }
+
+    public Vec3d getSmoothedPosition() {
+        return smoothedPosition;
+    }
+
+    public float getYaw() {
+        return yaw;
+    }
+
+    public float getPitch() {
+        return pitch;
+    }
+
+    public float getUnderwaterHFGain() {
+        return underwaterHFGain;
+    }
 
     // --- Setters (called from render thread via AudioEngine.updateListener) ---
 
@@ -94,7 +107,7 @@ public class ListenerController {
             upZ /= upLen;
         }
 
-        alListenerfv(AL_ORIENTATION, new float[] { atX, atY, atZ, upX, upY, upZ });
+        alListenerfv(AL_ORIENTATION, new float[] {atX, atY, atZ, upX, upY, upZ});
 
         // Underwater detection
         MinecraftClient mc = MinecraftClient.getInstance();

@@ -3,14 +3,12 @@ package com.audiophilecraft.sound;
 import com.audiophilecraft.block.LineArrayBlock;
 import com.audiophilecraft.block.MidRangeBlock;
 import com.audiophilecraft.block.SubwooferBlock;
-
-import net.minecraft.util.math.BlockPos;
-import net.minecraft.world.World;
-
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Comparator;
 import java.util.List;
+import net.minecraft.util.math.BlockPos;
+import net.minecraft.world.World;
 
 /**
  * Stateless utility for grouping speakers by proximity and detecting types.
@@ -67,7 +65,7 @@ public class SpeakerClusterer {
                 else normal++;
             }
         }
-        return new int[] { sub, mid, line, normal };
+        return new int[] {sub, mid, line, normal};
     }
 
     /** Holds speaker metadata extracted from world state at a position. */
@@ -100,11 +98,20 @@ public class SpeakerClusterer {
         if (world != null) {
             var block = world.getBlockState(pos).getBlock();
             if (block instanceof SubwooferBlock) {
-                type = "sub"; refDist = 10.0f; maxDist = 85.0f; count = typeCounts[0];
+                type = "sub";
+                refDist = 10.0f;
+                maxDist = 85.0f;
+                count = typeCounts[0];
             } else if (block instanceof MidRangeBlock) {
-                type = "mid"; refDist = 5.0f; maxDist = 60.0f; count = typeCounts[1];
+                type = "mid";
+                refDist = 5.0f;
+                maxDist = 60.0f;
+                count = typeCounts[1];
             } else if (block instanceof LineArrayBlock) {
-                type = "line"; refDist = 3.0f; maxDist = 50.0f; count = typeCounts[2];
+                type = "line";
+                refDist = 3.0f;
+                maxDist = 50.0f;
+                count = typeCounts[2];
             } else {
                 count = typeCounts[3];
             }

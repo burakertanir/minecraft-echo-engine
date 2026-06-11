@@ -1,10 +1,10 @@
 package com.audiophilecraft.block;
 
-import net.minecraft.block.Block;
-import net.minecraft.block.BlockState;
 import com.audiophilecraft.block.entity.SpeakerBlockEntity;
 import com.audiophilecraft.registry.SpeakerRegistry;
+import net.minecraft.block.Block;
 import net.minecraft.block.BlockEntityProvider;
+import net.minecraft.block.BlockState;
 import net.minecraft.block.entity.BlockEntity;
 import net.minecraft.entity.LivingEntity;
 import net.minecraft.entity.player.PlayerEntity;
@@ -48,8 +48,8 @@ public class SpeakerBlock extends Block implements BlockEntityProvider {
     }
 
     @Override
-    public void onPlaced(World world, BlockPos pos, BlockState state, @Nullable LivingEntity placer,
-            ItemStack itemStack) {
+    public void onPlaced(
+            World world, BlockPos pos, BlockState state, @Nullable LivingEntity placer, ItemStack itemStack) {
         if (!world.isClient) {
             // Register in global registry with owner UUID
             if (placer instanceof net.minecraft.entity.player.PlayerEntity player) {
@@ -81,8 +81,8 @@ public class SpeakerBlock extends Block implements BlockEntityProvider {
     }
 
     @Override
-    public ActionResult onUse(BlockState state, World world, BlockPos pos, PlayerEntity player,
-            Hand hand, BlockHitResult hit) {
+    public ActionResult onUse(
+            BlockState state, World world, BlockPos pos, PlayerEntity player, Hand hand, BlockHitResult hit) {
         if (!world.isClient) {
             NamedScreenHandlerFactory screenHandlerFactory = state.createScreenHandlerFactory(world, pos);
 

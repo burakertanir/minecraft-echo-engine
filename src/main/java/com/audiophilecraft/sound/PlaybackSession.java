@@ -1,25 +1,14 @@
 package com.audiophilecraft.sound;
 
-import com.audiophilecraft.block.LineArrayBlock;
-import com.audiophilecraft.block.MidRangeBlock;
-import com.audiophilecraft.block.SubwooferBlock;
-import com.audiophilecraft.block.entity.SpeakerBlockEntity;
-import net.minecraft.client.MinecraftClient;
-import net.minecraft.util.math.BlockPos;
-import net.minecraft.world.World;
-import org.lwjgl.BufferUtils;
-import org.lwjgl.system.MemoryUtil;
+import static org.lwjgl.openal.AL10.*;
 
-import java.nio.IntBuffer;
-import java.nio.ShortBuffer;
-import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CopyOnWriteArrayList;
-
-import static org.lwjgl.openal.AL10.*;
-import static org.lwjgl.openal.AL11.AL_SEC_OFFSET;
+import net.minecraft.client.MinecraftClient;
+import net.minecraft.util.math.BlockPos;
+import net.minecraft.world.World;
 
 /**
  * Holds all state for one playback session: speakers, buffers, mixer, venue reverb, clock.
@@ -69,9 +58,9 @@ public class PlaybackSession {
     private volatile float[] lineEq = new float[5];
 
     // 5-band EQ Q (bandwidth), default 1.0
-    private float[] subEqQ = new float[] { 1f, 1f, 1f, 1f, 1f };
-    private float[] midEqQ = new float[] { 1f, 1f, 1f, 1f, 1f };
-    private float[] lineEqQ = new float[] { 1f, 1f, 1f, 1f, 1f };
+    private float[] subEqQ = new float[] {1f, 1f, 1f, 1f, 1f};
+    private float[] midEqQ = new float[] {1f, 1f, 1f, 1f, 1f};
+    private float[] lineEqQ = new float[] {1f, 1f, 1f, 1f, 1f};
 
     public PlaybackSession(AudioEngine engine) {
         this.engine = engine;
@@ -79,76 +68,161 @@ public class PlaybackSession {
 
     // --- Source accessors ---
 
-    public List<StreamSource> getStreamSources() { return streamSources; }
-    public int getSourceCount() { return streamSources.size(); }
+    public List<StreamSource> getStreamSources() {
+        return streamSources;
+    }
+
+    public int getSourceCount() {
+        return streamSources.size();
+    }
 
     // --- Buffer accessors ---
 
-    public Map<String, AudioStreamBuffer> getStreamBuffers() { return streamBuffers; }
+    public Map<String, AudioStreamBuffer> getStreamBuffers() {
+        return streamBuffers;
+    }
 
     // --- Venue ---
 
-    public AdvancedAcousticScanner.VenuePreset getVenuePreset() { return venuePreset; }
-    public void setVenuePreset(AdvancedAcousticScanner.VenuePreset preset) { this.venuePreset = preset; }
+    public AdvancedAcousticScanner.VenuePreset getVenuePreset() {
+        return venuePreset;
+    }
 
-    public boolean isVenuePresetApplied() { return venuePresetApplied; }
-    public void setVenuePresetApplied(boolean applied) { this.venuePresetApplied = applied; }
+    public void setVenuePreset(AdvancedAcousticScanner.VenuePreset preset) {
+        this.venuePreset = preset;
+    }
 
-    public AdvancedAcousticScanner.VenueDescriptor getStoredVenueDescriptor() { return storedVenueDescriptor; }
-    public void setStoredVenueDescriptor(AdvancedAcousticScanner.VenueDescriptor d) { this.storedVenueDescriptor = d; }
+    public boolean isVenuePresetApplied() {
+        return venuePresetApplied;
+    }
 
-    public net.minecraft.util.math.Vec3d getStoredVenueProbePos() { return storedVenueProbePos; }
-    public void setStoredVenueProbePos(net.minecraft.util.math.Vec3d p) { this.storedVenueProbePos = p; }
+    public void setVenuePresetApplied(boolean applied) {
+        this.venuePresetApplied = applied;
+    }
 
-    public long getLastConfigGeneration() { return lastConfigGeneration; }
-    public void setLastConfigGeneration(long g) { this.lastConfigGeneration = g; }
+    public AdvancedAcousticScanner.VenueDescriptor getStoredVenueDescriptor() {
+        return storedVenueDescriptor;
+    }
+
+    public void setStoredVenueDescriptor(AdvancedAcousticScanner.VenueDescriptor d) {
+        this.storedVenueDescriptor = d;
+    }
+
+    public net.minecraft.util.math.Vec3d getStoredVenueProbePos() {
+        return storedVenueProbePos;
+    }
+
+    public void setStoredVenueProbePos(net.minecraft.util.math.Vec3d p) {
+        this.storedVenueProbePos = p;
+    }
+
+    public long getLastConfigGeneration() {
+        return lastConfigGeneration;
+    }
+
+    public void setLastConfigGeneration(long g) {
+        this.lastConfigGeneration = g;
+    }
 
     // --- Reflections ---
 
     // --- Clock ---
 
-    public long getStreamStartTime() { return streamStartTime; }
-    public void setStreamStartTime(long t) { this.streamStartTime = t; }
+    public long getStreamStartTime() {
+        return streamStartTime;
+    }
 
-    public boolean isPlaying() { return isPlaying; }
-    public void setPlaying(boolean p) { this.isPlaying = p; }
+    public void setStreamStartTime(long t) {
+        this.streamStartTime = t;
+    }
 
-    public long getPauseStartTimestamp() { return pauseStartTimestamp; }
-    public void setPauseStartTimestamp(long t) { this.pauseStartTimestamp = t; }
+    public boolean isPlaying() {
+        return isPlaying;
+    }
+
+    public void setPlaying(boolean p) {
+        this.isPlaying = p;
+    }
+
+    public long getPauseStartTimestamp() {
+        return pauseStartTimestamp;
+    }
+
+    public void setPauseStartTimestamp(long t) {
+        this.pauseStartTimestamp = t;
+    }
 
     // --- Control ---
 
-    public boolean isPaused() { return isPaused; }
-    public void setPaused(boolean p) { this.isPaused = p; }
-    public boolean isSeeking() { return isSeeking; }
-    public void setSeeking(boolean s) { this.isSeeking = s; }
-    public int getTrackGeneration() { return trackGeneration; }
-    public int incrementTrackGeneration() { return ++this.trackGeneration; }
+    public boolean isPaused() {
+        return isPaused;
+    }
+
+    public void setPaused(boolean p) {
+        this.isPaused = p;
+    }
+
+    public boolean isSeeking() {
+        return isSeeking;
+    }
+
+    public void setSeeking(boolean s) {
+        this.isSeeking = s;
+    }
+
+    public int getTrackGeneration() {
+        return trackGeneration;
+    }
+
+    public int incrementTrackGeneration() {
+        return ++this.trackGeneration;
+    }
 
     // --- Mixer ---
 
     public float getMixerGain(String speakerType) {
         switch (speakerType) {
-            case "sub":  return mixerGainSub;
-            case "mid":  return mixerGainMid;
-            case "line": return mixerGainLine;
-            default:     return 1.0f;
+            case "sub":
+                return mixerGainSub;
+            case "mid":
+                return mixerGainMid;
+            case "line":
+                return mixerGainLine;
+            default:
+                return 1.0f;
         }
     }
 
     public void setMixerGain(String speakerType, float gain) {
         gain = Math.max(0.0f, Math.min(gain, 1.0f));
         switch (speakerType) {
-            case "sub":  mixerGainSub = gain; break;
-            case "mid":  mixerGainMid = gain; break;
-            case "line": mixerGainLine = gain; break;
+            case "sub":
+                mixerGainSub = gain;
+                break;
+            case "mid":
+                mixerGainMid = gain;
+                break;
+            case "line":
+                mixerGainLine = gain;
+                break;
         }
     }
 
-    public boolean isMidMuted() { return midMuted; }
-    public void setMidMuted(boolean m) { this.midMuted = m; }
-    public boolean isSideMuted() { return sideMuted; }
-    public void setSideMuted(boolean s) { this.sideMuted = s; }
+    public boolean isMidMuted() {
+        return midMuted;
+    }
+
+    public void setMidMuted(boolean m) {
+        this.midMuted = m;
+    }
+
+    public boolean isSideMuted() {
+        return sideMuted;
+    }
+
+    public void setSideMuted(boolean s) {
+        this.sideMuted = s;
+    }
 
     public synchronized float getEqDb(String speakerType, int band) {
         if (band < 0 || band > 4) return 0f;
@@ -165,19 +239,27 @@ public class PlaybackSession {
 
     private float[] getEqArray(String speakerType) {
         switch (speakerType) {
-            case "sub":  return subEq;
-            case "mid":  return midEq;
-            case "line": return lineEq;
-            default:     return null;
+            case "sub":
+                return subEq;
+            case "mid":
+                return midEq;
+            case "line":
+                return lineEq;
+            default:
+                return null;
         }
     }
 
     private float[] getEqQArray(String speakerType) {
         switch (speakerType) {
-            case "sub":  return subEqQ;
-            case "mid":  return midEqQ;
-            case "line": return lineEqQ;
-            default:     return null;
+            case "sub":
+                return subEqQ;
+            case "mid":
+                return midEqQ;
+            case "line":
+                return lineEqQ;
+            default:
+                return null;
         }
     }
 
@@ -220,21 +302,23 @@ public class PlaybackSession {
 
         AdvancedAcousticScanner.lastPointCloud.clear();
         AdvancedAcousticScanner.lastVenueBlocks.clear();
-        AdvancedAcousticScanner.lastSpeakers = speakers != null ? new java.util.ArrayList<>(speakers)
-                : new java.util.ArrayList<>();
+        AdvancedAcousticScanner.lastSpeakers =
+                speakers != null ? new java.util.ArrayList<>(speakers) : new java.util.ArrayList<>();
         setVenuePreset(null);
         setVenuePresetApplied(false);
         setStoredVenueDescriptor(null);
         setStoredVenueProbePos(null);
         com.audiophilecraft.client.screen.PointCloudRenderer.invalidateCache();
 
-        while (alGetError() != AL_NO_ERROR) { /* drain */ }
+        while (alGetError() != AL_NO_ERROR) {
+            /* drain */
+        }
         engine.initEfx();
 
         if (speakers == null || speakers.isEmpty()) return;
 
         try {
-            engine.prepareStreamBuffers(trackId);
+            engine.prepareStreamBuffers(this, trackId);
             setPlaying(true);
             setPaused(false);
             for (AudioStreamBuffer buffer : streamBuffers.values()) {
@@ -244,8 +328,8 @@ public class PlaybackSession {
             World world = MinecraftClient.getInstance().world;
             int[] counts = SpeakerClusterer.countSpeakerTypes(speakers, world);
             List<List<BlockPos>> clusters = SpeakerClusterer.clusterSpeakers(speakers);
-            engine.createSourcesFromClusters(clusters, counts, world, power, inputGain);
-            engine.startPlaybackWithVenueScan(world, speakers, false);
+            engine.createSourcesFromClusters(this, clusters, counts, world, power, inputGain);
+            engine.startPlaybackWithVenueScan(this, world, speakers, false);
         } catch (Exception e) {
             e.printStackTrace();
         }

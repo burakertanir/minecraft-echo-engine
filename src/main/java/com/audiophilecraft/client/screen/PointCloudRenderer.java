@@ -1,5 +1,7 @@
 package com.audiophilecraft.client.screen;
 
+import com.mojang.blaze3d.systems.RenderSystem;
+import java.util.List;
 import net.minecraft.client.gui.DrawContext;
 import net.minecraft.client.render.BufferBuilder;
 import net.minecraft.client.render.GameRenderer;
@@ -7,11 +9,8 @@ import net.minecraft.client.render.Tessellator;
 import net.minecraft.client.render.VertexFormat;
 import net.minecraft.client.render.VertexFormats;
 import net.minecraft.util.math.Vec3d;
-import com.mojang.blaze3d.systems.RenderSystem;
 import org.joml.Matrix4f;
 import org.lwjgl.opengl.GL11;
-
-import java.util.List;
 
 /**
  * Renders reverb scan data as a LiDAR-style 3D point cloud.
@@ -35,8 +34,14 @@ public class PointCloudRenderer {
         cachedCount = -1;
     }
 
-    public static void render(DrawContext context, int x, int y, int width, int height,
-                              List<Vec3d> pointCloud, List<net.minecraft.util.math.BlockPos> speakers) {
+    public static void render(
+            DrawContext context,
+            int x,
+            int y,
+            int width,
+            int height,
+            List<Vec3d> pointCloud,
+            List<net.minecraft.util.math.BlockPos> speakers) {
 
         if (pointCloud == null || pointCloud.isEmpty()) return;
 
@@ -45,12 +50,12 @@ public class PointCloudRenderer {
         }
         if (cachedProjected == null || cachedProjected.length == 0) return;
 
-        float scale = (float)((Math.min(width, height) * 0.95) / cachedMaxSize);
+        float scale = (float) ((Math.min(width, height) * 0.95) / cachedMaxSize);
         float centerX = x + width / 2.0f;
         float centerY = y + height / 2.0f;
 
         // Adaptive point size: proportional to scale so large venues don't overlap
-        // Small room (scale~5) → dotSize~1.5px, Stadium (scale~0.5) → dotSize~0.3px  
+        // Small room (scale~5) → dotSize~1.5px, Stadium (scale~0.5) → dotSize~0.3px
         float dotSize = Math.max(0.3f, scale * 0.3f);
         float glowSize = dotSize * 1.8f;
 
@@ -74,14 +79,22 @@ public class PointCloudRenderer {
             float sy = centerY + p[1] * scale;
             float hr = p[4];
             // Top points fade: bottom=full glow, top=minimal glow
-            int glowAlpha = (int)(0x18 * (1.0f - hr * 0.7f));
+            int glowAlpha = (int) (0x18 * (1.0f - hr * 0.7f));
             int color = Float.floatToRawIntBits(p[3]);
             int glowColor = (glowAlpha << 24) | (color & 0x00FFFFFF);
 
-            buffer.vertex(matrix, sx - glowSize, sy - glowSize, 0).color(glowColor).next();
-            buffer.vertex(matrix, sx - glowSize, sy + glowSize, 0).color(glowColor).next();
-            buffer.vertex(matrix, sx + glowSize, sy + glowSize, 0).color(glowColor).next();
-            buffer.vertex(matrix, sx + glowSize, sy - glowSize, 0).color(glowColor).next();
+            buffer.vertex(matrix, sx - glowSize, sy - glowSize, 0)
+                    .color(glowColor)
+                    .next();
+            buffer.vertex(matrix, sx - glowSize, sy + glowSize, 0)
+                    .color(glowColor)
+                    .next();
+            buffer.vertex(matrix, sx + glowSize, sy + glowSize, 0)
+                    .color(glowColor)
+                    .next();
+            buffer.vertex(matrix, sx + glowSize, sy - glowSize, 0)
+                    .color(glowColor)
+                    .next();
         }
         tessellator.draw();
 
@@ -95,14 +108,22 @@ public class PointCloudRenderer {
             float sy = centerY + p[1] * scale;
             float hr = p[4];
             // Top points fade: bottom=100% alpha, top=30% alpha
-            int coreAlpha = (int)(255 * (1.0f - hr * 0.7f));
+            int coreAlpha = (int) (255 * (1.0f - hr * 0.7f));
             int color = Float.floatToRawIntBits(p[3]);
             int fullColor = (coreAlpha << 24) | (color & 0x00FFFFFF);
 
-            buffer.vertex(matrix, sx - dotSize, sy - dotSize, 0).color(fullColor).next();
-            buffer.vertex(matrix, sx - dotSize, sy + dotSize, 0).color(fullColor).next();
-            buffer.vertex(matrix, sx + dotSize, sy + dotSize, 0).color(fullColor).next();
-            buffer.vertex(matrix, sx + dotSize, sy - dotSize, 0).color(fullColor).next();
+            buffer.vertex(matrix, sx - dotSize, sy - dotSize, 0)
+                    .color(fullColor)
+                    .next();
+            buffer.vertex(matrix, sx - dotSize, sy + dotSize, 0)
+                    .color(fullColor)
+                    .next();
+            buffer.vertex(matrix, sx + dotSize, sy + dotSize, 0)
+                    .color(fullColor)
+                    .next();
+            buffer.vertex(matrix, sx + dotSize, sy - dotSize, 0)
+                    .color(fullColor)
+                    .next();
         }
         tessellator.draw();
 
@@ -110,7 +131,7 @@ public class PointCloudRenderer {
         if (speakers != null && !speakers.isEmpty()) {
             buffer = tessellator.getBuffer();
             buffer.begin(VertexFormat.DrawMode.QUADS, VertexFormats.POSITION_COLOR);
-            
+
             float speakerDotSize = dotSize * 4.0f; // Larger than LiDAR points
             int speakerColor = 0xFFFFFFFF; // Bright white
 
@@ -124,13 +145,21 @@ public class PointCloudRenderer {
                 double rz = lx * SIN_Y + lz * COS_Y;
                 double ry = ly * COS_X - rz * SIN_X;
 
-                float sx = centerX + (float)rx * scale;
-                float sy = centerY - (float)ry * scale;
+                float sx = centerX + (float) rx * scale;
+                float sy = centerY - (float) ry * scale;
 
-                buffer.vertex(matrix, sx - speakerDotSize, sy - speakerDotSize, 0).color(speakerColor).next();
-                buffer.vertex(matrix, sx - speakerDotSize, sy + speakerDotSize, 0).color(speakerColor).next();
-                buffer.vertex(matrix, sx + speakerDotSize, sy + speakerDotSize, 0).color(speakerColor).next();
-                buffer.vertex(matrix, sx + speakerDotSize, sy - speakerDotSize, 0).color(speakerColor).next();
+                buffer.vertex(matrix, sx - speakerDotSize, sy - speakerDotSize, 0)
+                        .color(speakerColor)
+                        .next();
+                buffer.vertex(matrix, sx - speakerDotSize, sy + speakerDotSize, 0)
+                        .color(speakerColor)
+                        .next();
+                buffer.vertex(matrix, sx + speakerDotSize, sy + speakerDotSize, 0)
+                        .color(speakerColor)
+                        .next();
+                buffer.vertex(matrix, sx + speakerDotSize, sy - speakerDotSize, 0)
+                        .color(speakerColor)
+                        .next();
             }
             tessellator.draw();
         }
@@ -173,13 +202,13 @@ public class PointCloudRenderer {
             double ry = ly * COS_X - rz * SIN_X;
 
             // Height ratio for coloring + opacity
-            float hr = (float)((pt.y - minY) / Math.max(1, maxY - minY));
+            float hr = (float) ((pt.y - minY) / Math.max(1, maxY - minY));
 
-            cachedProjected[i][0] = (float) rx;           // normalized X
-            cachedProjected[i][1] = (float) -ry;          // normalized Y (inverted)
-            cachedProjected[i][2] = (float)(lx + lz - ly); // depth for sorting
+            cachedProjected[i][0] = (float) rx; // normalized X
+            cachedProjected[i][1] = (float) -ry; // normalized Y (inverted)
+            cachedProjected[i][2] = (float) (lx + lz - ly); // depth for sorting
             cachedProjected[i][3] = Float.intBitsToFloat(getLidarColor(hr)); // packed color
-            cachedProjected[i][4] = hr;                   // height ratio for opacity
+            cachedProjected[i][4] = hr; // height ratio for opacity
         }
 
         // Sort back-to-front
@@ -198,23 +227,33 @@ public class PointCloudRenderer {
         if (t < 0.2f) {
             // Deep blue → Blue
             float f = t / 0.2f;
-            r = 0; g = 0; b = (int)(128 + 127 * f);
+            r = 0;
+            g = 0;
+            b = (int) (128 + 127 * f);
         } else if (t < 0.4f) {
             // Blue → Cyan
             float f = (t - 0.2f) / 0.2f;
-            r = 0; g = (int)(255 * f); b = 255;
+            r = 0;
+            g = (int) (255 * f);
+            b = 255;
         } else if (t < 0.6f) {
             // Cyan → Green
             float f = (t - 0.4f) / 0.2f;
-            r = 0; g = 255; b = (int)(255 * (1 - f));
+            r = 0;
+            g = 255;
+            b = (int) (255 * (1 - f));
         } else if (t < 0.8f) {
             // Green → Yellow
             float f = (t - 0.6f) / 0.2f;
-            r = (int)(255 * f); g = 255; b = 0;
+            r = (int) (255 * f);
+            g = 255;
+            b = 0;
         } else {
             // Yellow → Red
             float f = (t - 0.8f) / 0.2f;
-            r = 255; g = (int)(255 * (1 - f)); b = 0;
+            r = 255;
+            g = (int) (255 * (1 - f));
+            b = 0;
         }
         return (r << 16) | (g << 8) | b;
     }

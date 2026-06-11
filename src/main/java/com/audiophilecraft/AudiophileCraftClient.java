@@ -2,8 +2,8 @@ package com.audiophilecraft;
 
 import com.audiophilecraft.client.screen.AmplifierScreen;
 import com.audiophilecraft.client.screen.SpeakerScreen;
-import com.audiophilecraft.registry.ModScreenHandlers;
 import com.audiophilecraft.network.ModMessages;
+import com.audiophilecraft.registry.ModScreenHandlers;
 import net.fabricmc.api.ClientModInitializer;
 import net.minecraft.client.gui.screen.ingame.HandledScreens;
 
@@ -35,17 +35,15 @@ public class AudiophileCraftClient implements ClientModInitializer {
         net.fabricmc.fabric.api.client.rendering.v1.WorldRenderEvents.START.register(context -> {
             net.minecraft.client.MinecraftClient mc = net.minecraft.client.MinecraftClient.getInstance();
             if (mc.player != null) {
-                com.audiophilecraft.sound.AudioEngine.getInstance().updateListener(
-                        mc.player.getEyePos(),
-                        mc.player.getYaw(),
-                        mc.player.getPitch());
+                com.audiophilecraft.sound.AudioEngine.getInstance()
+                        .updateListener(mc.player.getEyePos(), mc.player.getYaw(), mc.player.getPitch());
                 com.audiophilecraft.sound.AudioEngine.getInstance().updateGains();
             }
         });
 
         // Stop Audio on Disconnect (Main Menu)
-        net.fabricmc.fabric.api.client.networking.v1.ClientPlayConnectionEvents.DISCONNECT
-                .register((handler, client) -> {
+        net.fabricmc.fabric.api.client.networking.v1.ClientPlayConnectionEvents.DISCONNECT.register(
+                (handler, client) -> {
                     System.out.println("AudiophileCraft: Disconnected. Stopping Audio Engine.");
                     com.audiophilecraft.sound.AudioEngine.getInstance().cleanupEfx();
                     // CRITICAL: Clear the speaker registry so positions from the old world

@@ -14,7 +14,8 @@ public class SpeakerScreenHandler extends ScreenHandler {
     private int verticalTiltDeg;
 
     // Server Constructor
-    public SpeakerScreenHandler(int syncId, PlayerInventory playerInventory, BlockPos pos, int sampleShift, int verticalTiltDeg) {
+    public SpeakerScreenHandler(
+            int syncId, PlayerInventory playerInventory, BlockPos pos, int sampleShift, int verticalTiltDeg) {
         super(ModScreenHandlers.SPEAKER_SCREEN_HANDLER, syncId);
         this.pos = pos;
         this.sampleShift = sampleShift;

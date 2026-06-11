@@ -15,14 +15,14 @@ import net.minecraft.util.Identifier;
 
 public class ModBlocks {
 
-    public static final Block SUBWOOFER = registerBlock("subwoofer",
-            new SubwooferBlock(FabricBlockSettings.copyOf(Blocks.NOTE_BLOCK)));
+    public static final Block SUBWOOFER =
+            registerBlock("subwoofer", new SubwooferBlock(FabricBlockSettings.copyOf(Blocks.NOTE_BLOCK)));
 
-    public static final Block MID_RANGE = registerBlock("mid_range",
-            new MidRangeBlock(FabricBlockSettings.copyOf(Blocks.NOTE_BLOCK)));
+    public static final Block MID_RANGE =
+            registerBlock("mid_range", new MidRangeBlock(FabricBlockSettings.copyOf(Blocks.NOTE_BLOCK)));
 
-    public static final Block LINE_ARRAY = registerBlock("line_array",
-            new LineArrayBlock(FabricBlockSettings.copyOf(Blocks.NOTE_BLOCK)));
+    public static final Block LINE_ARRAY =
+            registerBlock("line_array", new LineArrayBlock(FabricBlockSettings.copyOf(Blocks.NOTE_BLOCK)));
 
     private static Block registerBlock(String name, Block block) {
         registerBlockItem(name, block);
@@ -30,7 +30,9 @@ public class ModBlocks {
     }
 
     private static Item registerBlockItem(String name, Block block) {
-        return Registry.register(Registries.ITEM, new Identifier("audiophilecraft", name),
+        return Registry.register(
+                Registries.ITEM,
+                new Identifier("audiophilecraft", name),
                 new BlockItem(block, new FabricItemSettings()));
     }
 
