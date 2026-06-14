@@ -104,3 +104,11 @@ spotless {
 		endWithNewline()
 	}
 }
+
+loom {
+    runs {
+        client {
+            programArgs "--username", "DevBurak"
+        }
+    }
+}

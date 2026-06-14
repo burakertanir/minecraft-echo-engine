@@ -359,19 +359,63 @@ public class AmplifierScreen extends HandledScreen<AmplifierScreenHandler> {
         String url =
                 !activePlayUrl.isEmpty() ? activePlayUrl : urlField.getText().trim();
         PacketByteBuf buf = PacketByteBufs.create();
-        if (!url.isEmpty()) {
-            buf.writeInt(getHandOrdinal());
-            buf.writeString(url);
-            ClientPlayNetworking.send(ModMessages.C2S_PLAY_URL, buf);
+
+        long lockTime = 2500; // Default lock time for new songs
+
+        com.audiophilecraft.sound.PlaybackSession activeSession =
+                com.audiophilecraft.sound.AudioEngine.getInstance().getActiveSession();
+
+        boolean isSameUrl = activeSession != null && !url.isEmpty() && url.equals(activeSession.getPlayUrl());
+        boolean isPlayingLocal = activeSession != null
+                && url.isEmpty()
+                && activeSession.getPlayUrl().isEmpty()
+                && activeSession.isPlaying();
+
+        // If the URL matches the currently playing URL, OR if it's local playback and we clicked without a URL, toggle
+        // pause.
+        if (isSameUrl || isPlayingLocal) {
+            if (activeSession.isPlaying()) {
+                PacketByteBuf toggleBuf = PacketByteBufs.create();
+                toggleBuf.writeInt(getHandOrdinal());
+                ClientPlayNetworking.send(ModMessages.C2S_TOGGLE_PAUSE, toggleBuf);
+                lockTime = 100; // Fast unlock for toggling pause
+            } else {
+                // If it's the same URL but stopped, just play it again from scratch.
+                PacketByteBuf playBuf = PacketByteBufs.create();
+                playBuf.writeInt(getHandOrdinal());
+                if (!url.isEmpty()) {
+                    playBuf.writeString(url);
+                    ClientPlayNetworking.send(ModMessages.C2S_PLAY_URL, playBuf);
+                } else {
+                    ClientPlayNetworking.send(ModMessages.C2S_REQUEST_PLAY, playBuf);
+                    lockTime = 100; // Fast unlock for local SD card songs
+                }
+            }
         } else {
-            buf.writeInt(getHandOrdinal());
-            ClientPlayNetworking.send(ModMessages.C2S_REQUEST_PLAY, buf);
+            // If there's an active session, stop it first before sending play.
+            if (activeSession != null) {
+                PacketByteBuf stopBuf = PacketByteBufs.create();
+                stopBuf.writeInt(getHandOrdinal());
+                ClientPlayNetworking.send(ModMessages.C2S_STOP_AUDIO, stopBuf);
+            }
+
+            PacketByteBuf playBuf = PacketByteBufs.create();
+            playBuf.writeInt(getHandOrdinal());
+            if (!url.isEmpty()) {
+                playBuf.writeString(url);
+                ClientPlayNetworking.send(ModMessages.C2S_PLAY_URL, playBuf);
+            } else {
+                ClientPlayNetworking.send(ModMessages.C2S_REQUEST_PLAY, playBuf);
+                lockTime = 100; // Fast unlock for local SD card songs
+            }
         }
+
         // Visual Loading Feedback Lock
         if (playButton != null) playButton.active = false;
+        final long finalLockTime = lockTime;
         Thread t = new Thread(() -> {
             try {
-                Thread.sleep(2500);
+                Thread.sleep(finalLockTime);
             } catch (Exception e) {
             }
             if (playButton != null) {
@@ -753,6 +797,18 @@ public class AmplifierScreen extends HandledScreen<AmplifierScreenHandler> {
     @Override
     protected void handledScreenTick() {
         super.handledScreenTick();
+
+        // Update Play/Pause button icon dynamically
+        if (playButton != null) {
+            com.audiophilecraft.sound.PlaybackSession activeSession =
+                    com.audiophilecraft.sound.AudioEngine.getInstance().getActiveSession();
+            if (activeSession != null && activeSession.isPlaying() && !activeSession.isManuallyPaused()) {
+                playButton.setMessage(net.minecraft.text.Text.literal("\u23F8")); // Pause icon (⏸)
+            } else {
+                playButton.setMessage(net.minecraft.text.Text.literal("\u25B6")); // Play icon (▶)
+            }
+        }
+
         if (urlField != null) {
             long now = System.currentTimeMillis();
             String currentText = urlField.getText().trim();
@@ -1398,14 +1454,11 @@ public class AmplifierScreen extends HandledScreen<AmplifierScreenHandler> {
     // At slider 0.5 -> gain 0.1, slider 1.0 -> gain 1.0
     // Matches human loudness perception
     private static double gainToSlider(float linearGain) {
-        if (linearGain <= 0.001f) return 0.0;
-        double db = 20.0 * Math.log10(linearGain);
-        return Math.max(0.0, Math.min(1.0, (db + 40.0) / 40.0));
+        return Math.max(0.0, Math.min(1.0, linearGain));
     }
 
     private static float sliderToGain(double sliderValue) {
-        double db = sliderValue * 40.0 - 40.0;
-        return (float) Math.pow(10, db / 20.0);
+        return (float) Math.max(0.0, Math.min(1.0, sliderValue));
     }
 
     private class MixerSliderWidget extends net.minecraft.client.gui.widget.SliderWidget {

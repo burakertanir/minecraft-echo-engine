@@ -97,10 +97,10 @@ public class AudioStreamBuffer {
 
         long targetCursor = (long) (timeSeconds * sampleRate);
 
-        // Ensure within bounds
-        if (targetCursor < 0) targetCursor = 0;
         long maxSamples = getTotalSamples();
         if (targetCursor > maxSamples - 1) targetCursor = maxSamples - 1;
+        // Ensure within bounds (must be after maxSamples check to prevent -1)
+        if (targetCursor < 0) targetCursor = 0;
 
         // Reset read position
         if (pcmArray != null) {
@@ -214,29 +214,6 @@ public class AudioStreamBuffer {
                 + y2 * ((f + 1) * f * (f - 2)) / (-2.0)
                 + y3 * ((f + 1) * f * (f - 1)) / (6.0);
 
-        if (out > 32767.0) out = 32767.0;
-        if (out < -32768.0) out = -32768.0;
-        return (short) out;
-    }
-
-    /**
-     * Cubic Hermite interpolation for fractional positions
-     */
-    public short getSampleHermite(double absolutePosition) {
-        long posInt = (long) absolutePosition;
-        double input = absolutePosition - posInt;
-
-        short y0 = getSample(posInt - 1);
-        short y1 = getSample(posInt);
-        short y2 = getSample(posInt + 1);
-        short y3 = getSample(posInt + 2);
-
-        double c0 = y1;
-        double c1 = 0.5 * (y2 - y0);
-        double c2 = y0 - 2.5 * y1 + 2 * y2 - 0.5 * y3;
-        double c3 = 0.5 * (y3 - y0) + 1.5 * (y1 - y2);
-
-        double out = (((c3 * input + c2) * input + c1) * input + c0);
         if (out > 32767.0) out = 32767.0;
         if (out < -32768.0) out = -32768.0;
         return (short) out;

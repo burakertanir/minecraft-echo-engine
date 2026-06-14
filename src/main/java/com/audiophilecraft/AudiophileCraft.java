@@ -1,5 +1,6 @@
 package com.audiophilecraft;
 
+import com.audiophilecraft.command.TestFacilityCommand;
 import com.audiophilecraft.network.ModMessages;
 import com.audiophilecraft.registry.ModBlockEntities;
 import com.audiophilecraft.registry.ModBlocks;
@@ -24,12 +25,21 @@ public class AudiophileCraft implements ModInitializer {
         ModItemGroups.registerItemGroups();
         ModScreenHandlers.registerScreenHandlers();
         ModMessages.registerC2SPackets();
+        TestFacilityCommand.register();
 
-        // Clear speaker registry when a world unloads (server-side).
+        // Clear speaker registry per-dimension when a world unloads (server-side).
         // Prevents stale positions from World A leaking into World B.
-        net.fabricmc.fabric.api.event.lifecycle.v1.ServerWorldEvents.UNLOAD.register((server, world) -> {
+        net.fabricmc.fabric.api.event.lifecycle.v1.ServerLifecycleEvents.SERVER_STOPPED.register((server) -> {
             com.audiophilecraft.registry.SpeakerRegistry.clear();
-            LOGGER.info("AudiophileCraft: Speaker registry cleared (world unload).");
+            LOGGER.info("AudiophileCraft: Speaker registry cleared (server stopped).");
+        });
+
+        // Clear dimension-specific entries when a world unloads.
+        net.fabricmc.fabric.api.event.lifecycle.v1.ServerWorldEvents.UNLOAD.register((server, world) -> {
+            com.audiophilecraft.registry.SpeakerRegistry.clear(world.getRegistryKey());
+            LOGGER.info(
+                    "AudiophileCraft: Speaker registry cleared for dimension {}",
+                    world.getRegistryKey().getValue());
         });
     }
 }

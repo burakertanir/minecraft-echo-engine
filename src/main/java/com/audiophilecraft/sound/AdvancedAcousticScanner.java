@@ -488,16 +488,27 @@ public class AdvancedAcousticScanner {
         }
     }
 
+    private boolean isAcousticObstacle(BlockState state, World world, BlockPos pos) {
+        if (state.isAir()) return false;
+        net.minecraft.block.Block block = state.getBlock();
+        // Trees and plants scatter sound, they don't enclose spaces
+        if (block instanceof net.minecraft.block.LeavesBlock) return false;
+        if (block instanceof net.minecraft.block.PlantBlock) return false;
+        // Speaker blocks emit sound — they shouldn't block venue scanning rays
+        if (block instanceof com.audiophilecraft.block.SpeakerBlock) return false;
+        // If the block has no physical collision (like signs, string, etc.), it's transparent
+        if (state.getCollisionShape(world, pos).isEmpty()) return false;
+        return true;
+    }
+
     /**
      * Cast rays from a single probe position and extract raw metrics.
      * Optionally collects the hit coordinates into outPointCloud.
      */
     public ProbeResult scanProbe(World world, Vec3d probePos, java.util.List<Vec3d> outPointCloud) {
-        BlockPos probeBlock =
-                new BlockPos((int) Math.floor(probePos.x), (int) Math.floor(probePos.y), (int) Math.floor(probePos.z));
-
         float[] distances = new float[RAY_COUNT];
         float[] absorptions = new float[RAY_COUNT];
+        BlockPos probeBlock = BlockPos.ofFloored(probePos.x, probePos.y, probePos.z);
 
         for (int i = 0; i < RAY_COUNT; i++) {
             float dirX = RAY_DIRS_NORM[i][0];
@@ -507,23 +518,64 @@ public class AdvancedAcousticScanner {
             float hitAbsorption = 1.0f;
 
             BlockPos.Mutable checkPos = new BlockPos.Mutable();
-            for (int step = 1; step <= MAX_RAY_DIST; step++) {
-                checkPos.set(
-                        (int) Math.floor(probePos.x + dirX * step), (int) Math.floor(probePos.y + dirY * step), (int)
-                                Math.floor(probePos.z + dirZ * step));
-                if (checkPos.equals(probeBlock)) continue;
 
-                BlockState state = world.getBlockState(checkPos);
-                if (state.isSolidBlock(world, checkPos)) {
-                    hitDist = step;
-                    hitAbsorption = getAbsorptionCoefficient(state.getBlock());
+            double startX = probePos.x, startY = probePos.y, startZ = probePos.z;
+            int x = (int) Math.floor(startX);
+            int y = (int) Math.floor(startY);
+            int z = (int) Math.floor(startZ);
 
-                    if (outPointCloud != null) {
-                        outPointCloud.add(new Vec3d(
-                                probePos.x + dirX * hitDist, probePos.y + dirY * hitDist, probePos.z + dirZ * hitDist));
+            int stepX = dirX > 0 ? 1 : (dirX < 0 ? -1 : 0);
+            int stepY = dirY > 0 ? 1 : (dirY < 0 ? -1 : 0);
+            int stepZ = dirZ > 0 ? 1 : (dirZ < 0 ? -1 : 0);
+
+            double tMaxX = dirX != 0 ? ((dirX > 0 ? x + 1 : x) - startX) / dirX : Double.POSITIVE_INFINITY;
+            double tMaxY = dirY != 0 ? ((dirY > 0 ? y + 1 : y) - startY) / dirY : Double.POSITIVE_INFINITY;
+            double tMaxZ = dirZ != 0 ? ((dirZ > 0 ? z + 1 : z) - startZ) / dirZ : Double.POSITIVE_INFINITY;
+
+            double tDeltaX = dirX != 0 ? Math.abs(1.0 / dirX) : Double.POSITIVE_INFINITY;
+            double tDeltaY = dirY != 0 ? Math.abs(1.0 / dirY) : Double.POSITIVE_INFINITY;
+            double tDeltaZ = dirZ != 0 ? Math.abs(1.0 / dirZ) : Double.POSITIVE_INFINITY;
+
+            double t = 0;
+            while (t < MAX_RAY_DIST) {
+                checkPos.set(x, y, z);
+
+                if (!checkPos.equals(probeBlock)) {
+                    BlockState state = world.getBlockState(checkPos);
+                    if (isAcousticObstacle(state, world, checkPos)) {
+                        hitDist = (float) t;
+                        hitAbsorption = getAbsorptionCoefficient(state.getBlock());
+
+                        if (outPointCloud != null) {
+                            outPointCloud.add(new Vec3d(
+                                    probePos.x + dirX * hitDist,
+                                    probePos.y + dirY * hitDist,
+                                    probePos.z + dirZ * hitDist));
+                        }
+                        break;
                     }
+                }
 
-                    break;
+                if (tMaxX < tMaxY) {
+                    if (tMaxX < tMaxZ) {
+                        x += stepX;
+                        t = tMaxX;
+                        tMaxX += tDeltaX;
+                    } else {
+                        z += stepZ;
+                        t = tMaxZ;
+                        tMaxZ += tDeltaZ;
+                    }
+                } else {
+                    if (tMaxY < tMaxZ) {
+                        y += stepY;
+                        t = tMaxY;
+                        tMaxY += tDeltaY;
+                    } else {
+                        z += stepZ;
+                        t = tMaxZ;
+                        tMaxZ += tDeltaZ;
+                    }
                 }
             }
             distances[i] = hitDist;
@@ -554,23 +606,62 @@ public class AdvancedAcousticScanner {
 
         // Variance (std dev of ray distances)
         float sumSqDiff = 0;
+        for (int i = 0; i < RAY_COUNT; i++) {
+            float diff = distances[i] - meanDist;
+            sumSqDiff += diff * diff;
+        }
+        float variance = (float) Math.sqrt(sumSqDiff / (float) RAY_COUNT);
+
+        // ═══════════════════════════════════════════════════════════════
+        // IQR OUTLIER CAPPING FOR VOLUME/SURFACE AREA
+        // ═══════════════════════════════════════════════════════════════
+        // Problem: A single ray escaping through a 1-block hole in a small room
+        // travels 200 blocks and hits something far away. Because volume uses dist^3,
+        // this ONE ray (200^3 = 8,000,000) dwarfs 999 rays at 5 blocks (5^3 = 125).
+        //
+        // Solution: Use IQR (Interquartile Range) to detect and cap outliers.
+        // - Small room with hole: Q1=4, Q3=6, cap=9 → 200-block ray capped to 9
+        // - Open air (Tomorrowland): Q1=80, Q3=200, cap=380 → nothing capped
+        // This preserves open-air detection while preventing hole-leak inflation.
+
+        // Collect only wall-hit distances (exclude sky escapes)
+        int wallHitCount = 0;
+        for (int i = 0; i < RAY_COUNT; i++) {
+            if (distances[i] < MAX_RAY_DIST) wallHitCount++;
+        }
+
+        float volumeCap = MAX_RAY_DIST; // Default: no capping
+        if (wallHitCount >= 4) { // Need at least 4 rays for meaningful IQR
+            float[] sorted = new float[wallHitCount];
+            int idx = 0;
+            for (int i = 0; i < RAY_COUNT; i++) {
+                if (distances[i] < MAX_RAY_DIST) sorted[idx++] = distances[i];
+            }
+            java.util.Arrays.sort(sorted);
+
+            float q1 = sorted[wallHitCount / 4];
+            float q3 = sorted[(wallHitCount * 3) / 4];
+            float iqr = q3 - q1;
+            volumeCap = q3 + 1.5f * iqr;
+            // Safety floor: never cap below 10 blocks (prevents over-capping in
+            // perfectly uniform tiny rooms where IQR ≈ 0)
+            if (volumeCap < 10.0f) volumeCap = Math.max(10.0f, q3 * 2.0f);
+        }
+
         float sumCubeDist = 0;
         float sumSqDist = 0;
         int validVolumeRays = 0;
 
         for (int i = 0; i < RAY_COUNT; i++) {
             float dist = distances[i];
-            float diff = dist - meanDist;
-            sumSqDiff += diff * diff;
-
-            // Exclude sky escapes (MAX_RAY_DIST) from volume geometry so they don't blow up the math (256^3)
+            // Exclude sky escapes from volume geometry
             if (dist < MAX_RAY_DIST) {
-                sumCubeDist += (dist * dist * dist);
-                sumSqDist += (dist * dist);
+                float capped = Math.min(dist, volumeCap);
+                sumCubeDist += (capped * capped * capped);
+                sumSqDist += (capped * capped);
                 validVolumeRays++;
             }
         }
-        float variance = (float) Math.sqrt(sumSqDiff / (float) RAY_COUNT);
 
         if (validVolumeRays == 0) validVolumeRays = 1; // Failsafe
 
@@ -578,7 +669,8 @@ public class AdvancedAcousticScanner {
         float averageCubeDist = sumCubeDist / (float) validVolumeRays;
         float trueVolume = (4.0f * (float) Math.PI / 3.0f) * averageCubeDist;
 
-        // Monte Carlo True Geometric Surface Area: 4 * Pi * average(r^2) * 1.2f (roughness factor)
+        // Monte Carlo True Geometric Surface Area: 4 * Pi * average(r^2) * 1.2f
+        // (roughness factor)
         float averageSqDist = sumSqDist / (float) validVolumeRays;
         float trueSurfaceArea = 4.0f * (float) Math.PI * averageSqDist * 1.2f;
 
@@ -597,145 +689,7 @@ public class AdvancedAcousticScanner {
                 absorptions);
     }
 
-    /**
-     * Compute robust clearance for a direction sector using dot-product cone
-     * selection and adaptive 3-tier classification. This prevents pillar traps.
-     *
-     * @param distances     N ray distances from the center probe
-     * @param targetDir     Normalized direction vector for the sector
-     * @param coneThreshold Minimum dot product to include a ray (0.3 = ~72° cone)
-     * @return Robust clearance distance for this sector
-     */
-    private float sectorClearance(float[] distances, float[] targetDir, float coneThreshold) {
-        // Collect distances of rays within the cone
-        float[] sectorDists = new float[RAY_COUNT];
-        int count = 0;
-
-        for (int i = 0; i < RAY_COUNT; i++) {
-            float dot = RAY_DIRS_NORM[i][0] * targetDir[0]
-                    + RAY_DIRS_NORM[i][1] * targetDir[1]
-                    + RAY_DIRS_NORM[i][2] * targetDir[2];
-            if (dot > coneThreshold) {
-                sectorDists[count++] = distances[i];
-            }
-        }
-
-        if (count == 0) return MAX_RAY_DIST;
-
-        // Sort ASCENDING (smallest first)
-        java.util.Arrays.sort(sectorDists, 0, count);
-
-        float min = sectorDists[0];
-        float max = sectorDists[count - 1];
-        float range = max - min;
-
-        // Calculate mean
-        float sum = 0;
-        for (int i = 0; i < count; i++) {
-            sum += sectorDists[i];
-        }
-        float mean = sum / count;
-
-        // Calculate standard deviation
-        float varianceSum = 0;
-        for (int i = 0; i < count; i++) {
-            float diff = sectorDists[i] - mean;
-            varianceSum += diff * diff;
-        }
-        float stdDev = (float) Math.sqrt(varianceSum / count);
-
-        // Coefficient of Variation
-        float cv = stdDev / mean;
-
-        // IQR-based outlier detection
-        float q1 = sectorDists[count / 4];
-        float q3 = sectorDists[(count * 3) / 4];
-        float iqr = q3 - q1;
-        float outlierThreshold = q3 + (1.5f * iqr);
-
-        // Count outliers
-        int outlierCount = 0;
-        for (int i = 0; i < count; i++) {
-            if (sectorDists[i] > outlierThreshold) {
-                outlierCount++;
-            }
-        }
-        float outlierRatio = (float) outlierCount / count;
-
-        // OPEN AIR DETECTION: If >60% are outliers (sky rays)
-        if (outlierRatio > 0.6f) {
-            // Use only wall hits (filter out sky)
-            int validCount = 0;
-            float validSum = 0;
-            for (int i = 0; i < count; i++) {
-                if (sectorDists[i] <= outlierThreshold) {
-                    validSum += sectorDists[i];
-                    validCount++;
-                }
-            }
-
-            if (validCount > 0) {
-                float clearance = validSum / validCount;
-                // Conservative clamp for open areas
-                return Math.min(clearance, min * 2.0f);
-            } else {
-                // No walls at all - completely open sky
-                return min;
-            }
-        }
-
-        float clearance;
-
-        if (range < 8.0f || cv < 0.3f) {
-            // ═══════════════════════════════════════════════════
-            // TIER 1: SMALL/UNIFORM SPACE (e.g., 10x10 room)
-            // ═══════════════════════════════════════════════════
-            clearance = min; // Use minimum - safest approach
-
-        } else if (range < 30.0f || cv < 0.8f) {
-            // ═══════════════════════════════════════════════════
-            // TIER 2: MEDIUM SPACE (e.g., 60x40 club with pillars)
-            // ═══════════════════════════════════════════════════
-            // Use bottom 30th percentile average
-            int percentile30 = Math.max(1, (int) (count * 0.30f));
-            float percentileSum = 0;
-            for (int i = 0; i < percentile30; i++) {
-                percentileSum += sectorDists[i];
-            }
-            clearance = percentileSum / percentile30;
-
-            // Safety clamp: never exceed 3x minimum
-            clearance = Math.min(clearance, min * 3.0f);
-
-        } else {
-            // ═══════════════════════════════════════════════════
-            // TIER 3: LARGE/VARIABLE SPACE (e.g., 200x200 stadium)
-            // ═══════════════════════════════════════════════════
-            // Use bottom 40th percentile average (more aggressive filtering)
-            int percentile40 = Math.max(1, (int) (count * 0.40f));
-            float percentileSum = 0;
-            for (int i = 0; i < percentile40; i++) {
-                percentileSum += sectorDists[i];
-            }
-            clearance = percentileSum / percentile40;
-
-            // Safety clamp: never exceed 5x minimum
-            clearance = Math.min(clearance, min * 5.0f);
-        }
-
-        // Final safety: always respect minimum
-        clearance = Math.max(clearance, min);
-
-        return clearance;
-    }
-
-    /**
-     * Merge multiple ProbeResults into a single VenueDescriptor.
-     * Center probe gets 2x weight.
-     */
-    // Live Tuning: store last descriptor for regeneration
     private volatile VenueDescriptor lastDescriptor = null;
-
     private Vec3d lastProbePos = null;
     public static java.util.List<Vec3d> lastPointCloud =
             java.util.Collections.synchronizedList(new java.util.ArrayList<>());
@@ -743,54 +697,51 @@ public class AdvancedAcousticScanner {
     public static java.util.List<net.minecraft.util.math.BlockPos> lastSpeakers =
             java.util.Collections.synchronizedList(new java.util.ArrayList<>());
 
-    /**
-     * Get the last VenueDescriptor generated by scanVenue (for live tuning
-     * regeneration)
-     */
     public VenueDescriptor getLastDescriptor() {
         return lastDescriptor;
     }
 
-    /** Get the last probe position used by scanVenue */
     public Vec3d getLastProbePos() {
         return lastProbePos;
     }
 
-    /** Get the 3D Point Cloud of the venue's geometric boundaries */
     public static java.util.List<Vec3d> getLastPointCloud() {
         return lastPointCloud;
     }
 
-    /** Get the complete solid block map of the venue */
     public static java.util.Set<net.minecraft.util.math.BlockPos> getLastVenueBlocks() {
         return lastVenueBlocks;
     }
 
-    /** Get the speakers that initiated the last scan */
     public static java.util.List<net.minecraft.util.math.BlockPos> getLastSpeakers() {
         return lastSpeakers;
     }
 
     public VenueDescriptor mergeProbes(java.util.List<ProbeResult> probes) {
-        float totalWeight = 0;
-        float wEnclosure = 0, wScale = 0, wAbsorption = 0;
-        float wNear = 0, wMid = 0, wFar = 0, wSky = 0, wVariance = 0, wTrueVolume = 0, wTrueSurfaceArea = 0;
+        if (probes.isEmpty()) return null;
 
-        for (int i = 0; i < probes.size(); i++) {
-            ProbeResult p = probes.get(i);
-            float weight = (i == 0) ? 1.5f : 1.0f; // Center probe = 1.5x weight (reduced placement bias)
-            totalWeight += weight;
+        float totalWeight = probes.size();
+        float wEnclosure = 0, wAbsorption = 0;
+        float wNear = 0, wMid = 0, wFar = 0, wSky = 0, wVariance = 0;
+        float wScale = 0, wVolume = 0, wSurfaceArea = 0;
+        float maxLatePotential = 0;
 
-            wEnclosure += p.enclosure * weight;
-            wScale += p.meanDist * weight;
-            wAbsorption += p.avgAbsorption * weight;
-            wNear += p.nearHitRatio * weight;
-            wMid += p.midHitRatio * weight;
-            wFar += p.farHitRatio * weight;
-            wSky += p.skyEscapeRatio * weight;
-            wVariance += p.variance * weight;
-            wTrueVolume += p.trueVolume * weight;
-            wTrueSurfaceArea += p.trueSurfaceArea * weight;
+        for (ProbeResult p : probes) {
+            wEnclosure += p.enclosure;
+            wAbsorption += p.avgAbsorption;
+            wNear += p.nearHitRatio;
+            wMid += p.midHitRatio;
+            wFar += p.farHitRatio;
+            wSky += p.skyEscapeRatio;
+            wVariance += p.variance;
+            wScale += p.meanDist;
+            wVolume += p.trueVolume;
+            wSurfaceArea += p.trueSurfaceArea;
+
+            float lp = p.farHitRatio + (p.meanDist / 40.0f);
+            if (lp > maxLatePotential) {
+                maxLatePotential = lp;
+            }
         }
 
         float enclosure = wEnclosure / totalWeight;
@@ -799,10 +750,10 @@ public class AdvancedAcousticScanner {
         float reflectivity = 1.0f - avgAbsorption;
         float openness = wSky / totalWeight;
         float earlyDensity = (wNear + wMid) / totalWeight;
-        float latePotential = (wFar / totalWeight) + (scale / 40.0f); // Normalize scale
-        float diffusion = Math.min(1.0f, (wVariance / totalWeight) / 15.0f); // Normalize
-        float trueVolume = wTrueVolume / totalWeight;
-        float trueSurfaceArea = wTrueSurfaceArea / totalWeight;
+        float latePotential = maxLatePotential;
+        float diffusion = Math.min(1.0f, (wVariance / totalWeight) / 15.0f);
+        float trueVolume = wVolume / totalWeight;
+        float trueSurfaceArea = wSurfaceArea / totalWeight;
 
         return new VenueDescriptor(
                 enclosure,
@@ -818,104 +769,101 @@ public class AdvancedAcousticScanner {
     }
 
     /**
-     * Main entry point: Adaptive 2-Phase Multi-Probe Venue Scan.
+     * Main entry point: Pure Cluster-Based Venue Scan.
      *
-     * Phase 1: Coarse scan from center → compute sector clearances
-     * Phase 2: Place adaptive probes → scan all → merge → generate preset
-     *
-     * @param world     The Minecraft world
-     * @param centerPos Weighted speaker centroid
-     * @param stageDir  Normalized stage-front direction (from speaker facing)
+     * @param world          The Minecraft world
+     * @param clusterCenters List of physical cluster centers (where sound actually
+     *                       emits)
      * @return Locked VenuePreset for the entire playback session
      */
-    public VenuePreset scanVenue(World world, Vec3d centerPos, Vec3d stageDir) {
-        if (world == null || centerPos == null) return null;
-
-        // Normalize stageDir (safety)
-        double sdLen = stageDir.length();
-        if (sdLen < 0.001) stageDir = new Vec3d(1, 0, 0); // Fallback
-        else stageDir = stageDir.multiply(1.0 / sdLen);
+    public VenuePreset scanVenue(World world, java.util.List<Vec3d> clusterCenters) {
+        if (world == null || clusterCenters == null || clusterCenters.isEmpty()) return null;
 
         // ─── POINT CLOUD CACHE ──────────────────────────────
         java.util.List<Vec3d> currentCloud = new java.util.ArrayList<>();
 
-        // ─── PHASE 1: Coarse Scan from Center ───────────────────────
-        ProbeResult centerProbe = scanProbe(world, centerPos, currentCloud);
+        java.util.List<ProbeResult> probes = new java.util.ArrayList<>();
 
-        // Compute sector clearances using robust top-k averaging
-        float[] frontDir = {(float) stageDir.x, (float) stageDir.y, (float) stageDir.z};
+        // Limit the number of clusters we scan to prevent lag spikes if a user builds
+        // 100 isolated speakers
+        int maxClustersToScan = Math.min(clusterCenters.size(), 8);
 
-        // Left = cross(stageDir, up)
-        float[] leftDir = {
-            (float) (stageDir.z), // cross(dir, up).x = dir.z
-            0.0f,
-            (float) (-stageDir.x) // cross(dir, up).z = -dir.x
-        };
-        float leftLen = (float) Math.sqrt(leftDir[0] * leftDir[0] + leftDir[2] * leftDir[2]);
-        if (leftLen > 0.001f) {
-            leftDir[0] /= leftLen;
-            leftDir[2] /= leftLen;
+        for (int i = 0; i < maxClustersToScan; i++) {
+            Vec3d centerPos = clusterCenters.get(i);
+            probes.add(scanProbe(world, centerPos, currentCloud));
         }
 
-        float[] rightDir = {-leftDir[0], 0.0f, -leftDir[2]};
-        float[] upDir = {0.0f, 1.0f, 0.0f};
-
-        float frontClearance = sectorClearance(centerProbe.distances, frontDir, 0.3f);
-        float leftClearance = sectorClearance(centerProbe.distances, leftDir, 0.3f);
-        float rightClearance = sectorClearance(centerProbe.distances, rightDir, 0.3f);
-        float upClearance = sectorClearance(centerProbe.distances, upDir, 0.3f);
-
-        // ─── PHASE 2: Adaptive Probe Placement ──────────────────────
-        java.util.List<ProbeResult> probes = new java.util.ArrayList<>();
-        probes.add(centerProbe); // Index 0 = center (gets 2x weight)
-
-        // Front probe: 40% of front clearance
-        Vec3d frontProbePos = centerPos.add(stageDir.multiply(frontClearance * 0.40));
-        probes.add(scanProbe(world, frontProbePos, currentCloud));
-
-        // Left probe: 40% of left clearance
-        Vec3d leftVec = new Vec3d(leftDir[0], leftDir[1], leftDir[2]);
-        Vec3d leftProbePos = centerPos.add(leftVec.multiply(leftClearance * 0.40));
-        probes.add(scanProbe(world, leftProbePos, currentCloud));
-
-        // Right probe: 40% of right clearance
-        Vec3d rightVec = new Vec3d(rightDir[0], rightDir[1], rightDir[2]);
-        Vec3d rightProbePos = centerPos.add(rightVec.multiply(rightClearance * 0.40));
-        probes.add(scanProbe(world, rightProbePos, currentCloud));
-
-        // Above probe: 50% of up clearance
-        Vec3d aboveProbePos = centerPos.add(0, upClearance * 0.50, 0);
-        probes.add(scanProbe(world, aboveProbePos, currentCloud));
+        // Compute bounding box volume from aggregated point cloud (stable, probe-position-independent)
+        float bboxVolume = computeBoundingBoxVolume(currentCloud);
 
         // Save the massive aggregated point cloud for GUI rendering
         AdvancedAcousticScanner.lastPointCloud.clear();
         AdvancedAcousticScanner.lastPointCloud.addAll(currentCloud);
 
         // ─── BUILD VENUE MAP: ONLY blocks where reverb rays hit ─────
-
-        // This is the TRUE reverb scan - only surfaces the scanner detected.
-
         if (!currentCloud.isEmpty()) {
-
             java.util.Set<net.minecraft.util.math.BlockPos> hitBlocks = new java.util.HashSet<>();
-
             for (Vec3d pt : currentCloud) {
-
                 hitBlocks.add(new net.minecraft.util.math.BlockPos(
                         (int) Math.floor(pt.x), (int) Math.floor(pt.y), (int) Math.floor(pt.z)));
             }
-
             java.util.HashSet<net.minecraft.util.math.BlockPos> newBlocks = new java.util.HashSet<>();
             newBlocks.addAll(hitBlocks);
             AdvancedAcousticScanner.lastVenueBlocks = newBlocks; // atomic replace
         }
-        // ─── PHASE 3-4: Merge Probes → VenueDescriptor ──────────────
-        VenueDescriptor desc = mergeProbes(probes);
 
-        // ─── PHASE 5: Descriptor → VenuePreset ──────────────────────
-        this.lastDescriptor = desc;
-        this.lastProbePos = centerPos;
-        return descriptorToPreset(desc, centerPos);
+        // ─── Merge Probes → VenueDescriptor ──────────────
+        VenueDescriptor desc = mergeProbes(probes);
+        if (desc == null) return null;
+
+        // Use the first cluster's position as the reference probe position for the
+        // preset
+        Vec3d referencePos = clusterCenters.get(0);
+
+        // ─── Descriptor → VenuePreset ──────────────────────
+        this.lastDescriptor = new VenueDescriptor(
+                desc.enclosure,
+                desc.scale,
+                desc.reflectivity,
+                desc.diffusion,
+                desc.openness,
+                desc.earlyDensity,
+                desc.latePotential,
+                desc.avgAbsorption,
+                computeBoundingBoxVolume(currentCloud),
+                desc.trueSurfaceArea);
+        this.lastProbePos = referencePos;
+        return descriptorToPreset(this.lastDescriptor, referencePos);
+    }
+
+    private float lerp(float a, float b, float t) {
+        return a + (b - a) * Math.max(0.0f, Math.min(1.0f, t));
+    }
+
+    /**
+     * Compute a probe-position-independent volume from the aggregated point cloud.
+     * Uses axis-aligned bounding box: (maxX - minX) × (maxY - minY) × (maxZ - minZ).
+     * The point cloud already captures all surfaces hit by rays across all probes.
+     */
+    private static float computeBoundingBoxVolume(java.util.List<Vec3d> pointCloud) {
+        if (pointCloud == null || pointCloud.isEmpty()) return 1000.0f;
+
+        float minX = Float.MAX_VALUE, minY = Float.MAX_VALUE, minZ = Float.MAX_VALUE;
+        float maxX = -Float.MAX_VALUE, maxY = -Float.MAX_VALUE, maxZ = -Float.MAX_VALUE;
+
+        for (Vec3d pt : pointCloud) {
+            if (pt.x < minX) minX = (float) pt.x;
+            if (pt.y < minY) minY = (float) pt.y;
+            if (pt.z < minZ) minZ = (float) pt.z;
+            if (pt.x > maxX) maxX = (float) pt.x;
+            if (pt.y > maxY) maxY = (float) pt.y;
+            if (pt.z > maxZ) maxZ = (float) pt.z;
+        }
+
+        float dx = Math.max(0.1f, maxX - minX);
+        float dy = Math.max(0.1f, maxY - minY);
+        float dz = Math.max(0.1f, maxZ - minZ);
+        return dx * dy * dz;
     }
 
     /**
@@ -929,17 +877,25 @@ public class AdvancedAcousticScanner {
         float vEnclosure = d.enclosure;
         float vOpenness = d.openness;
 
-        boolean isOpenAir = vOpenness > cfg.openAir_openness_threshold;
-        boolean isStronglyOpen = vOpenness > cfg.openAir_stronglyOpen_threshold;
-
-        // The preset system now handles open-air dynamically via Sabine physics and LiveTuningConfig multipliers.
+        // The preset system now handles open-air dynamically via Sabine physics and
+        // continuous exponential multipliers.
 
         // ═══════════════════════════════════════════════════════════════
-        // ENCLOSED / SEMI-ENCLOSED VENUE (standard tier logic below)
+        // CONTINUOUS OPEN AIR & ENCLOSURE PHYSICS
         // ═══════════════════════════════════════════════════════════════
 
-        // Effective enclosure: penalize enclosure when sky escape is high.
-        float effectiveEnclosure = vEnclosure * (1.0f - vOpenness * 0.8f);
+        // Smoothly blend open-air properties based on vOpenness. 0% open = enclosed,
+        // 25% open = fully open air.
+        // Continuous open-air blending: raw openness determines effect linearly
+        float openAirBlend = Math.max(0.0f, Math.min(1.0f, vOpenness));
+
+        // Effective enclosure: powerfully penalize enclosure as openness increases
+        // using an exponential curve.
+        // Even 16% openness mathematically means the entire ceiling is gone, so
+        // enclosure must drop sharply.
+        float opennessPenalty =
+                (float) Math.pow(Math.max(0.0f, 1.0f - vOpenness), cfg.openAir_enclosure_penalty_exponent);
+        float effectiveEnclosure = vEnclosure * opennessPenalty;
         effectiveEnclosure = Math.max(0.0f, Math.min(1.0f, effectiveEnclosure));
 
         // Geometry (Sabine formula)
@@ -962,9 +918,8 @@ public class AdvancedAcousticScanner {
         // ─── REVERB GAIN ────────────────────────────────────────────
         // Use effectiveEnclosure for gain calculation.
         float baseEnclosureMultiplier = 0.5f + (effectiveEnclosure * 0.5f);
-        // Open-air minimum gain is dynamically configurable
-        float minGain = isOpenAir ? cfg.openAir_dynamic_minGain : 0.20f;
-        float vGain = Math.max(minGain, baseEnclosureMultiplier * 0.65f);
+
+        float vGain = baseEnclosureMultiplier * 0.65f;
         float vGainHF = 0.3f + (1.0f - vAvgAbsorption) * 0.6f;
         float vGainLF = 0.7f + effectiveEnclosure * 0.3f;
 
@@ -973,124 +928,152 @@ public class AdvancedAcousticScanner {
         float vReflGain, vReflDelay, lateReverbMultiplier, vLateGain, vLateDelay;
 
         // Reflection material factor: open air absorbs more (grass, dirt).
-        // Use a lower configurable floor for open-air so reflections stay subtle.
-        float reflFloor = isOpenAir ? cfg.openAir_dynamic_reflGainFloor : 0.20f;
-        float reflectionMaterialFactor = Math.max(reflFloor, 1.0f - vAvgAbsorption);
+        float reflectionMaterialFactor = 1.0f - vAvgAbsorption;
 
         // Use EFFECTIVE enclosure for tier selection volume.
         // This prevents a stage building from pushing an open-air venue into Tier 5/6.
         float effectiveVolume = vVolume * effectiveEnclosure;
         float effectiveMeanDist = vMeanDist * (float) Math.sqrt(effectiveEnclosure);
 
-        boolean tier10 = (effectiveVolume > cfg.tier10_volumeThreshold || effectiveMeanDist > cfg.tier10_distThreshold)
-                && !isOpenAir;
-        boolean tier9 = (effectiveVolume > cfg.tier9_volumeThreshold || effectiveMeanDist > cfg.tier9_distThreshold)
-                && !isOpenAir;
-        boolean tier8 = (effectiveVolume > cfg.tier8_volumeThreshold || effectiveMeanDist > cfg.tier8_distThreshold)
-                && !isOpenAir;
-        boolean tier7 = (effectiveVolume > cfg.tier7_volumeThreshold || effectiveMeanDist > cfg.tier7_distThreshold)
-                && !isOpenAir;
+        // Tier thresholds are naturally avoided in open air because effectiveVolume
+        // drops exponentially.
+        boolean tier10 = (effectiveVolume > cfg.tier10_volumeThreshold || effectiveMeanDist > cfg.tier10_distThreshold);
+        boolean tier9 = (effectiveVolume > cfg.tier9_volumeThreshold || effectiveMeanDist > cfg.tier9_distThreshold);
+        boolean tier8 = (effectiveVolume > cfg.tier8_volumeThreshold || effectiveMeanDist > cfg.tier8_distThreshold);
+        boolean tier7 = (effectiveVolume > cfg.tier7_volumeThreshold || effectiveMeanDist > cfg.tier7_distThreshold);
+
+        // Smooth enclosure factor for late multiplier scaling: 0.0 at lowEncl (0.4),
+        // 1.0 at highEncl (0.8)
+        float enclBlend = Math.max(0.0f, Math.min(1.0f, (effectiveEnclosure - 0.4f) / 0.4f));
 
         String tierName = "";
         if (tier10) {
             tierName = "TIER 10 (INFINITE CATHEDRAL / VOID)";
+            vDecay *= cfg.tier10_decayMul;
             vGain = Math.max(cfg.tier10_minGain, baseEnclosureMultiplier * cfg.tier10_gainMul);
             vReflGain = Math.max(0.0f, reflectionMaterialFactor * cfg.tier10_reflGainMul);
-            float maxLate10 = effectiveEnclosure > 0.8f
-                    ? cfg.tier10_maxLateMultiplier_highEncl
-                    : cfg.tier10_maxLateMultiplier_lowEncl;
+            float maxLate10 =
+                    lerp(cfg.tier10_maxLateMultiplier_lowEncl, cfg.tier10_maxLateMultiplier_highEncl, enclBlend);
             lateReverbMultiplier =
                     Math.min(cfg.tier10_lateReverbMul + (roomFactor * cfg.tier10_lateReverbRoomScale), maxLate10);
+            vGainHF *= cfg.tier10_hfMul;
+            vGainLF *= cfg.tier10_lfMul;
         } else if (tier9) {
             tierName = "TIER 9 (MEGA COMPLEX / CITY BLOCK)";
+            vDecay *= cfg.tier9_decayMul;
             vGain = Math.max(cfg.tier9_minGain, baseEnclosureMultiplier * cfg.tier9_gainMul);
             vReflGain = Math.max(0.0f, reflectionMaterialFactor * cfg.tier9_reflGainMul);
-            float maxLate9 = effectiveEnclosure > 0.8f
-                    ? cfg.tier9_maxLateMultiplier_highEncl
-                    : cfg.tier9_maxLateMultiplier_lowEncl;
+            float maxLate9 = lerp(cfg.tier9_maxLateMultiplier_lowEncl, cfg.tier9_maxLateMultiplier_highEncl, enclBlend);
             lateReverbMultiplier =
                     Math.min(cfg.tier9_lateReverbMul + (roomFactor * cfg.tier9_lateReverbRoomScale), maxLate9);
+            vGainHF *= cfg.tier9_hfMul;
+            vGainLF *= cfg.tier9_lfMul;
         } else if (tier8) {
             tierName = "TIER 8 (COLOSSAL DOME / HANGAR)";
+            vDecay *= cfg.tier8_decayMul;
             vGain = Math.max(cfg.tier8_minGain, baseEnclosureMultiplier * cfg.tier8_gainMul);
             vReflGain = Math.max(0.0f, reflectionMaterialFactor * cfg.tier8_reflGainMul);
-            float maxLate8 = effectiveEnclosure > 0.8f
-                    ? cfg.tier8_maxLateMultiplier_highEncl
-                    : cfg.tier8_maxLateMultiplier_lowEncl;
+            float maxLate8 = lerp(cfg.tier8_maxLateMultiplier_lowEncl, cfg.tier8_maxLateMultiplier_highEncl, enclBlend);
             lateReverbMultiplier =
                     Math.min(cfg.tier8_lateReverbMul + (roomFactor * cfg.tier8_lateReverbRoomScale), maxLate8);
+            vGainHF *= cfg.tier8_hfMul;
+            vGainLF *= cfg.tier8_lfMul;
         } else if (tier7) {
             tierName = "TIER 7 (MASSIVE STADIUM)";
-            // TIER 7: MASSIVE ENCLOSED STADIUM (Live Tunable)
+            vDecay *= cfg.tier7_decayMul;
             vGain = Math.max(cfg.tier7_minGain, baseEnclosureMultiplier * cfg.tier7_gainMul);
             vReflGain = Math.max(0.0f, reflectionMaterialFactor * cfg.tier7_reflGainMul);
-            float maxLateMultiplier = effectiveEnclosure > 0.8f
-                    ? cfg.tier7_maxLateMultiplier_highEncl
-                    : cfg.tier7_maxLateMultiplier_lowEncl;
+            float maxLateMultiplier =
+                    lerp(cfg.tier7_maxLateMultiplier_lowEncl, cfg.tier7_maxLateMultiplier_highEncl, enclBlend);
             lateReverbMultiplier =
                     Math.min(cfg.tier7_lateReverbMul + (roomFactor * cfg.tier7_lateReverbRoomScale), maxLateMultiplier);
-        } else if ((effectiveVolume > cfg.tier6_volumeThreshold || effectiveMeanDist > cfg.tier6_distThreshold)
-                && !isStronglyOpen) {
+            vGainHF *= cfg.tier7_hfMul;
+            vGainLF *= cfg.tier7_lfMul;
+        } else if (effectiveVolume > cfg.tier6_volumeThreshold || effectiveMeanDist > cfg.tier6_distThreshold) {
             tierName = "TIER 6 (ARENA / CONCERT HALL)";
-            // TIER 6: ARENA / CONCERT HALL (Live Tunable)
+            vDecay *= cfg.tier6_decayMul;
             vGain = Math.max(cfg.tier6_minGain, baseEnclosureMultiplier * cfg.tier6_gainMul);
             vReflGain = Math.max(0.0f, reflectionMaterialFactor * cfg.tier6_reflGainMul);
             lateReverbMultiplier = cfg.tier6_lateReverbMul + (roomFactor * cfg.tier6_lateReverbRoomScale);
+            vGainHF *= cfg.tier6_hfMul;
+            vGainLF *= cfg.tier6_lfMul;
         } else if (effectiveVolume > cfg.tier5_volumeThreshold || effectiveMeanDist > cfg.tier5_distThreshold) {
             tierName = "TIER 5 (LARGE CLUB / GYMNASIUM)";
             // TIER 5: LARGE CLUB / GYMNASIUM (Live Tunable)
+            vDecay *= cfg.tier5_decayMul;
             vGain = Math.max(cfg.tier5_minGain, baseEnclosureMultiplier * cfg.tier5_gainMul);
             vReflGain = Math.max(0.0f, reflectionMaterialFactor * cfg.tier5_reflGainMul);
             lateReverbMultiplier = cfg.tier5_lateReverbMul + (roomFactor * cfg.tier5_lateReverbRoomScale);
+            vGainHF *= cfg.tier5_hfMul;
+            vGainLF *= cfg.tier5_lfMul;
         } else if (effectiveVolume > cfg.tier4_volumeThreshold || effectiveMeanDist > cfg.tier4_distThreshold) {
             tierName = "TIER 4 (LARGE ROOM / SMALL HALL)";
             // TIER 4: LARGE ROOM / SMALL HALL (Live Tunable)
+            vDecay *= cfg.tier4_decayMul;
             vGain = Math.max(cfg.tier4_minGain, baseEnclosureMultiplier * cfg.tier4_gainMul);
             vReflGain = Math.max(0.0f, reflectionMaterialFactor * cfg.tier4_reflGainMul);
             lateReverbMultiplier = cfg.tier4_lateReverbMul + (roomFactor * cfg.tier4_lateReverbRoomScale);
+            vGainHF *= cfg.tier4_hfMul;
+            vGainLF *= cfg.tier4_lfMul;
         } else if (effectiveVolume > cfg.tier3_volumeThreshold || effectiveMeanDist > cfg.tier3_distThreshold) {
             tierName = "TIER 3 (MEDIUM ROOM / STUDIO)";
             // TIER 3: MEDIUM ROOM / STUDIO (Live Tunable)
+            vDecay *= cfg.tier3_decayMul;
             vGain = Math.max(cfg.tier3_minGain, baseEnclosureMultiplier * cfg.tier3_gainMul);
             vReflGain = Math.max(0.0f, reflectionMaterialFactor * cfg.tier3_reflGainMul);
             lateReverbMultiplier = cfg.tier3_lateReverbMul;
+            vGainHF *= cfg.tier3_hfMul;
+            vGainLF *= cfg.tier3_lfMul;
         } else if (effectiveVolume > cfg.tier2_volumeThreshold || effectiveMeanDist > cfg.tier2_distThreshold) {
             tierName = "TIER 2 (SMALL ROOM)";
             // TIER 2: SMALL ROOM (Live Tunable)
+            vDecay *= cfg.tier2_decayMul;
             vGain = Math.max(cfg.tier2_minGain, baseEnclosureMultiplier * cfg.tier2_gainMul);
-            vReflGain =
-                    Math.min(cfg.tier2_reflGainMax, Math.max(0.0f, reflectionMaterialFactor * cfg.tier2_reflGainMul));
+            vReflGain = Math.max(0.0f, reflectionMaterialFactor * cfg.tier2_reflGainMul);
             lateReverbMultiplier = cfg.tier2_lateReverbMul;
+            vGainHF *= cfg.tier2_hfMul;
+            vGainLF *= cfg.tier2_lfMul;
         } else {
             tierName = "TIER 1 (TINY SPACE / CLOSET)";
             // TIER 1: CLOSET / TINY SPACE (Live Tunable)
+            vDecay *= cfg.tier1_decayMul;
             vGain = Math.max(cfg.tier1_minGain, baseEnclosureMultiplier * cfg.tier1_gainMul);
-            vReflGain =
-                    Math.min(cfg.tier1_reflGainMax, Math.max(0.0f, reflectionMaterialFactor * cfg.tier1_reflGainMul));
+            vReflGain = Math.max(0.0f, reflectionMaterialFactor * cfg.tier1_reflGainMul);
             lateReverbMultiplier = cfg.tier1_lateReverbMul;
+            vGainHF *= cfg.tier1_hfMul;
+            vGainLF *= cfg.tier1_lfMul;
         }
 
-        if (isOpenAir) {
-            tierName += " [OPEN AIR]";
+        // Gökyüzüne giden ışınların %50'si toprağa çarptığı için, dümdüz bir ovada bile
+        // açıklık max 0.5 olur.
+        // Oyuncuya daha mantıklı (insan algısına uygun) gelmesi için bunu 2 ile çarpıp
+        // 100 üzerinden gösteriyoruz.
+        int opennessPct = (int) Math.min(100, vOpenness * 200.0f);
+        if (vOpenness > 0.25f) {
+            tierName += String.format(" [AÇIK HAVA: %%%d]", opennessPct);
+        } else if (opennessPct > 2) {
+            tierName += String.format(" [Yarı Açık: %%%d]", opennessPct);
         }
 
         // ─── OPEN AIR: LATE TAIL SUPPRESSION ────────────────────────
         // Sound escapes to the sky — late reverb tail dissipates.
         // Late reverb requires high-order multi-path reflections. In open spaces,
         // energy escapes before forming a tail, so it drops exponentially.
-        float tailRetention = (float) Math.pow(effectiveEnclosure, 2.5);
+        float tailRetention = (float) Math.pow(effectiveEnclosure, cfg.openAir_enclosure_penalty_exponent);
         float openAirTailMultiplier =
                 cfg.openAir_dynamic_lateReverbMul + (tailRetention * (1.0f - cfg.openAir_dynamic_lateReverbMul));
         lateReverbMultiplier *= openAirTailMultiplier;
+        vGainHF *= cfg.openAir_dynamic_hfMul;
+        vGainLF *= cfg.openAir_dynamic_lfMul;
 
         // ─── OPEN AIR: EXTRA GAIN SUPPRESSION ───────────────────────
         // General reverb gain drops as the space opens up, but early reflections
         // (vReflGain) remain strong because they bounce off the immediate ground/walls.
-        if (isOpenAir) {
-            float openSuppression = 1.0f - (vOpenness * 0.6f);
-            vGain *= openSuppression;
-            // Early reflections (vReflGain) are NOT suppressed here!
-        }
+        float openAirGainMultiplier = lerp(1.0f, cfg.openAir_dynamic_gainMul, openAirBlend);
+        vGain *= openAirGainMultiplier;
+
+        float openAirReflMultiplier = lerp(1.0f, cfg.openAir_dynamic_reflGainMul, openAirBlend);
+        vReflGain *= openAirReflMultiplier;
 
         // Global delay and gain calculations
         if (vMeanDist > 10.0f) {
@@ -1106,6 +1089,44 @@ public class AdvancedAcousticScanner {
         vDensity = Math.max(0.4f, Math.min(1.0f, vDensity));
 
         float vDiffusion = 0.3f + d.diffusion * 0.7f;
+
+        // Apply Tier Overrides
+        float tierDensity = -1.0f;
+        float tierDiffusion = -1.0f;
+        if (tierName.contains("TIER 10")) {
+            tierDensity = cfg.tier10_density;
+            tierDiffusion = cfg.tier10_diffusion;
+        } else if (tierName.contains("TIER 9")) {
+            tierDensity = cfg.tier9_density;
+            tierDiffusion = cfg.tier9_diffusion;
+        } else if (tierName.contains("TIER 8")) {
+            tierDensity = cfg.tier8_density;
+            tierDiffusion = cfg.tier8_diffusion;
+        } else if (tierName.contains("TIER 7")) {
+            tierDensity = cfg.tier7_density;
+            tierDiffusion = cfg.tier7_diffusion;
+        } else if (tierName.contains("TIER 6")) {
+            tierDensity = cfg.tier6_density;
+            tierDiffusion = cfg.tier6_diffusion;
+        } else if (tierName.contains("TIER 5")) {
+            tierDensity = cfg.tier5_density;
+            tierDiffusion = cfg.tier5_diffusion;
+        } else if (tierName.contains("TIER 4")) {
+            tierDensity = cfg.tier4_density;
+            tierDiffusion = cfg.tier4_diffusion;
+        } else if (tierName.contains("TIER 3")) {
+            tierDensity = cfg.tier3_density;
+            tierDiffusion = cfg.tier3_diffusion;
+        } else if (tierName.contains("TIER 2")) {
+            tierDensity = cfg.tier2_density;
+            tierDiffusion = cfg.tier2_diffusion;
+        } else if (tierName.contains("TIER 1 ")) {
+            tierDensity = cfg.tier1_density;
+            tierDiffusion = cfg.tier1_diffusion;
+        }
+
+        if (tierDensity >= 0.0f) vDensity = tierDensity;
+        if (tierDiffusion >= 0.0f) vDiffusion = tierDiffusion;
 
         // Dynamic HF Decay Ratio
         float hfRatio = 1.05f - (vAvgAbsorption * 0.45f) - ((1.0f - effectiveEnclosure) * 0.15f);
@@ -1145,6 +1166,8 @@ public class AdvancedAcousticScanner {
      * available).
      */
     public VenuePreset scanAtPosition(World world, Vec3d probePos) {
-        return scanVenue(world, probePos, new Vec3d(1, 0, 0)); // Default: face +X
+        java.util.List<Vec3d> centers = new java.util.ArrayList<>();
+        centers.add(probePos);
+        return scanVenue(world, centers);
     }
 }

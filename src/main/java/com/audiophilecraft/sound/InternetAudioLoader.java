@@ -158,7 +158,10 @@ public class InternetAudioLoader {
         String title = track.getInfo().title;
         var player = playerManager.createPlayer();
         try {
-            player.playTrack(track);
+            // CRITICAL BUGFIX: We MUST clone the track. If the user plays the exact same URL twice,
+            // LavaPlayer uses the cached AudioTrack instance. A track can only be played once,
+            // so without cloning it, the second playback instantly fails and returns no audio!
+            player.playTrack(track.makeClone());
             AudioFrame first = player.provide(5000, java.util.concurrent.TimeUnit.MILLISECONDS);
             if (first != null && first.getFormat() != null) {
                 sampleRate = first.getFormat().sampleRate;

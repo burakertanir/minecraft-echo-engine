@@ -41,15 +41,14 @@ public class AudiophileCraftClient implements ClientModInitializer {
             }
         });
 
-        // Stop Audio on Disconnect (Main Menu)
+        // Stop Audio on Disconnect (Main Menu) — only clean up the local player's session
         net.fabricmc.fabric.api.client.networking.v1.ClientPlayConnectionEvents.DISCONNECT.register(
                 (handler, client) -> {
-                    System.out.println("AudiophileCraft: Disconnected. Stopping Audio Engine.");
+                    System.out.println("AudiophileCraft: Disconnected. Cleaning up audio.");
+                    if (client.player != null) {
+                        com.audiophilecraft.sound.AudioEngine.getInstance().stopSession(client.player.getUuid());
+                    }
                     com.audiophilecraft.sound.AudioEngine.getInstance().cleanupEfx();
-                    // CRITICAL: Clear the speaker registry so positions from the old world
-                    // don't persist into the next world. Without this, stale positions
-                    // resolve to AIR blocks and waste OpenAL sources, causing real speakers
-                    // in the new world to be silently skipped (source limit hit).
                     com.audiophilecraft.registry.SpeakerRegistry.clear();
                     System.out.println("AudiophileCraft: Speaker registry cleared.");
                 });

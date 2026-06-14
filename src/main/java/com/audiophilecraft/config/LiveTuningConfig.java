@@ -52,7 +52,7 @@ public class LiveTuningConfig {
     public float line_refDist = 5.0f;
     public float line_baseMaxDist = 90.0f;
     public float line_rolloffExponent = 2.0f;
-    public float fadeStartPercent = 0.80f;
+    public float fadeStartPercent = 0.8f;
 
     // ════════════════════════════════════════════════════════════
     // CATEGORY 2: DIRECTIONALITY
@@ -60,7 +60,7 @@ public class LiveTuningConfig {
     public float line_hzExp = 1.5f;
     public float line_vtExpBase = 1.5f;
     public float line_vtExpPerSpeaker = 0.3f;
-    public float line_rearGain = 0.50f;
+    public float line_rearGain = 0.5f;
     public float mid_hzExp = 2.2f;
     public float mid_vtExp = 2.0f;
     public float mid_rearGain = 0.35f;
@@ -75,11 +75,11 @@ public class LiveTuningConfig {
     public float occ_varianceBlend = 0.25f;
     public float occ_sub_floor = 0.55f;
     public float occ_mid_floor = 0.38f;
-    public float occ_line_floor = 0.50f;
+    public float occ_line_floor = 0.5f;
     public float occ_lerpIn = 0.35f;
     public float occ_lerpOut = 0.15f;
     public float occ_hfExp_occluding = 1.35f;
-    public float occ_hfExp_deoccluding = 1.10f;
+    public float occ_hfExp_deoccluding = 1.1f;
     public float occ_raycast_flexOffset = 0.75f;
     public float occ_thicknessDecay = 0.85f;
 
@@ -93,10 +93,10 @@ public class LiveTuningConfig {
     // CATEGORY 5: HF DIRECTIONALITY & AIR ABSORPTION
     // ════════════════════════════════════════════════════════════
     public float hf_line_behindFloor = 0.05f;
-    public float hf_line_frontFloor = 0.20f;
-    public float hf_mid_behindFloor = 0.30f;
+    public float hf_line_frontFloor = 0.2f;
+    public float hf_mid_behindFloor = 0.3f;
     public float hf_mid_frontFloor = 0.42f;
-    public float hf_normal_behindFloor = 0.10f;
+    public float hf_normal_behindFloor = 0.1f;
     public float hf_normal_frontFloor = 0.25f;
     public float hf_air_absorb_halving_dist = 145.0f;
 
@@ -108,108 +108,143 @@ public class LiveTuningConfig {
     public float reverb_gainHFMultiplier = 1.0f;
     public float reverb_reflGainMultiplier = 1.0f;
     public float reverb_lateGainMultiplier = 1.0f;
-    public float reverb_densityOverride = -1.0f;
-    public float reverb_diffusionOverride = -1.0f;
+    public float reverb_densityOverride = 1.0f;
+    public float reverb_diffusionOverride = 1.0f;
 
     // Master reverb occlusion
-    public float masterOcc_gainFloor = 0.70f;
+    public float masterOcc_gainFloor = 0.7f;
     public float masterOcc_hfExponent = 1.8f;
     public float masterOcc_lerpIn = 0.35f;
-    public float masterOcc_lerpOut = 0.20f;
+    public float masterOcc_lerpOut = 0.2f;
 
     // ════════════════════════════════════════════════════════════
     // CATEGORY 7: REVERB TIER SYSTEM
     // ════════════════════════════════════════════════════════════
 
-    // --- OPEN AIR DYNAMIC TUNING ---
-    public float openAir_dynamic_minGain = 0.01f;
-    public float openAir_dynamic_reflGainFloor = 0.50f;
-    public float openAir_dynamic_lateReverbMul = 0.00f;
-
     // --- TIER 1: CLOSET ---
     public float tier1_minGain = 0.28f;
-    public float tier1_gainMul = 0.70f;
-    public float tier1_reflGainMul = 0.80f;
-    public float tier1_reflGainMax = 0.85f;
-    public float tier1_lateReverbMul = 1.00f;
+    public float tier1_gainMul = 0.4f;
+    public float tier1_reflGainMul = 0.7f;
+    public float tier1_lateReverbMul = 1.0f;
+    public float tier1_hfMul = 1.0f;
+    public float tier1_lfMul = 1.0f;
+    public float tier1_decayMul = 0.5f;
+    public float tier1_density = -1.0f;
+    public float tier1_diffusion = -1.0f;
 
     // --- TIER 2: SMALL ROOM ---
-    public float tier2_minGain = 0.25f;
-    public float tier2_gainMul = 0.70f;
-    public float tier2_reflGainMul = 1.00f;
-    public float tier2_reflGainMax = 0.95f;
-    public float tier2_lateReverbMul = 1.15f;
+    public float tier2_minGain = 0.4f;
+    public float tier2_gainMul = 0.4f;
+    public float tier2_reflGainMul = 0.3f;
+    public float tier2_lateReverbMul = 1.0f;
+    public float tier2_hfMul = 1.0f;
+    public float tier2_lfMul = 1.0f;
+    public float tier2_decayMul = 0.35f;
+    public float tier2_density = -1.0f;
+    public float tier2_diffusion = -1.0f;
 
     // --- TIER 3: MEDIUM ROOM ---
     public float tier3_minGain = 0.18f;
-    public float tier3_gainMul = 0.65f;
-    public float tier3_reflGainMul = 0.85f;
-    public float tier3_reflGainMax = 1.00f;
-    public float tier3_lateReverbMul = 0.80f;
+    public float tier3_gainMul = 0.4f;
+    public float tier3_reflGainMul = 0.3f;
+    public float tier3_lateReverbMul = 1.0f;
+    public float tier3_hfMul = 1.0f;
+    public float tier3_lfMul = 1.0f;
+    public float tier3_decayMul = 0.34f;
+    public float tier3_density = -1.0f;
+    public float tier3_diffusion = -1.0f;
 
     // --- TIER 4: LARGE ROOM / SMALL HALL ---
     public float tier4_minGain = 0.165f;
-    public float tier4_gainMul = 0.58f;
-    public float tier4_reflGainMul = 0.67f;
-    public float tier4_reflGainMax = 1.00f;
-    public float tier4_lateReverbMul = 0.80f;
-    public float tier4_lateReverbRoomScale = 0.10f;
+    public float tier4_gainMul = 0.34f;
+    public float tier4_reflGainMul = 0.3f;
+    public float tier4_lateReverbMul = 1.0f;
+    public float tier4_hfMul = 1.0f;
+    public float tier4_lfMul = 1.0f;
+    public float tier4_decayMul = 0.38f;
+    public float tier4_lateReverbRoomScale = 0.1f;
+    public float tier4_density = -1.0f;
+    public float tier4_diffusion = -1.0f;
 
     // --- TIER 5: LARGE CLUB ---
     public float tier5_minGain = 0.15f;
-    public float tier5_gainMul = 0.52f;
-    public float tier5_reflGainMul = 0.50f;
-    public float tier5_reflGainMax = 1.00f;
-    public float tier5_lateReverbMul = 0.80f;
-    public float tier5_lateReverbRoomScale = 0.20f;
+    public float tier5_gainMul = 0.33f;
+    public float tier5_reflGainMul = 0.33f;
+    public float tier5_lateReverbMul = 1.0f;
+    public float tier5_hfMul = 1.0f;
+    public float tier5_lfMul = 1.0f;
+    public float tier5_decayMul = 0.37f;
+    public float tier5_lateReverbRoomScale = 0.2f;
+    public float tier5_density = -1.0f;
+    public float tier5_diffusion = -1.0f;
 
     // --- TIER 6: ARENA ---
     public float tier6_minGain = 0.12f;
-    public float tier6_gainMul = 0.55f;
-    public float tier6_reflGainMul = 0.60f;
-    public float tier6_reflGainMax = 1.00f;
-    public float tier6_lateReverbMul = 1.10f;
-    public float tier6_lateReverbRoomScale = 0.30f;
+    public float tier6_gainMul = 0.3f;
+    public float tier6_reflGainMul = 0.3f;
+    public float tier6_lateReverbMul = 1.0f;
+    public float tier6_hfMul = 1.0f;
+    public float tier6_lfMul = 1.0f;
+    public float tier6_decayMul = 0.42f;
+    public float tier6_lateReverbRoomScale = 0.3f;
+    public float tier6_density = -1.0f;
+    public float tier6_diffusion = -1.0f;
 
     // --- TIER 7: MASSIVE STADIUM ---
-    public float tier7_minGain = 0.20f;
-    public float tier7_gainMul = 0.45f;
-    public float tier7_reflGainMul = 0.45f;
-    public float tier7_reflGainMax = 1.00f;
-    public float tier7_lateReverbMul = 1.30f;
-    public float tier7_lateReverbRoomScale = 0.70f;
+    public float tier7_minGain = 0.2f;
+    public float tier7_gainMul = 0.35f;
+    public float tier7_reflGainMul = 0.34f;
+    public float tier7_lateReverbMul = 1.0f;
+    public float tier7_hfMul = 0.8f;
+    public float tier7_lfMul = 1.0f;
+    public float tier7_decayMul = 0.3f;
+    public float tier7_lateReverbRoomScale = 0.4f;
     public float tier7_maxLateMultiplier_highEncl = 2.0f;
     public float tier7_maxLateMultiplier_lowEncl = 2.8f;
+    public float tier7_density = -1.0f;
+    public float tier7_diffusion = -1.0f;
 
     // --- TIER 8: COLOSSAL DOME / HANGAR ---
     public float tier8_minGain = 0.22f;
-    public float tier8_gainMul = 0.40f;
-    public float tier8_reflGainMul = 0.38f;
-    public float tier8_reflGainMax = 1.00f;
-    public float tier8_lateReverbMul = 1.50f;
-    public float tier8_lateReverbRoomScale = 0.80f;
+    public float tier8_gainMul = 0.35f;
+    public float tier8_reflGainMul = 0.36f;
+    public float tier8_lateReverbMul = 1.1f;
+    public float tier8_hfMul = 1.0f;
+    public float tier8_lfMul = 1.0f;
+    public float tier8_decayMul = 0.4f;
+    public float tier8_lateReverbRoomScale = 0.5f;
     public float tier8_maxLateMultiplier_highEncl = 2.5f;
     public float tier8_maxLateMultiplier_lowEncl = 3.5f;
+    public float tier8_density = -1.0f;
+    public float tier8_diffusion = -1.0f;
 
     // --- TIER 9: MEGA COMPLEX / CITY BLOCK ---
     public float tier9_minGain = 0.25f;
-    public float tier9_gainMul = 0.35f;
-    public float tier9_reflGainMul = 0.32f;
-    public float tier9_reflGainMax = 1.00f;
-    public float tier9_lateReverbMul = 1.70f;
-    public float tier9_lateReverbRoomScale = 0.90f;
+    public float tier9_gainMul = 0.45f;
+    public float tier9_reflGainMul = 0.42f;
+    public float tier9_lateReverbMul = 1.3f;
+    public float tier9_hfMul = 0.8f;
+    public float tier9_lfMul = 1.0f;
+    public float tier9_decayMul = 0.4f;
+    public float tier9_lateReverbRoomScale = 0.6f;
     public float tier9_maxLateMultiplier_highEncl = 3.0f;
     public float tier9_maxLateMultiplier_lowEncl = 4.2f;
+    public float tier9_density = -1.0f;
+    public float tier9_diffusion = -1.0f;
 
     // --- TIER 10: INFINITE CATHEDRAL / VOID ---
     public float tier10_minGain = 0.28f;
-    public float tier10_gainMul = 0.30f;
-    public float tier10_reflGainMul = 0.25f;
-    public float tier10_reflGainMax = 1.00f;
-    public float tier10_lateReverbMul = 2.00f;
-    public float tier10_lateReverbRoomScale = 1.00f;
+    public float tier10_gainMul = 0.44f;
+    public float tier10_reflGainMul = 0.42f;
+    public float tier10_lateReverbMul = 1.0f;
+    public float tier10_hfMul = 1.0f;
+    public float tier10_lfMul = 0.8f;
+    public float tier10_decayMul = 0.32f;
+    public float tier10_lateReverbRoomScale = 0.7f;
     public float tier10_maxLateMultiplier_highEncl = 3.5f;
     public float tier10_maxLateMultiplier_lowEncl = 5.0f;
+    public float tier10_density = -1.0f;
+    public float tier10_diffusion = -1.0f;
 
     // Tier Thresholds
     public float tier7_volumeThreshold = 200000.0f;
@@ -232,23 +267,38 @@ public class LiveTuningConfig {
     public float tier2_volumeThreshold = 300.0f;
     public float tier2_distThreshold = 3.0f;
 
-    // Open air thresholds
-    public float openAir_openness_threshold = 0.25f;
-    public float openAir_stronglyOpen_threshold = 0.65f;
-    public float openAir_noCeiling_upClearance = 150.0f;
+    // ════════════════════════════════════════════════════════════
+    // CATEGORY 8: OPEN AIR PHYSICS
+    // ════════════════════════════════════════════════════════════
+    public float openAir_dynamic_gainMul = 0.05f;
+    public float openAir_dynamic_reflGainMul = 0.5f;
+    public float openAir_dynamic_lateReverbMul = 0.2f;
+    public float openAir_dynamic_hfMul = 1.0f;
+    public float openAir_dynamic_lfMul = 1.0f;
+    public float openAir_enclosure_penalty_exponent = 3.5f;
 
     // ════════════════════════════════════════════════════════════
-    // CATEGORY 8: PHYSICS ENGINE
+    // CATEGORY 9: PHYSICS ENGINE
     // ════════════════════════════════════════════════════════════
     public float speedOfSound = 4000.0f;
     public float hrtf_yFlatten = 0.5f;
     public float physics_yFlatten = 0.5f;
     public float sourceRadius_sub = 0.35f;
-    public float sourceRadius_mid = 0.20f;
+    public float sourceRadius_mid = 0.2f;
     public float sourceRadius_line = 0.15f;
-    public float gain_smoothing = 0.60f;
-    public float reverb_send_near = 0.10f;
-    public float reverb_send_far = 0.60f;
+    public float gain_smoothing = 0.6f;
+    public float reverb_send_near = 0.1f;
+    public float reverb_send_far = 0.6f;
+
+    // ════════════════════════════════════════════════════════════
+    // CATEGORY 10: SLAPBACK ECHO
+    // ════════════════════════════════════════════════════════════
+    public float echo_delay = 0.04f;
+    public float echo_damping = 0.7f;
+    public float echo_feedback = 0.3f;
+    public float echo_spread = -0.5f;
+    public float echo_baseGain = 0.05f;
+    public float echo_maxGain = 0.37f;
 
     // ════════════════════════════════════════════════════════════
     // SINGLETON & FILE MANAGEMENT
@@ -622,35 +672,17 @@ public class LiveTuningConfig {
                 w.println("  // ════════════════════════════════════════════════════════════════");
                 w.println();
 
-                // Open Air
-                w.println("  // --- ACIK HAVA DINAMIK AYARLARI ---");
-                w.println(
-                        "  // Acik hava artik Sabine tarafindan hesaplanir, ancak bu carpanlar aciklik oranina bagli eklenebilir.");
-                writeParam(
-                        w,
-                        "openAir_dynamic_minGain",
-                        c.openAir_dynamic_minGain,
-                        "Acik havada minimum yanki hacmi tabani.");
-                writeParam(
-                        w,
-                        "openAir_dynamic_reflGainFloor",
-                        c.openAir_dynamic_reflGainFloor,
-                        "Acik havada yer yansimalari (erken yansima) icin minimum guc.");
-                writeParam(
-                        w,
-                        "openAir_dynamic_lateReverbMul",
-                        c.openAir_dynamic_lateReverbMul,
-                        "Acik havada uzun kuyruk (late reverb) minimum carpani.");
-                w.println();
-
                 // Tier 1
                 w.println("  // --- TIER 1: DOLAP / COK KUCUK ALAN (1-3 blok) ---");
                 w.println("  // Duslarin gibi kucuk bir kutu. Yanki hemen geri gelir.");
                 writeParam(w, "tier1_minGain", c.tier1_minGain, "Minimum yanki hacmi.");
                 writeParam(w, "tier1_gainMul", c.tier1_gainMul, "Yanki hacim carpani.");
                 writeParam(w, "tier1_reflGainMul", c.tier1_reflGainMul, "Erken yansima gucu carpani.");
-                writeParam(w, "tier1_reflGainMax", c.tier1_reflGainMax, "Erken yansima maksimum siniri.");
+
                 writeParam(w, "tier1_lateReverbMul", c.tier1_lateReverbMul, "Gec yanki carpani.");
+                writeParam(w, "tier1_hfMul", c.tier1_hfMul, "Tiz yanki carpani.");
+                writeParam(w, "tier1_lfMul", c.tier1_lfMul, "Bass yanki carpani.");
+                writeParam(w, "tier1_decayMul", c.tier1_decayMul, "Yanki sonumlenme (decay) suresi carpani.");
                 w.println();
 
                 // Tier 2
@@ -659,8 +691,11 @@ public class LiveTuningConfig {
                 writeParam(w, "tier2_minGain", c.tier2_minGain, "Minimum yanki hacmi.");
                 writeParam(w, "tier2_gainMul", c.tier2_gainMul, "Yanki hacim carpani.");
                 writeParam(w, "tier2_reflGainMul", c.tier2_reflGainMul, "Erken yansima gucu carpani.");
-                writeParam(w, "tier2_reflGainMax", c.tier2_reflGainMax, "Erken yansima maksimum siniri.");
+
                 writeParam(w, "tier2_lateReverbMul", c.tier2_lateReverbMul, "Gec yanki carpani.");
+                writeParam(w, "tier2_hfMul", c.tier2_hfMul, "Tiz yanki carpani.");
+                writeParam(w, "tier2_lfMul", c.tier2_lfMul, "Bass yanki carpani.");
+                writeParam(w, "tier2_decayMul", c.tier2_decayMul, "Yanki sonumlenme (decay) suresi carpani.");
                 w.println();
 
                 // Tier 3
@@ -669,8 +704,11 @@ public class LiveTuningConfig {
                 writeParam(w, "tier3_minGain", c.tier3_minGain, "Minimum yanki hacmi.");
                 writeParam(w, "tier3_gainMul", c.tier3_gainMul, "Yanki hacim carpani.");
                 writeParam(w, "tier3_reflGainMul", c.tier3_reflGainMul, "Erken yansima gucu carpani.");
-                writeParam(w, "tier3_reflGainMax", c.tier3_reflGainMax, "Erken yansima maksimum siniri.");
+
                 writeParam(w, "tier3_lateReverbMul", c.tier3_lateReverbMul, "Gec yanki carpani.");
+                writeParam(w, "tier3_hfMul", c.tier3_hfMul, "Tiz yanki carpani.");
+                writeParam(w, "tier3_lfMul", c.tier3_lfMul, "Bass yanki carpani.");
+                writeParam(w, "tier3_decayMul", c.tier3_decayMul, "Yanki sonumlenme (decay) suresi carpani.");
                 w.println();
 
                 // Tier 4
@@ -679,8 +717,11 @@ public class LiveTuningConfig {
                 writeParam(w, "tier4_minGain", c.tier4_minGain, "Minimum yanki hacmi.");
                 writeParam(w, "tier4_gainMul", c.tier4_gainMul, "Yanki hacim carpani.");
                 writeParam(w, "tier4_reflGainMul", c.tier4_reflGainMul, "Erken yansima gucu carpani.");
-                writeParam(w, "tier4_reflGainMax", c.tier4_reflGainMax, "Erken yansima maksimum siniri.");
+
                 writeParam(w, "tier4_lateReverbMul", c.tier4_lateReverbMul, "Gec yanki carpani.");
+                writeParam(w, "tier4_hfMul", c.tier4_hfMul, "Tiz yanki carpani.");
+                writeParam(w, "tier4_lfMul", c.tier4_lfMul, "Bass yanki carpani.");
+                writeParam(w, "tier4_decayMul", c.tier4_decayMul, "Yanki sonumlenme (decay) suresi carpani.");
                 writeParam(
                         w,
                         "tier4_lateReverbRoomScale",
@@ -694,8 +735,11 @@ public class LiveTuningConfig {
                 writeParam(w, "tier5_minGain", c.tier5_minGain, "Minimum yanki hacmi.");
                 writeParam(w, "tier5_gainMul", c.tier5_gainMul, "Yanki hacim carpani.");
                 writeParam(w, "tier5_reflGainMul", c.tier5_reflGainMul, "Erken yansima gucu carpani.");
-                writeParam(w, "tier5_reflGainMax", c.tier5_reflGainMax, "Erken yansima maksimum siniri.");
+
                 writeParam(w, "tier5_lateReverbMul", c.tier5_lateReverbMul, "Gec yanki carpani.");
+                writeParam(w, "tier5_hfMul", c.tier5_hfMul, "Tiz yanki carpani.");
+                writeParam(w, "tier5_lfMul", c.tier5_lfMul, "Bass yanki carpani.");
+                writeParam(w, "tier5_decayMul", c.tier5_decayMul, "Yanki sonumlenme (decay) suresi carpani.");
                 writeParam(
                         w,
                         "tier5_lateReverbRoomScale",
@@ -709,8 +753,11 @@ public class LiveTuningConfig {
                 writeParam(w, "tier6_minGain", c.tier6_minGain, "Minimum yanki hacmi.");
                 writeParam(w, "tier6_gainMul", c.tier6_gainMul, "Yanki hacim carpani.");
                 writeParam(w, "tier6_reflGainMul", c.tier6_reflGainMul, "Erken yansima gucu carpani.");
-                writeParam(w, "tier6_reflGainMax", c.tier6_reflGainMax, "Erken yansima maksimum siniri.");
+
                 writeParam(w, "tier6_lateReverbMul", c.tier6_lateReverbMul, "Gec yanki carpani.");
+                writeParam(w, "tier6_hfMul", c.tier6_hfMul, "Tiz yanki carpani.");
+                writeParam(w, "tier6_lfMul", c.tier6_lfMul, "Bass yanki carpani.");
+                writeParam(w, "tier6_decayMul", c.tier6_decayMul, "Yanki sonumlenme (decay) suresi carpani.");
                 writeParam(
                         w,
                         "tier6_lateReverbRoomScale",
@@ -724,8 +771,11 @@ public class LiveTuningConfig {
                 writeParam(w, "tier7_minGain", c.tier7_minGain, "Minimum yanki hacmi.");
                 writeParam(w, "tier7_gainMul", c.tier7_gainMul, "Yanki hacim carpani.");
                 writeParam(w, "tier7_reflGainMul", c.tier7_reflGainMul, "Erken yansima gucu carpani.");
-                writeParam(w, "tier7_reflGainMax", c.tier7_reflGainMax, "Erken yansima maksimum siniri.");
+
                 writeParam(w, "tier7_lateReverbMul", c.tier7_lateReverbMul, "Gec yanki carpani. Stadyum epic kuyrugu.");
+                writeParam(w, "tier7_hfMul", c.tier7_hfMul, "Tiz yanki carpani.");
+                writeParam(w, "tier7_lfMul", c.tier7_lfMul, "Bass yanki carpani.");
+                writeParam(w, "tier7_decayMul", c.tier7_decayMul, "Yanki sonumlenme (decay) suresi carpani.");
                 writeParam(
                         w,
                         "tier7_lateReverbRoomScale",
@@ -750,8 +800,11 @@ public class LiveTuningConfig {
                 writeParam(w, "tier8_minGain", c.tier8_minGain, "Minimum yanki hacmi.");
                 writeParam(w, "tier8_gainMul", c.tier8_gainMul, "Yanki hacim carpani.");
                 writeParam(w, "tier8_reflGainMul", c.tier8_reflGainMul, "Erken yansima gucu carpani.");
-                writeParam(w, "tier8_reflGainMax", c.tier8_reflGainMax, "Erken yansima maksimum siniri.");
+
                 writeParam(w, "tier8_lateReverbMul", c.tier8_lateReverbMul, "Gec yanki carpani.");
+                writeParam(w, "tier8_hfMul", c.tier8_hfMul, "Tiz yanki carpani.");
+                writeParam(w, "tier8_lfMul", c.tier8_lfMul, "Bass yanki carpani.");
+                writeParam(w, "tier8_decayMul", c.tier8_decayMul, "Yanki sonumlenme (decay) suresi carpani.");
                 writeParam(
                         w, "tier8_lateReverbRoomScale", c.tier8_lateReverbRoomScale, "Oda boyutunun gec yanki etkisi.");
                 writeParam(
@@ -772,8 +825,11 @@ public class LiveTuningConfig {
                 writeParam(w, "tier9_minGain", c.tier9_minGain, "Minimum yanki hacmi.");
                 writeParam(w, "tier9_gainMul", c.tier9_gainMul, "Yanki hacim carpani.");
                 writeParam(w, "tier9_reflGainMul", c.tier9_reflGainMul, "Erken yansima gucu carpani.");
-                writeParam(w, "tier9_reflGainMax", c.tier9_reflGainMax, "Erken yansima maksimum siniri.");
+
                 writeParam(w, "tier9_lateReverbMul", c.tier9_lateReverbMul, "Gec yanki carpani.");
+                writeParam(w, "tier9_hfMul", c.tier9_hfMul, "Tiz yanki carpani.");
+                writeParam(w, "tier9_lfMul", c.tier9_lfMul, "Bass yanki carpani.");
+                writeParam(w, "tier9_decayMul", c.tier9_decayMul, "Yanki sonumlenme (decay) suresi carpani.");
                 writeParam(
                         w, "tier9_lateReverbRoomScale", c.tier9_lateReverbRoomScale, "Oda boyutunun gec yanki etkisi.");
                 writeParam(
@@ -794,8 +850,11 @@ public class LiveTuningConfig {
                 writeParam(w, "tier10_minGain", c.tier10_minGain, "Minimum yanki hacmi.");
                 writeParam(w, "tier10_gainMul", c.tier10_gainMul, "Yanki hacim carpani.");
                 writeParam(w, "tier10_reflGainMul", c.tier10_reflGainMul, "Erken yansima gucu carpani.");
-                writeParam(w, "tier10_reflGainMax", c.tier10_reflGainMax, "Erken yansima maksimum siniri.");
+
                 writeParam(w, "tier10_lateReverbMul", c.tier10_lateReverbMul, "Gec yanki carpani.");
+                writeParam(w, "tier10_hfMul", c.tier10_hfMul, "Tiz yanki carpani.");
+                writeParam(w, "tier10_lfMul", c.tier10_lfMul, "Bass yanki carpani.");
+                writeParam(w, "tier10_decayMul", c.tier10_decayMul, "Yanki sonumlenme (decay) suresi carpani.");
                 writeParam(
                         w,
                         "tier10_lateReverbRoomScale",
@@ -848,28 +907,43 @@ public class LiveTuningConfig {
                         w, "tier10_volumeThreshold", c.tier10_volumeThreshold, "Tier 10 icin minimum hacim (blok^3).");
                 writeParam(w, "tier10_distThreshold", c.tier10_distThreshold, "Tier 10 icin minimum mesafe (blok).");
 
-                // Open Air Thresholds
-                w.println("  // --- ACIK HAVA ESIKLERI ---");
-                writeParam(
-                        w,
-                        "openAir_openness_threshold",
-                        c.openAir_openness_threshold,
-                        "Bu aciklik oraninin ustu = 'yari acik hava' sayilir.");
-                writeParam(
-                        w,
-                        "openAir_stronglyOpen_threshold",
-                        c.openAir_stronglyOpen_threshold,
-                        "Bu aciklik oraninin ustu = 'tam acik hava festivali' moduna gecer.");
-                writeParam(
-                        w,
-                        "openAir_noCeiling_upClearance",
-                        c.openAir_noCeiling_upClearance,
-                        "Yukari kac blok bos olursa 'tavan yok' sayilir.");
-                w.println();
-
                 // ─── CATEGORY 8 ───
                 w.println("  // ════════════════════════════════════════════════════════════════");
-                w.println("  // BOLUM 8: FIZIK MOTORU");
+                w.println("  // BOLUM 8: ACIK HAVA (OPEN AIR) FIZIGI");
+                w.println("  // Acik hava algilanma esikleri ve acik hava dinamiklerini kontrol eder.");
+                w.println("  // ════════════════════════════════════════════════════════════════");
+                w.println();
+                w.println("  // --- ACIK HAVA ESIKLERI ---");
+
+                writeParam(
+                        w,
+                        "openAir_enclosure_penalty_exponent",
+                        c.openAir_enclosure_penalty_exponent,
+                        "Odanin kapalilik ceza carpani.");
+                w.println();
+                w.println("  // --- ACIK HAVA DINAMIKLERI ---");
+                writeParam(
+                        w,
+                        "openAir_dynamic_gainMul",
+                        c.openAir_dynamic_gainMul,
+                        "Acik havada ana yanki hacmi carpani.");
+                writeParam(
+                        w,
+                        "openAir_dynamic_reflGainMul",
+                        c.openAir_dynamic_reflGainMul,
+                        "Acik havada erken yansima (reflGain) carpani.");
+                writeParam(
+                        w,
+                        "openAir_dynamic_lateReverbMul",
+                        c.openAir_dynamic_lateReverbMul,
+                        "Acik havada uzun kuyruk (late reverb) minimum carpani.");
+                writeParam(w, "openAir_dynamic_hfMul", c.openAir_dynamic_hfMul, "Acik hava tiz carpani.");
+                writeParam(w, "openAir_dynamic_lfMul", c.openAir_dynamic_lfMul, "Acik hava bass carpani.");
+                w.println();
+
+                // ─── CATEGORY 9 ───
+                w.println("  // ════════════════════════════════════════════════════════════════");
+                w.println("  // BOLUM 9: FIZIK MOTORU");
                 w.println("  // Sesin fiziksel davranisini kontrol eden temel parametreler.");
                 w.println("  // ════════════════════════════════════════════════════════════════");
                 w.println();
@@ -901,11 +975,31 @@ public class LiveTuningConfig {
                         c.gain_smoothing,
                         "Hacim gecis yumusakligi. Dusuk=yavas/yumusak, Yuksek=hizli/anlik.");
                 writeParam(w, "reverb_send_near", c.reverb_send_near, "Yakin mesafede yankiya gonderilen ses miktari.");
-                writeLastParam(
+                writeParam(
                         w,
                         "reverb_send_far",
                         c.reverb_send_far,
                         "Uzak mesafede yankiya gonderilen ses miktari. Uzakta yanki baskin olur.");
+
+                w.println();
+
+                // ─── CATEGORY 10 ───
+                w.println("  // ════════════════════════════════════════════════════════════════");
+                w.println("  // BOLUM 10: SLAPBACK ECHO (Geri Sekme Yankisi)");
+                w.println("  // Stadyum/vadi gibi alanlarda yasanan net ses sekmelerini kontrol eder.");
+                w.println("  // ════════════════════════════════════════════════════════════════");
+                w.println();
+                writeParam(w, "echo_delay", c.echo_delay, "Eko gecikmesi (saniye). Ornek: 0.04 = 40ms tokatlama eko.");
+                writeParam(w, "echo_damping", c.echo_damping, "Tizlerin sonumlenmesi. 0.0=cok parlak, 0.9=cok boguk.");
+                writeParam(
+                        w,
+                        "echo_feedback",
+                        c.echo_feedback,
+                        "Eko kuyrugu (tekrar sayisi). 0.0=tek tokat, 0.9=uzun eko.");
+                writeParam(w, "echo_spread", c.echo_spread, "Stereo sahne genisligi. -1.0=asiri daginik, 0.0=merkez.");
+                writeParam(
+                        w, "echo_baseGain", c.echo_baseGain, "Ekonun en uzak mesafedeki (acik havada) gucu (Minimum).");
+                writeLastParam(w, "echo_maxGain", c.echo_maxGain, "Ekonun duvara en yakin oldugundaki maksimum gucu.");
 
                 w.println("}");
             }

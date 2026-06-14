@@ -39,6 +39,8 @@ public class ModMessages {
     public static final Identifier S2C_SYNC_MIXER_GAIN = new Identifier(AudiophileCraft.MOD_ID, "s2c_sync_mixer_gain");
     public static final Identifier C2S_STOP_AUDIO = new Identifier(AudiophileCraft.MOD_ID, "c2s_stop_audio");
     public static final Identifier S2C_STOP_AUDIO = new Identifier(AudiophileCraft.MOD_ID, "s2c_stop_audio");
+    public static final Identifier C2S_TOGGLE_PAUSE = new Identifier(AudiophileCraft.MOD_ID, "c2s_toggle_pause");
+    public static final Identifier S2C_TOGGLE_PAUSE = new Identifier(AudiophileCraft.MOD_ID, "s2c_toggle_pause");
 
     /** Helper: get the tablet ItemStack from the player's hand ordinal */
     private static ItemStack getTabletStack(net.minecraft.server.network.ServerPlayerEntity player, int handOrdinal) {
@@ -76,8 +78,9 @@ public class ModMessages {
                         if (stack.getItem() instanceof AmplifierTabletItem) {
                             String testTrackId = "music/test_track";
                             UUID ownerUUID = player.getUuid();
-                            // Only find speakers owned by this player
-                            List<BlockPos> speakers = SpeakerRegistry.findSpeakersByOwner(ownerUUID);
+                            // Only find speakers owned by this player, in their dimension
+                            List<BlockPos> speakers = SpeakerRegistry.findSpeakersByOwner(
+                                    player.getWorld().getRegistryKey(), ownerUUID);
                             float power = AmplifierTabletItem.getSpeakerPower(stack);
                             float inputGain = AmplifierTabletItem.getInputGain(stack);
                             // Broadcast to all online players so everyone hears the music
@@ -97,8 +100,9 @@ public class ModMessages {
                 ItemStack stack = getTabletStack(player, handOrdinal);
                 if (stack.getItem() instanceof AmplifierTabletItem) {
                     UUID ownerUUID = player.getUuid();
-                    // Only find speakers owned by this player
-                    List<BlockPos> speakers = SpeakerRegistry.findSpeakersByOwner(ownerUUID);
+                    // Only find speakers owned by this player, in their dimension
+                    List<BlockPos> speakers = SpeakerRegistry.findSpeakersByOwner(
+                            player.getWorld().getRegistryKey(), ownerUUID);
                     float power = AmplifierTabletItem.getSpeakerPower(stack);
                     float inputGain = AmplifierTabletItem.getInputGain(stack);
                     // Broadcast to all online players so everyone hears the music
@@ -259,6 +263,17 @@ public class ModMessages {
                 });
             });
         });
+
+        // Toggle Pause Audio - broadcast to all players
+        ServerPlayNetworking.registerGlobalReceiver(
+                C2S_TOGGLE_PAUSE, (server, player, handler, buf, responseSender) -> {
+                    server.execute(() -> {
+                        UUID ownerUUID = player.getUuid();
+                        broadcastToAll(server, S2C_TOGGLE_PAUSE, syncBuf -> {
+                            syncBuf.writeUuid(ownerUUID);
+                        });
+                    });
+                });
     }
 
     public static void registerS2CPackets() {
@@ -369,6 +384,15 @@ public class ModMessages {
             client.execute(() -> {
                 com.audiophilecraft.sound.AudioEngine engine = com.audiophilecraft.sound.AudioEngine.getInstance();
                 engine.stopSession(sessionUUID);
+            });
+        });
+
+        // Toggle Pause Sync - scoped to session UUID
+        ClientPlayNetworking.registerGlobalReceiver(S2C_TOGGLE_PAUSE, (client, handler, buf, responseSender) -> {
+            UUID sessionUUID = buf.readUuid();
+            client.execute(() -> {
+                com.audiophilecraft.sound.AudioEngine engine = com.audiophilecraft.sound.AudioEngine.getInstance();
+                engine.toggleManualPause(sessionUUID);
             });
         });
     }

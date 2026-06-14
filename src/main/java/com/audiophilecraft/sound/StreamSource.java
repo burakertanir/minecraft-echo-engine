@@ -52,6 +52,7 @@ public class StreamSource {
     public final String speakerType;
     public final int filterId;
     public final int sendFilterId;
+    public final int echoSendFilterId;
     public final int sampleShiftMs;
     public final int speakerCount;
     public float targetOcclusion = 1.0f;
@@ -86,6 +87,7 @@ public class StreamSource {
         this.isFinished = false;
         this.isValid = true;
     }
+
     // Fast fade-in to prevent harsh waveform snap-pops on manual seeks
     private long seekFadeSamplesRemaining = 0;
 
@@ -103,6 +105,7 @@ public class StreamSource {
             String speakerType,
             int filterId,
             int sendFilterId,
+            int echoSendFilterId,
             float inputGain,
             int sampleShiftMs,
             int speakerCount,
@@ -123,6 +126,7 @@ public class StreamSource {
         this.speakerType = speakerType;
         this.filterId = filterId;
         this.sendFilterId = sendFilterId;
+        this.echoSendFilterId = echoSendFilterId;
         this.sampleShiftMs = sampleShiftMs;
         this.speakerCount = speakerCount;
         this.clusterSize = clusterSize;
@@ -900,13 +904,25 @@ public class StreamSource {
             directGainHF = directGain;
         }
 
-        // Native subwoofer crossover filter: Subwooferların fiziki doğası gereği
-        // tizleri tamamen keser.
+        // Native subwoofer crossover filter
         if ("sub".equals(this.speakerType)) {
             directGainHF = Math.min(directGainHF, 0.05f);
         }
 
         float unmutedDirectGainHF = directGainHF; // Save HF before direct mute for Reverb Send
+
+        // ═══════════════════════════════════════════════════════════════
+        // REVERB HF SEND DECOUPLING
+        // ═══════════════════════════════════════════════════════════════
+        // The reverb's treble should NOT drop when the listener walks behind the speaker!
+        // The speaker still shoots full treble into the venue, so the room's reverberant
+        // field will contain that treble.
+        float reverbSendHF = gainHF * occlusionHF * underwaterHF * airAbsorbHF;
+        if (reverbSendHF < 0.01f) reverbSendHF = 0.01f;
+        if (reverbSendHF > 1.0f) reverbSendHF = 1.0f;
+        if ("sub".equals(this.speakerType)) {
+            reverbSendHF = Math.min(reverbSendHF, 0.05f);
+        }
 
         if (filterId != 0) {
             // Apply Mid (Direct Sound) Mute
@@ -928,24 +944,26 @@ public class StreamSource {
             // PHYSICALLY ACCURATE VENUE REVERB MODEL
             // ═══════════════════════════════════════════════════════════════
             // Real acoustics: The reverberant field in a venue is roughly
-            // CONSTANT throughout the enclosed space. Only direct sound drops
-            // with distance. So as you move away from speakers:
+            // CONSTANT throughout the enclosed space. It scales linearly with
+            // the speaker's POWER.
+            // As you move away from speakers:
             // - Direct sound drops (inverse-square)
             // - Reverb stays roughly the same
-            // - Result: Wet/Dry ratio INCREASES with distance
-            // - At "critical distance": Wet = Dry
-            // - Beyond critical distance: Wet dominates
+            // - Result: Wet/Dry ratio INCREASES with distance NATURALLY.
+            // There is no need to artificially change the reverb send based on distance.
 
-            // 1. Wet/Dry RATIO increases with distance
-            float reverbEnergy = Math.min(1.0f, (float) Math.sqrt(attenuation));
-            float roomSend =
-                    cfg.reverb_send_near + ((1.0f - reverbEnergy) * (cfg.reverb_send_far - cfg.reverb_send_near));
+            // 1. Base Room Send (proportional to Speaker Power)
+            // We use a combination of the old config values as a base volume multiplier.
+            float baseReverbVolume = (cfg.reverb_send_near + cfg.reverb_send_far) * 0.5f;
+            float powerScaledSend = baseReverbVolume * this.smoothedPower;
 
-            // 2. SOFT distance falloff: reverb drops MUCH slower than direct sound
-            float softDistanceFalloff = (float) Math.pow(Math.max(0.001f, attenuation), 0.25f);
+            // 2. SOFT distance falloff: Reverb shouldn't drop when walking around the room,
+            // but it MUST fade out eventually when you walk extremely far away, otherwise
+            // open-air venues will have infinite phantom reverb.
+            float softDistanceFalloff = (float) Math.pow(Math.max(0.001f, attenuation), 0.15f); // Very gentle falloff
 
-            // 3. Combine: occlusion × ratio × soft falloff
-            float sendGain = reverbOcclusion * roomSend * softDistanceFalloff;
+            // 3. Combine: occlusion × power scaled send × soft falloff
+            float sendGain = reverbOcclusion * powerScaledSend * softDistanceFalloff;
 
             // 4. WET FLOOR: minimum reverb level inside the venue
             float wetFloor = 0.04f * reverbOcclusion;
@@ -959,14 +977,15 @@ public class StreamSource {
                 sendGain = 0.0f;
             }
 
-            // Apply Mixer Gain — OpenAL EFX aux sends are independent from AL_GAIN,
-            // so the reverb path must also respect the mixer pot position.
-            sendGain *= mixerGain;
+            // NORMALIZE WET GAIN BY ARRAY SIZE:
+            // 100 speakers sending audio to the same OpenAL effect slot will accumulate 100x
+            // the energy in the effect's input buffer, causing clipping and a massive WET/DRY imbalance.
+            // We divide by sqrt(clusterSize) to normalize the acoustic power for Reverb.
+            sendGain /= (float) Math.max(1.0, Math.sqrt(this.clusterSize));
 
             // Apply filter for Room Send
             org.lwjgl.openal.EXTEfx.alFilterf(sendFilterId, org.lwjgl.openal.EXTEfx.AL_LOWPASS_GAIN, sendGain);
-            org.lwjgl.openal.EXTEfx.alFilterf(
-                    sendFilterId, org.lwjgl.openal.EXTEfx.AL_LOWPASS_GAINHF, unmutedDirectGainHF);
+            org.lwjgl.openal.EXTEfx.alFilterf(sendFilterId, org.lwjgl.openal.EXTEfx.AL_LOWPASS_GAINHF, reverbSendHF);
 
             // Send 0: Room Reverb
             org.lwjgl.openal.AL11.alSource3i(
@@ -975,6 +994,31 @@ public class StreamSource {
                     AudioEngine.getInstance().getAuxSlotId(),
                     0,
                     sendFilterId);
+
+            // Send 1: Slapback Echo (uses its own dedicated filter to avoid
+            // gain interference with the reverb send filter)
+            if (AudioEngine.getInstance().getSlapbackAuxSlotId() != 0 && echoSendFilterId != 0) {
+                // Echo send uses same occlusion but independent gain path.
+                // It multiplies the base distance/occlusion send gain by the listener's
+                // dynamic wall-proximity echo gain.
+                float echoSendGain = sendGain * AudioEngine.getInstance().getSlapbackGain();
+
+                // NORMALIZE WET GAIN BY ARRAY SIZE:
+                // 100 speakers sending audio to the same OpenAL effect slot will accumulate 100x
+                // the energy in the effect's input buffer, causing clipping and a massive WET/DRY imbalance.
+                // We divide by sqrt(clusterSize) to normalize the acoustic power.
+                echoSendGain /= (float) Math.max(1.0, Math.sqrt(this.clusterSize));
+                org.lwjgl.openal.EXTEfx.alFilterf(
+                        echoSendFilterId, org.lwjgl.openal.EXTEfx.AL_LOWPASS_GAIN, echoSendGain);
+                org.lwjgl.openal.EXTEfx.alFilterf(
+                        echoSendFilterId, org.lwjgl.openal.EXTEfx.AL_LOWPASS_GAINHF, reverbSendHF);
+                org.lwjgl.openal.AL11.alSource3i(
+                        sourceId,
+                        org.lwjgl.openal.EXTEfx.AL_AUXILIARY_SEND_FILTER,
+                        AudioEngine.getInstance().getSlapbackAuxSlotId(),
+                        1,
+                        echoSendFilterId);
+            }
         }
     }
 
@@ -1284,6 +1328,7 @@ public class StreamSource {
         try {
             if (filterId != 0) org.lwjgl.openal.EXTEfx.alDeleteFilters(filterId);
             if (sendFilterId != 0) org.lwjgl.openal.EXTEfx.alDeleteFilters(sendFilterId);
+            if (echoSendFilterId != 0) org.lwjgl.openal.EXTEfx.alDeleteFilters(echoSendFilterId);
         } catch (Exception e) {
             System.err.println("StreamSource: Failed to delete filters: " + e.getMessage());
         }

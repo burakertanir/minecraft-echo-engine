@@ -130,9 +130,11 @@ public class SpeakerBlockEntity extends BlockEntity implements ExtendedScreenHan
             ownerUUID = nbt.getUuid("OwnerUUID");
         }
 
-        // Register in global registry on world load
+        // Register in global registry with dimension on world load
 
-        com.audiophilecraft.registry.SpeakerRegistry.registerSpeaker(pos, ownerUUID);
+        if (world != null) {
+            com.audiophilecraft.registry.SpeakerRegistry.registerSpeaker(world, pos, ownerUUID);
+        }
     }
 
     @Nullable

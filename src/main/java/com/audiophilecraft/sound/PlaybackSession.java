@@ -42,8 +42,10 @@ public class PlaybackSession {
 
     // Playback control
     private volatile boolean isPaused = false;
+    private volatile boolean isManuallyPaused = false;
     private volatile boolean isSeeking = false;
     private volatile int trackGeneration = 0;
+    private volatile String playUrl = "";
 
     // Mixer
     private volatile float mixerGainSub = 1.0f;
@@ -162,12 +164,28 @@ public class PlaybackSession {
         this.isPaused = p;
     }
 
+    public boolean isManuallyPaused() {
+        return isManuallyPaused;
+    }
+
+    public void setManuallyPaused(boolean p) {
+        this.isManuallyPaused = p;
+    }
+
     public boolean isSeeking() {
         return isSeeking;
     }
 
     public void setSeeking(boolean s) {
         this.isSeeking = s;
+    }
+
+    public String getPlayUrl() {
+        return playUrl;
+    }
+
+    public void setPlayUrl(String url) {
+        this.playUrl = url;
     }
 
     public int getTrackGeneration() {
@@ -288,6 +306,10 @@ public class PlaybackSession {
         streamSources.clear();
         streamBuffers.clear();
         isPlaying = false;
+        isPaused = false;
+        isManuallyPaused = false;
+        playUrl = ""; // Clear stale URL so the UI won't confuse "same URL stopped" with "still active"
+        streamStartTime = 0;
         venuePreset = null;
         venuePresetApplied = false;
     }

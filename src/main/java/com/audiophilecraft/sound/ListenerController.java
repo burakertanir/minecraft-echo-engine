@@ -60,15 +60,12 @@ public class ListenerController {
     /**
      * Updates listener position and orientation. Called every render frame.
      */
-    public void update(Vec3d pos, float yaw, float pitch) {
+    public void update(Vec3d pos, float yaw, float pitch, float flattenedY) {
         this.position = pos;
         this.yaw = yaw;
         this.pitch = pitch;
 
-        // HRTF Y-flatten: caller provides the flattened Y position
-        float openAlListenerY = (float) pos.y;
-
-        alListener3f(AL_POSITION, (float) pos.x, openAlListenerY, (float) pos.z);
+        alListener3f(AL_POSITION, (float) pos.x, flattenedY, (float) pos.z);
         alListener3f(AL_VELOCITY, 0f, 0f, 0f);
 
         // Orientation calculation
@@ -116,19 +113,5 @@ public class ListenerController {
         }
         float targetHF = isUnderwater ? 0.08f : 1.0f;
         underwaterHFGain += (targetHF - underwaterHFGain) * 0.15f;
-    }
-
-    /**
-     * Smooth the listener position (lock-free volatile write).
-     * Called by audio thread at 200Hz to eat Minecraft's per-frame jitter.
-     */
-    public void smoothPosition() {
-        Vec3d raw = this.position;
-        Vec3d prev = this.smoothedPosition;
-        double alpha = 0.35;
-        this.smoothedPosition = new Vec3d(
-                prev.x + (raw.x - prev.x) * alpha,
-                prev.y + (raw.y - prev.y) * alpha,
-                prev.z + (raw.z - prev.z) * alpha);
     }
 }

@@ -51,15 +51,15 @@ public class SpeakerBlock extends Block implements BlockEntityProvider {
     public void onPlaced(
             World world, BlockPos pos, BlockState state, @Nullable LivingEntity placer, ItemStack itemStack) {
         if (!world.isClient) {
-            // Register in global registry with owner UUID
+            // Register in global registry with owner UUID and dimension
             if (placer instanceof net.minecraft.entity.player.PlayerEntity player) {
-                SpeakerRegistry.registerSpeaker(pos, player.getUuid());
+                SpeakerRegistry.registerSpeaker(world, pos, player.getUuid());
                 net.minecraft.block.entity.BlockEntity be = world.getBlockEntity(pos);
                 if (be instanceof com.audiophilecraft.block.entity.SpeakerBlockEntity speaker) {
                     speaker.setOwnerUUID(player.getUuid());
                 }
             } else {
-                SpeakerRegistry.registerSpeaker(pos);
+                SpeakerRegistry.registerSpeaker(world.getRegistryKey(), pos);
             }
         }
     }
