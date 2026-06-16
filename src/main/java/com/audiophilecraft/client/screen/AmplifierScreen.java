@@ -128,10 +128,7 @@ public class AmplifierScreen extends HandledScreen<AmplifierScreenHandler> {
         urlField.setMaxLength(2048);
         urlField.setPlaceholder(Text.literal("Search a song name or paste a track URL..."));
         // Restore persistent search box state
-        // For direct URLs, always show the raw URL (not the resolved title)
-        if (!activePlayUrl.isEmpty() && activePlayUrl.startsWith("http")) {
-            urlField.setText(activePlayUrl);
-        } else if (!activeDisplayTitle.isEmpty()) {
+        if (!activeDisplayTitle.isEmpty()) {
             urlField.setText(activeDisplayTitle);
         } else if (!activePlayUrl.isEmpty()) {
             urlField.setText(activePlayUrl);
@@ -285,7 +282,7 @@ public class AmplifierScreen extends HandledScreen<AmplifierScreenHandler> {
             }
         }
         // Mid/Side Toggles
-        int midSideY = startY + 6 * 22 + 20;
+        int midSideY = startY + 6 * 22 + 35;
         midButton =
                 new TransparentButton(x + (backgroundWidth / 2) - 60, midSideY, 50, 20, getMidButtonText(), button -> {
                     boolean current =
@@ -832,6 +829,8 @@ public class AmplifierScreen extends HandledScreen<AmplifierScreenHandler> {
     @Override
     public void render(DrawContext context, int mouseX, int mouseY, float delta) {
         renderBackground(context);
+        // Update peak meter ballistics every frame for butter-smooth animation
+        com.audiophilecraft.sound.PeakMeter.getInstance().update();
         super.render(context, mouseX, mouseY, delta);
         if (isMapOpen) {
             int startX = (width - backgroundWidth) / 2;
@@ -905,6 +904,63 @@ public class AmplifierScreen extends HandledScreen<AmplifierScreenHandler> {
                 context.drawText(textRenderer, labels[col], drawX, drawY, currentAdaptiveThemeColor, false);
             }
             context.getMatrices().pop();
+
+            // ═══════════════════════════════════════════════════════════
+            // LIVE PEAK METERS — Rendered above each column's volume slider
+            // ═══════════════════════════════════════════════════════════
+            com.audiophilecraft.sound.PeakMeter meter = com.audiophilecraft.sound.PeakMeter.getInstance();
+            String[] meterTypes = {"sub", "mid", "line"};
+            int meterHeight = 6;
+            // Place meter below the 6th slider (EQ5) and above Mid/Side buttons
+            int meterY = startY + 143;
+            for (int col = 0; col < 3; col++) {
+                int cx = startX + col * colWidth + 10;
+                int meterWidth = colWidth - 20;
+                float peak = meter.getDisplayPeak(meterTypes[col]);
+                float hold = meter.getHoldPeak(meterTypes[col]);
+
+                // Background track (dark)
+                context.fill(cx, meterY, cx + meterWidth, meterY + meterHeight, 0xFF1A1A1A);
+
+                // Filled bar with color zones
+                int filledWidth = (int) (peak * meterWidth);
+                if (filledWidth > 0) {
+                    // Green zone: 0% — 60%
+                    int greenEnd = Math.min(filledWidth, (int) (meterWidth * 0.6f));
+                    if (greenEnd > 0) {
+                        context.fill(cx, meterY, cx + greenEnd, meterY + meterHeight, 0xFF00CC66);
+                    }
+                    // Yellow zone: 60% — 85%
+                    if (filledWidth > (int) (meterWidth * 0.6f)) {
+                        int yellowStart = (int) (meterWidth * 0.6f);
+                        int yellowEnd = Math.min(filledWidth, (int) (meterWidth * 0.85f));
+                        if (yellowEnd > yellowStart) {
+                            context.fill(cx + yellowStart, meterY, cx + yellowEnd, meterY + meterHeight, 0xFFFFCC00);
+                        }
+                    }
+                    // Red zone: 85% — 100%
+                    if (filledWidth > (int) (meterWidth * 0.85f)) {
+                        int redStart = (int) (meterWidth * 0.85f);
+                        context.fill(cx + redStart, meterY, cx + filledWidth, meterY + meterHeight, 0xFFFF3333);
+                    }
+                }
+
+                // Peak hold line (thin white line)
+                int holdX = (int) (hold * meterWidth);
+                if (holdX > 0 && holdX < meterWidth) {
+                    int holdColor = hold > 0.85f ? 0xFFFF5555 : 0xFFFFFFFF;
+                    context.fill(cx + holdX, meterY, cx + holdX + 1, meterY + meterHeight, holdColor);
+                }
+
+                // Thin border
+                context.fill(cx, meterY, cx + meterWidth, meterY + 1, currentAdaptiveThemeColor & 0x33FFFFFF);
+                context.fill(
+                        cx,
+                        meterY + meterHeight - 1,
+                        cx + meterWidth,
+                        meterY + meterHeight,
+                        currentAdaptiveThemeColor & 0x33FFFFFF);
+            }
 
             // Draw subtle column dividers
             for (int col = 1; col < 3; col++) {

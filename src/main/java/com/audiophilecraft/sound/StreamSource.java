@@ -285,7 +285,7 @@ public class StreamSource {
         double spkY = pos.getY() + 0.5;
         double spkZ = pos.getZ() + 0.5;
         double dx = spkX - listenerPos.x;
-        // Y eksenindeki fiziksel yüksekliği daraltır. (Açı ve hacim hesaplamaları için)
+        // Flattens physical Y-axis for angle and volume calculations.
         double dy = (spkY - listenerPos.y) * com.audiophilecraft.config.LiveTuningConfig.get().physics_yFlatten;
         double dz = spkZ - listenerPos.z;
 
@@ -324,8 +324,14 @@ public class StreamSource {
         // --- SMOOTH POWER & INPUT GAIN ---
         // Lerp factor 0.04 = ~500ms ramp time at 20Hz tick rate
         // Slower ramp prevents audible clicks at buffer boundaries
-        this.smoothedPower += (this.power - this.smoothedPower) * 0.04f;
-        this.smoothedInputGain += (this.inputGain - this.smoothedInputGain) * 0.04f;
+        this.smoothedPower +=
+                (this.power - this.smoothedPower) * 0.04f; // ~500ms @ 20Hz = 1-(1-0.04)^20 ~ 0.56 time constant
+        float currentMixerGain = this.session.getMixerGain(this.speakerType);
+        float targetInputGain = this.inputGain * currentMixerGain;
+        this.smoothedInputGain += (targetInputGain - this.smoothedInputGain) * 0.04f; // ~500ms ramp
+        if (targetInputGain < 0.001f) {
+            this.smoothedInputGain = 0.0f;
+        }
 
         // --- NATIVE OPENAL DISTANCE MODEL ---
         // Native OpenAL physics:
@@ -728,14 +734,13 @@ public class StreamSource {
         }
 
         // --- FINAL GAIN CALCULATION ---
-        // Gain = Power * Attenuation * Directionality * Boost * MixerGain
+        // Gain = Power * Attenuation * Directionality * Boost
         float dspGain = 1.0f;
-        float mixerGain = this.session.getMixerGain(this.speakerType);
         // 1. Calculate Base Magnitude
-        float targetGain = this.smoothedPower * attenuation * dirGain * proximityBoost * dspGain * mixerGain;
+        float targetGain = this.smoothedPower * attenuation * dirGain * proximityBoost * dspGain;
 
         // 2. Safety Clamps (Apply Before Occlusion!)
-        if (targetGain > 4.0f) targetGain = 4.0f;
+        if (targetGain > 2.0f) targetGain = 2.0f;
         if (targetGain < 0.0f) targetGain = 0.0f;
 
         // 3. APPLY OCCLUSION AS FINAL MULTIPLIER
@@ -746,7 +751,7 @@ public class StreamSource {
         targetGain *= gainOcclusion;
 
         // Safety Clamps
-        if (targetGain > 4.0f) targetGain = 4.0f;
+        if (targetGain > 2.0f) targetGain = 2.0f;
         if (targetGain < 0.0f) targetGain = 0.0f;
 
         // Smoothing (Low factor to prevent zipper noise from discrete gain steps)
@@ -766,7 +771,7 @@ public class StreamSource {
         // silence.
         // Without this, the asymptotic lerp never reaches exactly 0.0 (e.g. 0.0000003)
         // which some audio hardware still renders as barely audible sound.
-        if (mixerGain < 0.001f) {
+        if (this.smoothedInputGain < 0.001f) {
             this.smoothedGain = 0.0f;
         }
 
@@ -872,21 +877,21 @@ public class StreamSource {
         if ("sub".equals(this.speakerType)) {
             // BUGFIX: Subwoofers are omnidirectional. Do not multiply by dirGain,
             // otherwise bass disappears when walking around the array.
-            rawDirectGain = gainOcclusion * Math.min(proximityBoost, 4.0f);
+            rawDirectGain = gainOcclusion * Math.min(proximityBoost, 2.0f);
         } else {
-            rawDirectGain = gainOcclusion * Math.min(proximityBoost, 4.0f) * dirGain;
+            rawDirectGain = gainOcclusion * Math.min(proximityBoost, 2.0f) * dirGain;
         }
         float directDelta = rawDirectGain - this.smoothedDirectGain;
         float directLerp = 0.40f;
         float absDirectDelta = Math.abs(directDelta);
         if (absDirectDelta > 0.60f) {
-            directLerp = 0.85f;
+            directLerp = 0.85f; // Fast response for large changes
         } else if (absDirectDelta > 0.25f) {
-            directLerp = 0.65f;
+            directLerp = 0.65f; // Medium speed for medium changes
         }
         this.smoothedDirectGain += directDelta * directLerp;
         // HARD ZERO: match the main gain bypass
-        if (mixerGain < 0.001f) {
+        if (this.smoothedInputGain < 0.001f) {
             this.smoothedDirectGain = 0.0f;
         }
         float directGain = this.smoothedDirectGain;
@@ -965,11 +970,14 @@ public class StreamSource {
             // 3. Combine: occlusion × power scaled send × soft falloff
             float sendGain = reverbOcclusion * powerScaledSend * softDistanceFalloff;
 
-            // 4. WET FLOOR: minimum reverb level inside the venue
+            // 4. WET FLOOR: minimum reverb level inside the venue.
+            // 0.04 = -28dB floor, prevents completely dry sound. Scales with occlusion.
             float wetFloor = 0.04f * reverbOcclusion;
             if (sendGain < wetFloor) sendGain = wetFloor;
 
-            // 5. RELAXED CAP
+            // 5. RELAXED CAP: max 0.60 (~ -4.4dB).
+            // Multiple sources accumulate in the OpenAL aux slot.
+            // 0.60 per source is sufficient; above that causes clipping.
             if (sendGain > 0.60f) sendGain = 0.60f;
 
             // Apply Side (Reverb) Mute
@@ -1003,11 +1011,8 @@ public class StreamSource {
                 // dynamic wall-proximity echo gain.
                 float echoSendGain = sendGain * AudioEngine.getInstance().getSlapbackGain();
 
-                // NORMALIZE WET GAIN BY ARRAY SIZE:
-                // 100 speakers sending audio to the same OpenAL effect slot will accumulate 100x
-                // the energy in the effect's input buffer, causing clipping and a massive WET/DRY imbalance.
-                // We divide by sqrt(clusterSize) to normalize the acoustic power.
-                echoSendGain /= (float) Math.max(1.0, Math.sqrt(this.clusterSize));
+                // echoSendGain inherits the array-size normalization from sendGain (line 988).
+                // DO NOT divide again, otherwise echo vanishes quadratically on large line arrays!
                 org.lwjgl.openal.EXTEfx.alFilterf(
                         echoSendFilterId, org.lwjgl.openal.EXTEfx.AL_LOWPASS_GAIN, echoSendGain);
                 org.lwjgl.openal.EXTEfx.alFilterf(
@@ -1073,8 +1078,7 @@ public class StreamSource {
             double spkY = pos.getY() + 0.5;
             double spkZ = pos.getZ() + 0.5;
             double dx = spkX - listenerPos.x;
-            // Y eksenindeki fiziksel yüksekliği daraltır. (Gecikme, Doppler ve Mesafe
-            // zayıflaması için)
+            // Flattens physical Y-axis for delay, doppler and distance attenuation.
             double dy = (spkY - listenerPos.y) * com.audiophilecraft.config.LiveTuningConfig.get().physics_yFlatten;
             double dz = spkZ - listenerPos.z;
             float ownDistance = (float) Math.sqrt(dx * dx + dy * dy + dz * dz);
@@ -1234,6 +1238,10 @@ public class StreamSource {
         // DSP STAGE (shared by all branches)
         // DSP pipeline
         this.dspPipeline.process(output, (float) streamBuffer.sampleRate, this.smoothedInputGain, this.smoothedPower);
+
+        // Feed peak meter (post-DSP, pre-OpenAL) — ~0 cost: 1 loop + 1 volatile write
+        PeakMeter.getInstance().feedPeak(this.speakerType, output, STREAM_BUFFER_SIZE);
+
         if (finished) {
             isFinished = true;
         }
@@ -1335,6 +1343,7 @@ public class StreamSource {
 
         // Drain any OpenAL errors to prevent error queue buildup
         while (alGetError() != AL_NO_ERROR) {
-            /* drain */ }
+            /* drain */
+        }
     }
 }

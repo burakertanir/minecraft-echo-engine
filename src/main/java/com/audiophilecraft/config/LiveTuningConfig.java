@@ -192,8 +192,8 @@ public class LiveTuningConfig {
 
     // --- TIER 7: MASSIVE STADIUM ---
     public float tier7_minGain = 0.2f;
-    public float tier7_gainMul = 0.35f;
-    public float tier7_reflGainMul = 0.34f;
+    public float tier7_gainMul = 0.32f;
+    public float tier7_reflGainMul = 0.32f;
     public float tier7_lateReverbMul = 1.0f;
     public float tier7_hfMul = 0.8f;
     public float tier7_lfMul = 1.0f;
@@ -210,7 +210,7 @@ public class LiveTuningConfig {
     public float tier8_reflGainMul = 0.36f;
     public float tier8_lateReverbMul = 1.1f;
     public float tier8_hfMul = 1.0f;
-    public float tier8_lfMul = 1.0f;
+    public float tier8_lfMul = 0.8f;
     public float tier8_decayMul = 0.4f;
     public float tier8_lateReverbRoomScale = 0.5f;
     public float tier8_maxLateMultiplier_highEncl = 2.5f;
@@ -220,11 +220,11 @@ public class LiveTuningConfig {
 
     // --- TIER 9: MEGA COMPLEX / CITY BLOCK ---
     public float tier9_minGain = 0.25f;
-    public float tier9_gainMul = 0.45f;
-    public float tier9_reflGainMul = 0.42f;
-    public float tier9_lateReverbMul = 1.3f;
-    public float tier9_hfMul = 0.8f;
-    public float tier9_lfMul = 1.0f;
+    public float tier9_gainMul = 0.37f;
+    public float tier9_reflGainMul = 0.39f;
+    public float tier9_lateReverbMul = 1.2f;
+    public float tier9_hfMul = 1.0f;
+    public float tier9_lfMul = 0.8f;
     public float tier9_decayMul = 0.4f;
     public float tier9_lateReverbRoomScale = 0.6f;
     public float tier9_maxLateMultiplier_highEncl = 3.0f;
@@ -234,12 +234,12 @@ public class LiveTuningConfig {
 
     // --- TIER 10: INFINITE CATHEDRAL / VOID ---
     public float tier10_minGain = 0.28f;
-    public float tier10_gainMul = 0.44f;
-    public float tier10_reflGainMul = 0.42f;
-    public float tier10_lateReverbMul = 1.0f;
+    public float tier10_gainMul = 0.34f;
+    public float tier10_reflGainMul = 0.38f;
+    public float tier10_lateReverbMul = 1.1f;
     public float tier10_hfMul = 1.0f;
     public float tier10_lfMul = 0.8f;
-    public float tier10_decayMul = 0.32f;
+    public float tier10_decayMul = 0.6f;
     public float tier10_lateReverbRoomScale = 0.7f;
     public float tier10_maxLateMultiplier_highEncl = 3.5f;
     public float tier10_maxLateMultiplier_lowEncl = 5.0f;
@@ -271,8 +271,8 @@ public class LiveTuningConfig {
     // CATEGORY 8: OPEN AIR PHYSICS
     // ════════════════════════════════════════════════════════════
     public float openAir_dynamic_gainMul = 0.05f;
-    public float openAir_dynamic_reflGainMul = 0.5f;
-    public float openAir_dynamic_lateReverbMul = 0.2f;
+    public float openAir_dynamic_reflGainMul = 0.18f;
+    public float openAir_dynamic_lateReverbMul = 0.3f;
     public float openAir_dynamic_hfMul = 1.0f;
     public float openAir_dynamic_lfMul = 1.0f;
     public float openAir_enclosure_penalty_exponent = 3.5f;
@@ -293,12 +293,12 @@ public class LiveTuningConfig {
     // ════════════════════════════════════════════════════════════
     // CATEGORY 10: SLAPBACK ECHO
     // ════════════════════════════════════════════════════════════
-    public float echo_delay = 0.04f;
+    public float echo_delay = 0.05f;
     public float echo_damping = 0.7f;
-    public float echo_feedback = 0.3f;
+    public float echo_feedback = 0.4f;
     public float echo_spread = -0.5f;
-    public float echo_baseGain = 0.05f;
-    public float echo_maxGain = 0.37f;
+    public float echo_baseGain = 0.01f;
+    public float echo_maxGain = 0.08f;
 
     // ════════════════════════════════════════════════════════════
     // SINGLETON & FILE MANAGEMENT

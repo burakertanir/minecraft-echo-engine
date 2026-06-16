@@ -314,8 +314,10 @@ public class ModMessages {
             int handOrdinal = buf.readInt();
             float gain = buf.readFloat();
             client.execute(() -> {
-                if (client.currentScreen instanceof com.audiophilecraft.client.screen.AmplifierScreen screen) {
-                    screen.updateInputGain(gain);
+                if (client.player != null && sessionUUID.equals(client.player.getUuid())) {
+                    if (client.currentScreen instanceof com.audiophilecraft.client.screen.AmplifierScreen screen) {
+                        screen.updateInputGain(gain);
+                    }
                 }
                 com.audiophilecraft.sound.AudioEngine.getInstance().updateInputGainForSession(sessionUUID, gain);
             });
@@ -326,8 +328,10 @@ public class ModMessages {
             int handOrdinal = buf.readInt();
             float power = buf.readFloat();
             client.execute(() -> {
-                if (client.currentScreen instanceof com.audiophilecraft.client.screen.AmplifierScreen screen) {
-                    screen.updateSpeakerPower(power);
+                if (client.player != null && sessionUUID.equals(client.player.getUuid())) {
+                    if (client.currentScreen instanceof com.audiophilecraft.client.screen.AmplifierScreen screen) {
+                        screen.updateSpeakerPower(power);
+                    }
                 }
                 com.audiophilecraft.sound.AudioEngine.getInstance().updatePowerForSession(sessionUUID, power);
             });

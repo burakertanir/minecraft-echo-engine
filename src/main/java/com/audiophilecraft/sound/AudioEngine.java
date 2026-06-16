@@ -456,10 +456,9 @@ public class AudioEngine {
         }
 
         // 1. Dynamic Delay based on NEAREST wall
-        // Reverted to 2000.0f divisor. Long delays ruin the "fullness" because EAX
-        // reflections
-        // are diffuse clusters, not discrete echoes. They must arrive <30ms to fuse and
-        // thicken the sound.
+        // delay = minDist * 2.0 / 2000.0 -> round-trip time from wall to listener (speed of sound ~343m/s, block =
+        // meter)
+        // 2000.0 = 2x half-distance + ms conversion factor. max 0.3s = ~30ms hard limit for fusion
         float dynamicReflDelay = Math.max(0.001f, Math.min(minDist * 2.0f / 2000.0f, 0.3f));
 
         // 2. Dynamic Gain based on distance to the NEAREST wall.
@@ -491,12 +490,14 @@ public class AudioEngine {
         int maxDist = 40;
         float minDist = maxDist;
         float bestDirX = 0, bestDirY = 0, bestDirZ = 0;
+        float bestAbsorption = 0.0f;
 
         for (int i = 0; i < DIRS.length; i++) {
             float dirX = DIRS[i][0];
             float dirY = DIRS[i][1];
             float dirZ = DIRS[i][2];
             float hitDist = maxDist;
+            float currentAbsorption = 0.0f;
 
             net.minecraft.util.math.BlockPos.Mutable checkPos = new net.minecraft.util.math.BlockPos.Mutable();
             for (int step = 1; step <= maxDist; step++) {
@@ -508,6 +509,8 @@ public class AudioEngine {
                 net.minecraft.block.BlockState state = world.getBlockState(checkPos);
                 if (state.isSolidBlock(world, checkPos)) {
                     hitDist = step;
+                    currentAbsorption = com.audiophilecraft.sound.AdvancedAcousticScanner.getAbsorptionForReflection(
+                            state.getBlock());
                     break;
                 }
             }
@@ -516,6 +519,7 @@ public class AudioEngine {
                 bestDirX = dirX;
                 bestDirY = dirY;
                 bestDirZ = dirZ;
+                bestAbsorption = currentAbsorption;
             }
         }
 
@@ -528,6 +532,13 @@ public class AudioEngine {
         float maxGain = config.echo_maxGain;
         // Mapping: 40 blocks = baseGain, 0 blocks = maxGain
         float gain = baseGain + ((maxDist - minDist) / (float) maxDist) * (maxGain - baseGain);
+
+        // --- NEW: Cotton/Wool Absorption Penalty ---
+        // Only penalize if the wall is highly absorptive (e.g., > 30% absorption).
+        // Ignore stone/wood so we don't ruin the finely tuned echo gain for normal rooms.
+        if (bestAbsorption > 0.30f) {
+            gain *= (1.0f - bestAbsorption);
+        }
 
         if (this.currentSlapbackGain < 0.0f) {
             this.currentSlapbackGain = gain;
@@ -1645,11 +1656,14 @@ public class AudioEngine {
      * Fetch Total Duration in Seconds for the currently playing track.
      */
     public double getTotalPlaybackDuration() {
-        if (getActiveSession() == null
-                || !getActiveSession().isPlaying()
-                || getActiveSession().getStreamBuffers().isEmpty()) return 0.0;
-        AudioStreamBuffer buf =
-                getActiveSession().getStreamBuffers().values().iterator().next();
+        return getTotalPlaybackDuration(getActiveSession());
+    }
+
+    public double getTotalPlaybackDuration(PlaybackSession session) {
+        if (session == null
+                || !session.isPlaying()
+                || session.getStreamBuffers().isEmpty()) return 0.0;
+        AudioStreamBuffer buf = session.getStreamBuffers().values().iterator().next();
         return buf != null ? buf.getTotalDurationSeconds() : 0.0;
     }
 
@@ -1657,16 +1671,18 @@ public class AudioEngine {
      * Fetch Current Playback Time in Seconds.
      */
     public double getCurrentPlaybackTime() {
-        if (getActiveSession() == null
-                || !getActiveSession().isPlaying()
-                || getActiveSession().getStreamStartTime() == 0) return 0.0;
+        return getCurrentPlaybackTime(getActiveSession());
+    }
+
+    public double getCurrentPlaybackTime(PlaybackSession session) {
+        if (session == null || !session.isPlaying() || session.getStreamStartTime() == 0) return 0.0;
 
         long now = System.nanoTime();
-        if (getActiveSession().isPaused() && getActiveSession().getPauseStartTimestamp() > 0) {
-            now = getActiveSession().getPauseStartTimestamp();
+        if (session.isPaused() && session.getPauseStartTimestamp() > 0) {
+            now = session.getPauseStartTimestamp();
         }
 
-        double timeSinceStart = (now - getActiveSession().getStreamStartTime()) / 1_000_000_000.0;
+        double timeSinceStart = (now - session.getStreamStartTime()) / 1_000_000_000.0;
         return timeSinceStart;
     }
 
@@ -1676,10 +1692,14 @@ public class AudioEngine {
      * homogeneously.
      */
     public synchronized void seek(double timeSeconds) {
-        if (getActiveSession() == null || !getActiveSession().isPlaying()) return;
+        seek(getActiveSession(), timeSeconds);
+    }
+
+    public synchronized void seek(PlaybackSession session, double timeSeconds) {
+        if (session == null || !session.isPlaying()) return;
 
         // Clamp to bounds
-        double totalDuration = getTotalPlaybackDuration();
+        double totalDuration = getTotalPlaybackDuration(session);
         if (timeSeconds < 0) timeSeconds = 0;
         if (totalDuration > 0 && timeSeconds > totalDuration) timeSeconds = totalDuration;
 
@@ -1688,7 +1708,7 @@ public class AudioEngine {
         // 200ms later.
         // We do not want to "jump back" 200ms to the exact same marker and cause a
         // track stutter.
-        if (Math.abs(getCurrentPlaybackTime() - timeSeconds) < 0.5) {
+        if (Math.abs(getCurrentPlaybackTime(session) - timeSeconds) < 0.5) {
             return; // Already within the target window realistically
         }
 
@@ -1697,25 +1717,24 @@ public class AudioEngine {
         // Without this, processAudioBackground() can fire mid-seek and cause
         // underrun recovery to snap outputCursor to the wrong position,
         // resulting in 3-4 speakers playing asynchronously.
-        getActiveSession().setSeeking(true);
+        session.setSeeking(true);
         try {
             // Nothing to seek if all sources were cleaned up (song ended naturally)
-            if (getActiveSession().getStreamSources().isEmpty()) return;
+            if (session.getStreamSources().isEmpty()) return;
 
             // Shift absolute temporal timeline baseline
             long now = System.nanoTime();
 
             // If the game is paused, adjust the pause tracker so it doesn't double-cancel
             // the seek on resume
-            if (getActiveSession().isPaused()) {
-                getActiveSession().setPauseStartTimestamp(now);
+            if (session.isPaused()) {
+                session.setPauseStartTimestamp(now);
             }
 
-            getActiveSession().setStreamStartTime(now - (long) (timeSeconds * 1_000_000_000.0));
+            session.setStreamStartTime(now - (long) (timeSeconds * 1_000_000_000.0));
 
             // Force raw JLayer decoder index jumps
-            for (AudioStreamBuffer buffer :
-                    getActiveSession().getStreamBuffers().values()) {
+            for (AudioStreamBuffer buffer : session.getStreamBuffers().values()) {
                 // Buffer up to 0.1s INTO THE PAST to cushion StreamSource physics delays.
                 // When speakers simulate spatial distance, they read slightly backwards in the
                 // ring buffer.
@@ -1731,8 +1750,8 @@ public class AudioEngine {
             // Broadcast snap offsets into ALL actively playing physical speakers locally
             // using atomic AL Source commands
             java.nio.IntBuffer sourceIds = org.lwjgl.BufferUtils.createIntBuffer(
-                    getActiveSession().getStreamSources().size());
-            for (StreamSource source : getActiveSession().getStreamSources()) {
+                    session.getStreamSources().size());
+            for (StreamSource source : session.getStreamSources()) {
                 source.seekToTime(timeSeconds); // Aligns playhead and hardware queue internally (does NOT call
                 // alSourcePlay)
                 sourceIds.put(source.sourceId);
@@ -1740,7 +1759,7 @@ public class AudioEngine {
             sourceIds.flip();
             org.lwjgl.openal.AL10.alSourcePlayv(sourceIds); // ATOMIC HARDWARE START: NO SPEAKER PHASE STAGGER
         } finally {
-            getActiveSession().setSeeking(false); // Resume audio thread feeding
+            session.setSeeking(false); // Resume audio thread feeding
         }
     }
 
@@ -1752,11 +1771,7 @@ public class AudioEngine {
     public void seekForSession(java.util.UUID sessionUUID, float targetTime) {
         PlaybackSession session = sessions.get(sessionUUID);
         if (session != null) {
-            // Note: currently seek logic alters the base time of the stream.
-            // If true multi-session seeking is needed, it should be implemented in
-            // PlaybackSession.
-            // For now, if the session is active, we just call the global seek.
-            if (sessionUUID.equals(activeSessionId)) seek(targetTime);
+            seek(session, targetTime);
         }
     }
 
