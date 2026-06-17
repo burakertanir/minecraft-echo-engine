@@ -169,7 +169,8 @@ public class InternetAudioLoader {
             }
             prebufferTarget = 10 * sampleRate;
             long durMs = track.getDuration();
-            if (durMs <= 0 || durMs > 20 * 60 * 1000) durMs = 20 * 60 * 1000;
+            if (durMs <= 0 || durMs > 5 * 60 * 1000)
+                durMs = 5 * 60 * 1000; // Cap at 5 min to avoid 115MB heap allocation
             int totalExpected = (int) (durMs / 1000.0 * sampleRate);
             pcm = new short[totalExpected];
             if (first != null && first.getData() != null && first.getData().length > 0) {

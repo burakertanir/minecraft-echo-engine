@@ -32,9 +32,7 @@ public class AudioStreamBuffer {
     private short[] pcmArray;
     private volatile int decodedLength = 0; // How many mono samples have been decoded so far
     private int totalExpectedSamples = 0; // Total expected samples (from OGG header)
-    private volatile long readCursor =
-            0; // Sequential read position for advance() - volatile: written by seekToTime (main thread), read by
-    // advance (audio thread)
+    private volatile int readCursor = 0; // Sequential read position — int is safe because pcmArray is int-indexed
 
     // Legacy mode (backward compatibility)
     private ShortBuffer fullPcmData; // Source data (entire track) — used by URL path
@@ -104,16 +102,17 @@ public class AudioStreamBuffer {
 
         // Reset read position
         if (pcmArray != null) {
-            this.readCursor = targetCursor;
+            this.readCursor = (int) targetCursor;
         } else if (fullPcmData != null) {
             fullPcmData.position((int) targetCursor);
         }
 
-        // Forcibly jump the stream cursor
-        this.globalWriteCursor = targetCursor;
-
-        // Flush ghost audio out of the ring buffer
+        // Zero ring buffer BEFORE updating cursor so audio thread never sees
+        // cursor pointing to partially-wiped data
         java.util.Arrays.fill(ringBuffer, (short) 0);
+
+        // Forcibly jump the stream cursor (volatile — read by audio thread)
+        this.globalWriteCursor = targetCursor;
     }
 
     /**
@@ -131,9 +130,8 @@ public class AudioStreamBuffer {
                 if (readCursor < currentDecoded) {
                     sample = pcmArray[(int) (readCursor++)];
                 } else if (readCursor < totalExpectedSamples) {
-                    // Not yet decoded — output silence, don't advance read cursor
-                    // This prevents skipping over not-yet-decoded audio
-                    readCursor++;
+                    // Not yet decoded — output silence, keep readCursor in place
+                    // so when decoder catches up, these samples play correctly
                 }
 
                 int index = (int) (globalWriteCursor & bufferMask);

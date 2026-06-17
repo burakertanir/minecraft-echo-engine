@@ -219,6 +219,13 @@ public class OggDecoder {
                 resultBuffer = monoAudio;
                 format = AL_FORMAT_MONO16;
                 channelCount = 1;
+            } else {
+                // Unknown channel count — wrap in LWJGL buffer to avoid double-free
+                java.nio.ShortBuffer copy = MemoryUtil.memAllocShort(rawAudio.remaining());
+                copy.put(rawAudio);
+                copy.flip();
+                resultBuffer = copy;
+                System.err.println("AudiophileCraft: Unsupported Ogg channel count: " + channelCount);
             }
 
             // Free the STB-allocated buffer using C's free() (STB uses malloc internally)

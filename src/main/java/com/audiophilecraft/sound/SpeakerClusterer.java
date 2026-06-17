@@ -16,12 +16,13 @@ import net.minecraft.world.World;
  */
 public class SpeakerClusterer {
 
-    /** Default proximity threshold for cluster membership (blocks). */
-    public static final double CLUSTER_DISTANCE = 8.0;
+    /** Default proximity threshold (squared distance) for cluster membership.
+     *  Sqrt(8.0) ≈ 2.83 blocks radius. Named CLUSTER_DISTANCE_SQ to clarify it's squared. */
+    public static final double CLUSTER_DISTANCE_SQ = 8.0;
 
     /**
      * Groups speaker positions into clusters based on proximity.
-     * Speakers within {@link #CLUSTER_DISTANCE} blocks of any member join the same cluster.
+     * Speakers within sqrt(CLUSTER_DISTANCE_SQ) ≈ 2.83 blocks of any member join the same cluster.
      * Input is sorted for deterministic output (ConcurrentHashMap iteration is not guaranteed).
      */
     public static List<List<BlockPos>> clusterSpeakers(List<BlockPos> speakers) {
@@ -33,7 +34,7 @@ public class SpeakerClusterer {
             boolean added = false;
             for (List<BlockPos> cluster : clusters) {
                 for (BlockPos cPos : cluster) {
-                    if (cPos.getSquaredDistance(pos) <= CLUSTER_DISTANCE) {
+                    if (cPos.getSquaredDistance(pos) <= CLUSTER_DISTANCE_SQ) {
                         cluster.add(pos);
                         added = true;
                         break;

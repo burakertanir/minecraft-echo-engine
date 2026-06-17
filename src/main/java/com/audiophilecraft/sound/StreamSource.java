@@ -219,17 +219,9 @@ public class StreamSource {
         this.lastRenderedDelaySamples = -1.0;
 
         // Flush OpenAL's queued buffers
-
         org.lwjgl.openal.AL10.alSourceStop(sourceId);
-
-        int queued = org.lwjgl.openal.AL10.alGetSourcei(sourceId, org.lwjgl.openal.AL10.AL_BUFFERS_QUEUED);
-
-        while (queued > 0) {
-
-            org.lwjgl.openal.AL10.alSourceUnqueueBuffers(sourceId);
-
-            queued--;
-        }
+        // Detach all buffers atomically — faster and safer than unqueue loop
+        org.lwjgl.openal.AL10.alSourcei(sourceId, org.lwjgl.openal.AL10.AL_BUFFER, 0);
 
         // Refill using global absolute positions from the seek target
         double seekStartSample = timeSeconds * streamBuffer.sampleRate;
@@ -591,9 +583,10 @@ public class StreamSource {
         // Solution: Dynamic Linear Model where Max Distance scales with Power.
 
         // Speaker count → DISTANCE scaling only (more speakers = longer throw)
-        // This does NOT affect gain/volume — gain staging is fully manual via Input
         // Gain knob
-        float arrayMultiplier = (float) Math.max(1.0, Math.sqrt(this.speakerCount));
+        // Modified to Logarithmic scaling: 10 speakers = ~1.5x distance, 100 speakers = 2.0x distance
+        // This prevents astronomical distances when large clusters are combined with high Amplifier Power.
+        float arrayMultiplier = 1.0f + 0.5f * (float) Math.log10(Math.max(1.0, this.speakerCount));
 
         float effectiveRefDist = this.refDist;
         float baseMaxDist = 60.0f; // Default base max distance
@@ -601,42 +594,47 @@ public class StreamSource {
         if ("sub".equals(this.speakerType)) {
             effectiveRefDist = cfg.sub_refDist * arrayMultiplier;
             baseMaxDist = cfg.sub_baseMaxDist * arrayMultiplier;
-            // manualRolloff removed — dead code
 
-            org.lwjgl.openal.AL10.alSourcei(
-                    sourceId, org.lwjgl.openal.AL10.AL_SOURCE_RELATIVE, org.lwjgl.openal.AL10.AL_FALSE);
-            org.lwjgl.openal.AL10.alSource3f(
-                    sourceId,
-                    org.lwjgl.openal.AL10.AL_POSITION,
-                    (float) this.pos.getX() + 0.5f,
-                    (float) this.pos.getY() + 0.5f,
-                    (float) this.pos.getZ() + 0.5f);
+            synchronized (this) {
+                org.lwjgl.openal.AL10.alSourcei(
+                        sourceId, org.lwjgl.openal.AL10.AL_SOURCE_RELATIVE, org.lwjgl.openal.AL10.AL_FALSE);
+                org.lwjgl.openal.AL10.alSource3f(
+                        sourceId,
+                        org.lwjgl.openal.AL10.AL_POSITION,
+                        (float) this.pos.getX() + 0.5f,
+                        (float) this.pos.getY() + 0.5f,
+                        (float) this.pos.getZ() + 0.5f);
+            }
 
         } else if ("mid".equals(this.speakerType)) {
             effectiveRefDist = cfg.mid_refDist * arrayMultiplier;
             baseMaxDist = cfg.mid_baseMaxDist * arrayMultiplier;
 
-            org.lwjgl.openal.AL10.alSourcei(
-                    sourceId, org.lwjgl.openal.AL10.AL_SOURCE_RELATIVE, org.lwjgl.openal.AL10.AL_FALSE);
-            org.lwjgl.openal.AL10.alSource3f(
-                    sourceId,
-                    org.lwjgl.openal.AL10.AL_POSITION,
-                    (float) this.pos.getX() + 0.5f,
-                    (float) this.pos.getY() + 0.5f,
-                    (float) this.pos.getZ() + 0.5f);
+            synchronized (this) {
+                org.lwjgl.openal.AL10.alSourcei(
+                        sourceId, org.lwjgl.openal.AL10.AL_SOURCE_RELATIVE, org.lwjgl.openal.AL10.AL_FALSE);
+                org.lwjgl.openal.AL10.alSource3f(
+                        sourceId,
+                        org.lwjgl.openal.AL10.AL_POSITION,
+                        (float) this.pos.getX() + 0.5f,
+                        (float) this.pos.getY() + 0.5f,
+                        (float) this.pos.getZ() + 0.5f);
+            }
 
         } else { // Line Array
             effectiveRefDist = cfg.line_refDist * arrayMultiplier;
             baseMaxDist = cfg.line_baseMaxDist * arrayMultiplier;
 
-            org.lwjgl.openal.AL10.alSourcei(
-                    sourceId, org.lwjgl.openal.AL10.AL_SOURCE_RELATIVE, org.lwjgl.openal.AL10.AL_FALSE);
-            org.lwjgl.openal.AL10.alSource3f(
-                    sourceId,
-                    org.lwjgl.openal.AL10.AL_POSITION,
-                    (float) this.pos.getX() + 0.5f,
-                    (float) this.pos.getY() + 0.5f,
-                    (float) this.pos.getZ() + 0.5f);
+            synchronized (this) {
+                org.lwjgl.openal.AL10.alSourcei(
+                        sourceId, org.lwjgl.openal.AL10.AL_SOURCE_RELATIVE, org.lwjgl.openal.AL10.AL_FALSE);
+                org.lwjgl.openal.AL10.alSource3f(
+                        sourceId,
+                        org.lwjgl.openal.AL10.AL_POSITION,
+                        (float) this.pos.getX() + 0.5f,
+                        (float) this.pos.getY() + 0.5f,
+                        (float) this.pos.getZ() + 0.5f);
+            }
         }
 
         // --- SOURCE RADIUS (Width/Spread) ---
@@ -776,7 +774,9 @@ public class StreamSource {
         }
 
         // Apply to OpenAL
-        org.lwjgl.openal.AL10.alSourcef(sourceId, org.lwjgl.openal.AL10.AL_GAIN, this.smoothedGain);
+        synchronized (this) {
+            org.lwjgl.openal.AL10.alSourcef(sourceId, org.lwjgl.openal.AL10.AL_GAIN, this.smoothedGain);
+        }
 
         // Setup complete.
 
@@ -992,37 +992,35 @@ public class StreamSource {
             sendGain /= (float) Math.max(1.0, Math.sqrt(this.clusterSize));
 
             // Apply filter for Room Send
-            org.lwjgl.openal.EXTEfx.alFilterf(sendFilterId, org.lwjgl.openal.EXTEfx.AL_LOWPASS_GAIN, sendGain);
-            org.lwjgl.openal.EXTEfx.alFilterf(sendFilterId, org.lwjgl.openal.EXTEfx.AL_LOWPASS_GAINHF, reverbSendHF);
-
-            // Send 0: Room Reverb
-            org.lwjgl.openal.AL11.alSource3i(
-                    sourceId,
-                    org.lwjgl.openal.EXTEfx.AL_AUXILIARY_SEND_FILTER,
-                    AudioEngine.getInstance().getAuxSlotId(),
-                    0,
-                    sendFilterId);
-
-            // Send 1: Slapback Echo (uses its own dedicated filter to avoid
-            // gain interference with the reverb send filter)
-            if (AudioEngine.getInstance().getSlapbackAuxSlotId() != 0 && echoSendFilterId != 0) {
-                // Echo send uses same occlusion but independent gain path.
-                // It multiplies the base distance/occlusion send gain by the listener's
-                // dynamic wall-proximity echo gain.
-                float echoSendGain = sendGain * AudioEngine.getInstance().getSlapbackGain();
-
-                // echoSendGain inherits the array-size normalization from sendGain (line 988).
-                // DO NOT divide again, otherwise echo vanishes quadratically on large line arrays!
+            synchronized (this) {
+                org.lwjgl.openal.EXTEfx.alFilterf(sendFilterId, org.lwjgl.openal.EXTEfx.AL_LOWPASS_GAIN, sendGain);
                 org.lwjgl.openal.EXTEfx.alFilterf(
-                        echoSendFilterId, org.lwjgl.openal.EXTEfx.AL_LOWPASS_GAIN, echoSendGain);
-                org.lwjgl.openal.EXTEfx.alFilterf(
-                        echoSendFilterId, org.lwjgl.openal.EXTEfx.AL_LOWPASS_GAINHF, reverbSendHF);
+                        sendFilterId, org.lwjgl.openal.EXTEfx.AL_LOWPASS_GAINHF, reverbSendHF);
+
+                // Send 0: Room Reverb
                 org.lwjgl.openal.AL11.alSource3i(
                         sourceId,
                         org.lwjgl.openal.EXTEfx.AL_AUXILIARY_SEND_FILTER,
-                        AudioEngine.getInstance().getSlapbackAuxSlotId(),
-                        1,
-                        echoSendFilterId);
+                        AudioEngine.getInstance().getAuxSlotId(),
+                        0,
+                        sendFilterId);
+
+                // Send 1: Slapback Echo
+                if (AudioEngine.getInstance().getSlapbackAuxSlotId() != 0 && echoSendFilterId != 0) {
+                    float echoDistanceFalloff = (float) Math.pow(Math.max(0.001f, attenuation), 0.3f);
+                    float echoSendGain = sendGain * AudioEngine.getInstance().getSlapbackGain() * echoDistanceFalloff;
+
+                    org.lwjgl.openal.EXTEfx.alFilterf(
+                            echoSendFilterId, org.lwjgl.openal.EXTEfx.AL_LOWPASS_GAIN, echoSendGain);
+                    org.lwjgl.openal.EXTEfx.alFilterf(
+                            echoSendFilterId, org.lwjgl.openal.EXTEfx.AL_LOWPASS_GAINHF, reverbSendHF);
+                    org.lwjgl.openal.AL11.alSource3i(
+                            sourceId,
+                            org.lwjgl.openal.EXTEfx.AL_AUXILIARY_SEND_FILTER,
+                            AudioEngine.getInstance().getSlapbackAuxSlotId(),
+                            1,
+                            echoSendFilterId);
+                }
             }
         }
     }
@@ -1295,14 +1293,13 @@ public class StreamSource {
         releaseNativeMemory();
 
         // Safely unqueue all processed/queued streaming buffers before detaching
-
-        int queued = org.lwjgl.openal.AL10.alGetSourcei(sourceId, org.lwjgl.openal.AL10.AL_BUFFERS_QUEUED);
-
-        while (queued > 0) {
-
-            org.lwjgl.openal.AL10.alSourceUnqueueBuffers(sourceId);
-
-            queued--;
+        while (org.lwjgl.openal.AL10.alGetSourcei(sourceId, org.lwjgl.openal.AL10.AL_BUFFERS_QUEUED) > 0) {
+            int processed = org.lwjgl.openal.AL10.alGetSourcei(sourceId, org.lwjgl.openal.AL10.AL_BUFFERS_PROCESSED);
+            if (processed <= 0) break;
+            while (processed > 0) {
+                org.lwjgl.openal.AL10.alSourceUnqueueBuffers(sourceId);
+                processed--;
+            }
         }
 
         org.lwjgl.openal.AL10.alSourcei(sourceId, org.lwjgl.openal.AL10.AL_BUFFER, 0);

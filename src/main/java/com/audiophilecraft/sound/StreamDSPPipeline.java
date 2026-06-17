@@ -20,21 +20,29 @@ public class StreamDSPPipeline {
         this.speakerType = speakerType;
 
         if ("sub".equals(speakerType)) {
+            // 24dB/oct Butterworth LP at 120Hz — subwoofer only
             crossoverFilter1 =
                     new AudioDSP.BiquadFilter(AudioDSP.FilterType.LOW_PASS, sampleRate, 120.0f, 0.707f, 0.0f);
-            crossoverFilter2 = null;
+            crossoverFilter2 =
+                    new AudioDSP.BiquadFilter(AudioDSP.FilterType.LOW_PASS, sampleRate, 120.0f, 0.707f, 0.0f);
             eqFrequencies = new float[] {30f, 50f, 70f, 90f, 110f};
         } else if ("mid".equals(speakerType)) {
+            // Yamaha HS8 full-range: gentle rolloff at 45Hz (-3dB noktasi)
+            crossoverFilter1 =
+                    new AudioDSP.BiquadFilter(AudioDSP.FilterType.HIGH_PASS, sampleRate, 45.0f, 0.577f, 0.0f);
+            crossoverFilter2 = null;
+            eqFrequencies = new float[] {250f, 500f, 1000f, 2000f, 4000f};
+        } else if ("line".equals(speakerType)) {
+            // 24dB/oct HP at 120Hz — sub ile eslesir
             crossoverFilter1 =
                     new AudioDSP.BiquadFilter(AudioDSP.FilterType.HIGH_PASS, sampleRate, 120.0f, 0.707f, 0.0f);
             crossoverFilter2 =
-                    new AudioDSP.BiquadFilter(AudioDSP.FilterType.LOW_PASS, sampleRate, 4000.0f, 0.707f, 0.0f);
-            eqFrequencies = new float[] {250f, 500f, 1000f, 2000f, 4000f};
-        } else {
-            crossoverFilter1 =
                     new AudioDSP.BiquadFilter(AudioDSP.FilterType.HIGH_PASS, sampleRate, 120.0f, 0.707f, 0.0f);
+            eqFrequencies = new float[] {2000f, 4000f, 6000f, 10000f, 15000f};
+        } else { // normal — full range, no crossover
+            crossoverFilter1 = null;
             crossoverFilter2 = null;
-            eqFrequencies = new float[] {1000f, 3000f, 6000f, 10000f, 15000f};
+            eqFrequencies = new float[] {250f, 500f, 1000f, 2000f, 4000f};
         }
     }
 

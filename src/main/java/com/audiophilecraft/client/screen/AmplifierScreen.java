@@ -1285,13 +1285,15 @@ public class AmplifierScreen extends HandledScreen<AmplifierScreenHandler> {
         protected void applyValue() {
             lastInteractionTime = System.currentTimeMillis();
             currentPower = 0.1f + (float) this.value * 9.9f;
+            com.audiophilecraft.sound.AudioEngine.getInstance().updatePower(currentPower);
         }
 
         @Override
         public void onRelease(double mouseX, double mouseY) {
             super.onRelease(mouseX, mouseY);
+            com.audiophilecraft.sound.AudioEngine.getInstance().updatePower(currentPower);
             sendPowerUpdate(currentPower);
-            this.setFocused(false); // Remove stuck active animation
+            this.setFocused(false);
         }
 
         @Override
@@ -1355,13 +1357,15 @@ public class AmplifierScreen extends HandledScreen<AmplifierScreenHandler> {
         protected void applyValue() {
             lastInteractionTime = System.currentTimeMillis();
             currentInputGain = (float) this.value * 3.0f;
+            com.audiophilecraft.sound.AudioEngine.getInstance().updateInputGain(currentInputGain);
         }
 
         @Override
         public void onRelease(double mouseX, double mouseY) {
             super.onRelease(mouseX, mouseY);
+            com.audiophilecraft.sound.AudioEngine.getInstance().updateInputGain(currentInputGain);
             sendInputGainUpdate(currentInputGain);
-            this.setFocused(false); // Remove stuck active animation
+            this.setFocused(false);
         }
 
         @Override

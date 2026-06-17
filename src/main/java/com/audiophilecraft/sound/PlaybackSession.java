@@ -44,15 +44,16 @@ public class PlaybackSession {
     private volatile boolean isPaused = false;
     private volatile boolean isManuallyPaused = false;
     private volatile boolean isSeeking = false;
-    private volatile int trackGeneration = 0;
+    private final java.util.concurrent.atomic.AtomicInteger trackGeneration =
+            new java.util.concurrent.atomic.AtomicInteger(0);
     private volatile String playUrl = "";
 
     // Mixer
     private volatile float mixerGainSub = 1.0f;
     private volatile float mixerGainMid = 1.0f;
     private volatile float mixerGainLine = 1.0f;
-    private boolean midMuted = false;
-    private boolean sideMuted = false;
+    private volatile boolean midMuted = false;
+    private volatile boolean sideMuted = false;
 
     // 5-band EQ (dB)
     private volatile float[] subEq = new float[5];
@@ -189,11 +190,11 @@ public class PlaybackSession {
     }
 
     public int getTrackGeneration() {
-        return trackGeneration;
+        return trackGeneration.get();
     }
 
     public int incrementTrackGeneration() {
-        return ++this.trackGeneration;
+        return trackGeneration.getAndIncrement();
     }
 
     // --- Mixer ---
@@ -304,6 +305,9 @@ public class PlaybackSession {
             }
         }
         streamSources.clear();
+        for (AudioStreamBuffer buffer : streamBuffers.values()) {
+            buffer.cleanup();
+        }
         streamBuffers.clear();
         isPlaying = false;
         isPaused = false;

@@ -314,10 +314,12 @@ public class ModMessages {
             int handOrdinal = buf.readInt();
             float gain = buf.readFloat();
             client.execute(() -> {
-                if (client.player != null && sessionUUID.equals(client.player.getUuid())) {
+                boolean isSelf = client.player != null && sessionUUID.equals(client.player.getUuid());
+                if (isSelf) {
                     if (client.currentScreen instanceof com.audiophilecraft.client.screen.AmplifierScreen screen) {
                         screen.updateInputGain(gain);
                     }
+                    return; // local slider already applied — skip to avoid echo race
                 }
                 com.audiophilecraft.sound.AudioEngine.getInstance().updateInputGainForSession(sessionUUID, gain);
             });
@@ -328,10 +330,12 @@ public class ModMessages {
             int handOrdinal = buf.readInt();
             float power = buf.readFloat();
             client.execute(() -> {
-                if (client.player != null && sessionUUID.equals(client.player.getUuid())) {
+                boolean isSelf = client.player != null && sessionUUID.equals(client.player.getUuid());
+                if (isSelf) {
                     if (client.currentScreen instanceof com.audiophilecraft.client.screen.AmplifierScreen screen) {
                         screen.updateSpeakerPower(power);
                     }
+                    return; // local slider already applied — skip to avoid echo race
                 }
                 com.audiophilecraft.sound.AudioEngine.getInstance().updatePowerForSession(sessionUUID, power);
             });

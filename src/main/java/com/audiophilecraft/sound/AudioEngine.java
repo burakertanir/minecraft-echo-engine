@@ -375,10 +375,10 @@ public class AudioEngine {
             alEffectf(reverbEffectId, AL_EAXREVERB_REFLECTIONS_DELAY, currentReflDelay);
         }
 
-        alEffectfv(reverbEffectId, AL_EAXREVERB_REFLECTIONS_PAN, new float[] {0, 0, 0});
+        alEffectfv(reverbEffectId, AL_EAXREVERB_REFLECTIONS_PAN, ZERO_PAN);
         alEffectf(reverbEffectId, AL_EAXREVERB_LATE_REVERB_GAIN, lateGain);
         alEffectf(reverbEffectId, AL_EAXREVERB_LATE_REVERB_DELAY, venuePreset.lateReverbDelay);
-        alEffectfv(reverbEffectId, AL_EAXREVERB_LATE_REVERB_PAN, new float[] {0, 0, 0});
+        alEffectfv(reverbEffectId, AL_EAXREVERB_LATE_REVERB_PAN, ZERO_PAN);
         alEffectf(reverbEffectId, AL_EAXREVERB_DENSITY, density);
         alEffectf(reverbEffectId, AL_EAXREVERB_DIFFUSION, diffusion);
         alEffectf(reverbEffectId, AL_EAXREVERB_GAIN, gain);
@@ -629,10 +629,11 @@ public class AudioEngine {
         // Result: HRTF perceives sources as being much closer to ear level.
         // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
         float openAlListenerY = (float) pos.y;
-        if (!getActiveSession().getStreamSources().isEmpty()) {
+        PlaybackSession session = getActiveSession();
+        if (session != null && !session.getStreamSources().isEmpty()) {
             double avgSourceY = 0;
             int count = 0;
-            for (StreamSource s : getActiveSession().getStreamSources()) {
+            for (StreamSource s : session.getStreamSources()) {
                 if (s.isValid && !s.isFinished) {
                     avgSourceY += s.getPos().getY() + 0.5;
                     count++;
@@ -657,62 +658,59 @@ public class AudioEngine {
     // Mid/Side (Direct/Reverb) Mute States
 
     public boolean isMidMuted() {
-        return getActiveSession().isMidMuted();
+        PlaybackSession session = getActiveSession();
+        return session != null && session.isMidMuted();
     }
 
     public void setMidMuted(boolean muted) {
-        getActiveSession().setMidMuted(muted);
+        PlaybackSession session = getActiveSession();
+        if (session != null) session.setMidMuted(muted);
     }
 
     public boolean isSideMuted() {
-        return getActiveSession().isSideMuted();
+        PlaybackSession session = getActiveSession();
+        return session != null && session.isSideMuted();
     }
 
     public void setSideMuted(boolean muted) {
-        getActiveSession().setSideMuted(muted);
+        PlaybackSession session = getActiveSession();
+        if (session != null) session.setSideMuted(muted);
     }
 
     // 5-Band Parametric EQ per speaker type (dB, range: -12 to +12)
 
     public float getMixerGain(String speakerType) {
-        return getActiveSession().getMixerGain(speakerType);
+        PlaybackSession session = getActiveSession();
+        return session != null ? session.getMixerGain(speakerType) : 1.0f;
     }
 
     public void setMixerGain(String speakerType, float gain) {
-        getActiveSession().setMixerGain(speakerType, gain);
+        PlaybackSession session = getActiveSession();
+        if (session != null) session.setMixerGain(speakerType, gain);
     }
 
     /** Get EQ dB for a speaker type and band (0 to 4) */
     public synchronized float getEqDb(String speakerType, int band) {
-        return getActiveSession().getEqDb(speakerType, band);
+        PlaybackSession session = getActiveSession();
+        return session != null ? session.getEqDb(speakerType, band) : 0f;
     }
 
     /** Set EQ dB for a speaker type and band (0 to 4). Range: -12 to +12 */
     public synchronized void setEqDb(String speakerType, int band, float db) {
-        getActiveSession().setEqDb(speakerType, band, db);
+        PlaybackSession session = getActiveSession();
+        if (session != null) session.setEqDb(speakerType, band, db);
     }
-
-    // Q (Bandwidth) per speaker type and band (range: 0.1 to 10.0, default: 1.0)
-    private volatile float[] subEqQ = new float[] {1f, 1f, 1f, 1f, 1f};
-    private volatile float[] midEqQ = new float[] {1f, 1f, 1f, 1f, 1f};
-    private volatile float[] lineEqQ = new float[] {1f, 1f, 1f, 1f, 1f};
 
     /** Get EQ Q for a speaker type and band (0 to 4) */
     public synchronized float getEqQ(String speakerType, int band) {
-        if (band < 0 || band > 4) return 1f;
-        if ("sub".equals(speakerType)) return subEqQ[band];
-        if ("mid".equals(speakerType)) return midEqQ[band];
-        if ("line".equals(speakerType)) return lineEqQ[band];
-        return 1f;
+        PlaybackSession session = getActiveSession();
+        return session != null ? session.getEqQ(speakerType, band) : 1f;
     }
 
     /** Set EQ Q for a speaker type and band (0 to 4). Range: 0.1 to 10.0 */
     public synchronized void setEqQ(String speakerType, int band, float q) {
-        if (band < 0 || band > 4) return;
-        q = Math.max(0.1f, Math.min(q, 10.0f));
-        if ("sub".equals(speakerType)) subEqQ[band] = q;
-        else if ("mid".equals(speakerType)) midEqQ[band] = q;
-        else if ("line".equals(speakerType)) lineEqQ[band] = q;
+        PlaybackSession session = getActiveSession();
+        if (session != null) session.setEqQ(speakerType, band, q);
     }
 
     /**
@@ -749,7 +747,9 @@ public class AudioEngine {
      * position.
      */
     public int getSampleRateForClock() {
-        for (AudioStreamBuffer buffer : getActiveSession().getStreamBuffers().values()) {
+        PlaybackSession session = getActiveSession();
+        if (session == null) return 48000;
+        for (AudioStreamBuffer buffer : session.getStreamBuffers().values()) {
             if (buffer.sampleRate > 0) {
                 return buffer.sampleRate;
             }
@@ -869,8 +869,10 @@ public class AudioEngine {
         // preset.
         // Otherwise, the player will be stuck with the stadium reverb forever.
         // Guard: only clear if we were actually playing (not during device recovery)
-        if (getActiveSession().isPlaying()
-                && getActiveSession().getStreamSources().isEmpty()
+        PlaybackSession activeSession = getActiveSession();
+        if (activeSession != null
+                && activeSession.isPlaying()
+                && activeSession.getStreamSources().isEmpty()
                 && this.venuePreset != null) {
             this.venuePreset = null;
             this.venuePresetApplied = false;
@@ -1119,7 +1121,8 @@ public class AudioEngine {
         efxInitialized = false;
     }
 
-    // Speaker Types for Cache Keys
+    // Pan constant for reverb calls — reused to avoid per-frame allocation
+    private static final float[] ZERO_PAN = {0f, 0f, 0f};
     private static final String TYPE_NORMAL = "normal";
     private static final String TYPE_SUB = "sub";
     private static final String TYPE_MID = "mid";
@@ -1136,19 +1139,22 @@ public class AudioEngine {
         OggDecoder.RawTrackData rawData = OggDecoder.loadOgg("sounds/" + trackId + ".ogg");
         if (rawData == null) return;
 
-        // Create 3 Buffers (Sub, Mid, Line) + Normal?
-        createStreamBufferForType(session, trackId, rawData, TYPE_SUB);
-        createStreamBufferForType(session, trackId, rawData, TYPE_MID);
-        createStreamBufferForType(session, trackId, rawData, TYPE_LINE);
-        createStreamBufferForType(session, trackId, rawData, TYPE_NORMAL);
-
-        // Free the native PCM buffer to prevent memory leak
-        MemoryUtil.memFree(rawData.pcmData);
+        try {
+            // Create 3 Buffers (Sub, Mid, Line) + Normal?
+            createStreamBufferForType(session, trackId, rawData, TYPE_SUB);
+            createStreamBufferForType(session, trackId, rawData, TYPE_MID);
+            createStreamBufferForType(session, trackId, rawData, TYPE_LINE);
+            createStreamBufferForType(session, trackId, rawData, TYPE_NORMAL);
+        } finally {
+            // Free the native PCM buffer to prevent memory leak even on exception
+            MemoryUtil.memFree(rawData.pcmData);
+        }
     }
 
     private void createStreamBufferForType(
             PlaybackSession session, String trackId, OggDecoder.RawTrackData rawData, String type) {
-        // Clone data for processing
+        // Clone data for processing — rewind BEFORE remaining() so every type gets the full PCM
+        rawData.pcmData.rewind();
         short[] audioData = new short[rawData.pcmData.remaining()];
         rawData.pcmData.rewind();
         rawData.pcmData.get(audioData);
@@ -1172,21 +1178,17 @@ public class AudioEngine {
         // Pre-gain for headroom: fixed at 0.60 for all incoming tracks
         AudioDSP.applyGain(audioData, 0.60f);
         if (TYPE_SUB.equals(speakerType)) {
-            // 24dB/oct Butterworth LP crossover at 100Hz
-            AudioDSP.applyFilter(audioData, sampleRate, AudioDSP.FilterType.LOW_PASS, 100, 0.707f, 0);
-            AudioDSP.applyFilter(audioData, sampleRate, AudioDSP.FilterType.LOW_PASS, 100, 0.707f, 0);
+            // 24dB/oct Butterworth LP at 120Hz — subwoofer only
+            AudioDSP.applyFilter(audioData, sampleRate, AudioDSP.FilterType.LOW_PASS, 120, 0.707f, 0);
+            AudioDSP.applyFilter(audioData, sampleRate, AudioDSP.FilterType.LOW_PASS, 120, 0.707f, 0);
         } else if (TYPE_MID.equals(speakerType)) {
-            // 24dB/oct HP at 100Hz (matches sub crossover) + 24dB/oct LP at 2000Hz
-            AudioDSP.applyFilter(audioData, sampleRate, AudioDSP.FilterType.HIGH_PASS, 100, 0.707f, 0);
-            AudioDSP.applyFilter(audioData, sampleRate, AudioDSP.FilterType.HIGH_PASS, 100, 0.707f, 0);
-            AudioDSP.applyFilter(audioData, sampleRate, AudioDSP.FilterType.LOW_PASS, 2000, 0.707f, 0);
-            AudioDSP.applyFilter(audioData, sampleRate, AudioDSP.FilterType.LOW_PASS, 2000, 0.707f, 0);
+            // Yamaha HS8 full-range monitor: 45Hz-24kHz.
+            // Gentle HP at 45Hz simulates the -3dB rolloff noktasi
+            AudioDSP.applyFilter(audioData, sampleRate, AudioDSP.FilterType.HIGH_PASS, 45, 0.577f, 0);
         } else if (TYPE_LINE.equals(speakerType)) {
-            // Line arrays in real life output both Mid and High frequencies (everything
-            // except Sub)
-            // 24dB/oct HP at 100Hz (no Low-Pass so it extends to 20kHz)
-            AudioDSP.applyFilter(audioData, sampleRate, AudioDSP.FilterType.HIGH_PASS, 100, 0.707f, 0);
-            AudioDSP.applyFilter(audioData, sampleRate, AudioDSP.FilterType.HIGH_PASS, 100, 0.707f, 0);
+            // 24dB/oct HP at 120Hz — sub ile eslesir, altini keser
+            AudioDSP.applyFilter(audioData, sampleRate, AudioDSP.FilterType.HIGH_PASS, 120, 0.707f, 0);
+            AudioDSP.applyFilter(audioData, sampleRate, AudioDSP.FilterType.HIGH_PASS, 120, 0.707f, 0);
         }
 
         // SAFETY LIMITER: Prevents hard digital clipping
@@ -1222,12 +1224,6 @@ public class AudioEngine {
     private void finalizePlaybackPipeline(
             java.util.UUID sessionUUID, List<BlockPos> speakers, float power, float inputGain, boolean atomicStart) {
         if (speakers == null || speakers.isEmpty()) return;
-
-        // CRITICAL: Initialize the master clock synchronously BEFORE enabling playback,
-        // otherwise the AudioThread might wake up, read an old streamStartTime (from a
-        // previous song),
-        // and ruin the entire buffer outputCursor before the async venue scan finishes!
-        sessions.get(sessionUUID).setStreamStartTime(System.nanoTime());
 
         sessions.get(sessionUUID).setPlaying(true);
         sessions.get(sessionUUID).setPaused(false);
@@ -1508,6 +1504,10 @@ public class AudioEngine {
     public void startPlaybackWithVenueScan(
             PlaybackSession session, World world, List<BlockPos> speakers, boolean atomicStart) {
         Runnable startPlayback = () -> {
+            // Start the master clock HERE — after venue scan completes,
+            // so the audio thread reads from the correct position immediately
+            session.setStreamStartTime(System.nanoTime());
+
             if (MinecraftClient.getInstance().cameraEntity != null) {
                 this.listenerPos = MinecraftClient.getInstance().cameraEntity.getPos();
                 this.smoothedListenerPos = this.listenerPos;
@@ -1594,9 +1594,10 @@ public class AudioEngine {
         sessions.computeIfAbsent(sessionUUID, k -> new PlaybackSession(this)).stopAll();
         resetGlobalVenueState(speakers);
 
+        java.nio.ShortBuffer pcmBuffer = null;
         try {
             // Wrap PCM data into RawTrackData
-            java.nio.ShortBuffer pcmBuffer = org.lwjgl.system.MemoryUtil.memAllocShort(pcmData.length);
+            pcmBuffer = org.lwjgl.system.MemoryUtil.memAllocShort(pcmData.length);
             pcmBuffer.put(pcmData);
             pcmBuffer.flip();
 
@@ -1616,12 +1617,15 @@ public class AudioEngine {
             createStreamBufferForType(sessions.get(sessionUUID), "url_track", rawData, TYPE_MID);
             createStreamBufferForType(sessions.get(sessionUUID), "url_track", rawData, TYPE_LINE);
             createStreamBufferForType(sessions.get(sessionUUID), "url_track", rawData, TYPE_NORMAL);
-            org.lwjgl.system.MemoryUtil.memFree(pcmBuffer);
 
             finalizePlaybackPipeline(sessionUUID, speakers, power, inputGain, true);
 
         } catch (Exception e) {
             e.printStackTrace();
+        } finally {
+            if (pcmBuffer != null) {
+                org.lwjgl.system.MemoryUtil.memFree(pcmBuffer);
+            }
         }
     }
 

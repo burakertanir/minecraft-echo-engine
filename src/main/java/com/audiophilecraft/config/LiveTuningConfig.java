@@ -48,10 +48,10 @@ public class LiveTuningConfig {
     public float sub_rolloffExponent = 1.5f;
     public float mid_refDist = 7.0f;
     public float mid_baseMaxDist = 100.0f;
-    public float mid_rolloffExponent = 1.8f;
+    public float mid_rolloffExponent = 1.4f;
     public float line_refDist = 5.0f;
     public float line_baseMaxDist = 90.0f;
-    public float line_rolloffExponent = 2.0f;
+    public float line_rolloffExponent = 1.6f;
     public float fadeStartPercent = 0.8f;
 
     // ════════════════════════════════════════════════════════════
