@@ -12,19 +12,26 @@ public class SpeakerScreenHandler extends ScreenHandler {
     private final BlockPos pos;
     private int sampleShift;
     private int verticalTiltDeg;
+    private int channelMask;
 
     // Server Constructor
     public SpeakerScreenHandler(
-            int syncId, PlayerInventory playerInventory, BlockPos pos, int sampleShift, int verticalTiltDeg) {
+            int syncId,
+            PlayerInventory playerInventory,
+            BlockPos pos,
+            int sampleShift,
+            int verticalTiltDeg,
+            int channelMask) {
         super(ModScreenHandlers.SPEAKER_SCREEN_HANDLER, syncId);
         this.pos = pos;
         this.sampleShift = sampleShift;
         this.verticalTiltDeg = verticalTiltDeg;
+        this.channelMask = channelMask;
     }
 
     // Client Constructor
     public SpeakerScreenHandler(int syncId, PlayerInventory playerInventory, PacketByteBuf buf) {
-        this(syncId, playerInventory, buf.readBlockPos(), buf.readInt(), buf.readInt());
+        this(syncId, playerInventory, buf.readBlockPos(), buf.readInt(), buf.readInt(), buf.readInt());
     }
 
     public int getSampleShift() {
@@ -41,6 +48,14 @@ public class SpeakerScreenHandler extends ScreenHandler {
 
     public void setVerticalTiltDeg(int deg) {
         this.verticalTiltDeg = deg;
+    }
+
+    public int getChannelMask() {
+        return channelMask;
+    }
+
+    public void setChannelMask(int mask) {
+        this.channelMask = mask;
     }
 
     @Override

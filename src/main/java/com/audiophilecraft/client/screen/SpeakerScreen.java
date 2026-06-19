@@ -9,6 +9,7 @@ import net.fabricmc.fabric.api.networking.v1.PacketByteBufs;
 import net.minecraft.client.MinecraftClient;
 import net.minecraft.client.gui.DrawContext;
 import net.minecraft.client.gui.screen.ingame.HandledScreen;
+import net.minecraft.client.gui.widget.ButtonWidget;
 import net.minecraft.client.gui.widget.SliderWidget;
 import net.minecraft.entity.player.PlayerInventory;
 import net.minecraft.network.PacketByteBuf;
@@ -24,6 +25,8 @@ public class SpeakerScreen extends HandledScreen<SpeakerScreenHandler> {
     private float timeOffset = 0f;
     private static final int[] currentColors = new int[] {0xFF333333, 0xFF555555, 0xFF444444, 0xFF333333};
     private static final int currentAdaptiveThemeColor = 0xFFFFFFFF;
+
+    private static final String[] CHANNEL_LABELS = {"BOTH", "L", "R"};
 
     public SpeakerScreen(SpeakerScreenHandler handler, PlayerInventory inventory, Text title) {
         super(handler, inventory, title);
@@ -70,6 +73,40 @@ public class SpeakerScreen extends HandledScreen<SpeakerScreenHandler> {
                     initialTilt);
             addDrawableChild(tiltSlider);
         }
+
+        // Channel toggle buttons (Mid + Line only)
+        boolean allowsChannel = pos != null
+                && MinecraftClient.getInstance().world != null
+                && (MinecraftClient.getInstance().world.getBlockState(pos).getBlock() instanceof MidRangeBlock
+                        || MinecraftClient.getInstance()
+                                        .world
+                                        .getBlockState(pos)
+                                        .getBlock()
+                                instanceof LineArrayBlock);
+        if (allowsChannel) {
+            int btnY = startY + (allowsTilt ? 70 : 35);
+            int btnWidth = 40;
+            int totalBtnWidth = btnWidth * 3 + 8;
+            int btnX = x + (backgroundWidth - totalBtnWidth) / 2;
+
+            int currentMask = handler.getChannelMask();
+            for (int i = 0; i < 3; i++) {
+                final int mask = i;
+                boolean isSelected = (currentMask == mask);
+                Text label = isSelected ? Text.literal("[" + CHANNEL_LABELS[i] + "]") : Text.literal(CHANNEL_LABELS[i]);
+                ButtonWidget btn = ButtonWidget.builder(label, b -> {
+                            handler.setChannelMask(mask);
+                            updateClientBlockEntity(mask);
+                            sendChannelMaskUpdate(mask);
+                            applyChannelMaskToRunningSources(mask);
+                            clearChildren();
+                            init();
+                        })
+                        .dimensions(btnX + i * (btnWidth + 4), btnY, btnWidth, 20)
+                        .build();
+                addDrawableChild(btn);
+            }
+        }
     }
 
     @Override
@@ -84,6 +121,32 @@ public class SpeakerScreen extends HandledScreen<SpeakerScreenHandler> {
             buf.writeBlockPos(handler.getPos());
             buf.writeInt(shift);
             ClientPlayNetworking.send(ModMessages.C2S_UPDATE_SPEAKER_SHIFT, buf);
+        }
+    }
+
+    private void sendChannelMaskUpdate(int mask) {
+        if (handler.getPos() != null) {
+            PacketByteBuf buf = PacketByteBufs.create();
+            buf.writeBlockPos(handler.getPos());
+            buf.writeInt(mask);
+            ClientPlayNetworking.send(ModMessages.C2S_CHANNEL_MASK, buf);
+        }
+    }
+
+    private void applyChannelMaskToRunningSources(int mask) {
+        BlockPos speakerPos = handler.getPos();
+        if (speakerPos == null) return;
+        com.audiophilecraft.sound.AudioEngine engine = com.audiophilecraft.sound.AudioEngine.getInstance();
+        engine.applyChannelMaskToSpeaker(speakerPos, mask);
+    }
+
+    private void updateClientBlockEntity(int mask) {
+        BlockPos pos = handler.getPos();
+        if (pos == null || MinecraftClient.getInstance().world == null) return;
+        net.minecraft.block.entity.BlockEntity be =
+                MinecraftClient.getInstance().world.getBlockEntity(pos);
+        if (be instanceof com.audiophilecraft.block.entity.SpeakerBlockEntity speaker) {
+            speaker.setChannelMask(mask);
         }
     }
 

@@ -51,9 +51,9 @@ dependencies {
 	include("com.fasterxml.jackson.core:jackson-annotations:2.15.2")
 
 	// YouTube Source Plugin — Replaces deprecated built-in YouTube source
-	implementation("dev.lavalink.youtube:v2:1.18.0")
-	include("dev.lavalink.youtube:v2:1.18.0")
-	include("dev.lavalink.youtube:common:1.18.0")
+	implementation("dev.lavalink.youtube:v2:1.18.1")
+	include("dev.lavalink.youtube:v2:1.18.1")
+	include("dev.lavalink.youtube:common:1.18.1")
 	include("com.grack:nanojson:1.7")
 
 	// Lavaplayer Natives (Required for audio decoding, otherwise playback silently fails)
@@ -111,4 +111,10 @@ loom {
             programArgs "--username", "DevBurak"
         }
     }
+}
+
+// jemalloc native crash workaround: set env var + jvm args on runClient task
+tasks.named('runClient') {
+    environment "JEMALLOC_CONF", "background_thread:false,dirty_decay_ms:0,muzzy_decay_ms:0"
+    jvmArgs "-Djdk.nio.maxCachedBufferSize=262144"
 }

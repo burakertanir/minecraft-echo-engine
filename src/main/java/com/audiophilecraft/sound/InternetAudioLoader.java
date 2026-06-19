@@ -52,15 +52,16 @@ public class InternetAudioLoader {
 
     /**
      * Callback interface for async track loading.
+     * pcmInterleaved is [L,R,L,R,...] for stereo sources, or [M,M,M,...] for mono.
      */
     public interface TrackLoadCallback {
-        void onTrackLoaded(short[] pcmData, int sampleRate, String trackTitle);
+        void onTrackLoaded(short[] pcmInterleaved, int sampleRate, String trackTitle);
 
         void onFailed(String reason);
     }
 
     public interface StreamingCallback {
-        void onReady(short[] pcmArray, int decodedSamples, int totalExpected, int sampleRate, String title);
+        void onReady(short[] pcmInterleaved, int decodedFrames, int totalExpectedFrames, int sampleRate, String title);
 
         void onMoreData(int totalDecoded);
 
@@ -153,14 +154,11 @@ public class InternetAudioLoader {
         int sampleRate = 48000;
         int channels = 2;
         int totalDecoded = 0;
-        short[] pcm = null;
+        short[] pcmInterleaved = null;
         int prebufferTarget;
         String title = track.getInfo().title;
         var player = playerManager.createPlayer();
         try {
-            // CRITICAL BUGFIX: We MUST clone the track. If the user plays the exact same URL twice,
-            // LavaPlayer uses the cached AudioTrack instance. A track can only be played once,
-            // so without cloning it, the second playback instantly fails and returns no audio!
             player.playTrack(track.makeClone());
             AudioFrame first = player.provide(5000, java.util.concurrent.TimeUnit.MILLISECONDS);
             if (first != null && first.getFormat() != null) {
@@ -169,33 +167,33 @@ public class InternetAudioLoader {
             }
             prebufferTarget = 10 * sampleRate;
             long durMs = track.getDuration();
-            if (durMs <= 0 || durMs > 5 * 60 * 1000)
-                durMs = 5 * 60 * 1000; // Cap at 5 min to avoid 115MB heap allocation
+            if (durMs <= 0 || durMs > 5 * 60 * 1000) durMs = 5 * 60 * 1000;
             int totalExpected = (int) (durMs / 1000.0 * sampleRate);
-            pcm = new short[totalExpected];
+            // Interleaved stereo: [L0,R0, L1,R1, L2,R2, ...], length = frames * 2
+            pcmInterleaved = new short[totalExpected * 2];
             if (first != null && first.getData() != null && first.getData().length > 0) {
-                totalDecoded += copyFrameToPcm(first, pcm, totalDecoded, channels);
+                totalDecoded += copyFrameToPcm(first, pcmInterleaved, totalDecoded, channels);
             }
             int timeouts = 0;
             while (totalDecoded < prebufferTarget) {
                 AudioFrame f = player.provide(5000, java.util.concurrent.TimeUnit.MILLISECONDS);
-                if (f == null || f.getData() == null) {
+                if (f == null || f.getData() == null || f.getData().length == 0) {
                     if (player.getPlayingTrack() == null) break;
                     timeouts++;
-                    if (timeouts > 4) { // 20 seconds
+                    if (timeouts > 4) {
                         throw new RuntimeException("Stream buffering timed out! (Network/IPv6 or Codec issue)");
                     }
                     continue;
                 }
                 timeouts = 0;
-                totalDecoded += copyFrameToPcm(f, pcm, totalDecoded, channels);
+                totalDecoded += copyFrameToPcm(f, pcmInterleaved, totalDecoded, channels);
             }
             if (totalDecoded == 0) {
                 throw new RuntimeException("0 samples decoded. Stream failed to start.");
             }
             final int prebuffered = totalDecoded;
             final int finalSR = sampleRate;
-            final short[] pcmFinal = pcm;
+            final short[] pcmFinal = pcmInterleaved;
             net.minecraft.client.MinecraftClient.getInstance()
                     .execute(() -> callback.onReady(pcmFinal, prebuffered, totalExpected, finalSR, title));
             while (true) {
@@ -206,7 +204,7 @@ public class InternetAudioLoader {
                     if (f == null) break;
                 }
                 if (f.getData() == null || f.getData().length == 0) continue;
-                totalDecoded += copyFrameToPcm(f, pcm, totalDecoded, channels);
+                totalDecoded += copyFrameToPcm(f, pcmInterleaved, totalDecoded, channels);
                 final int td = totalDecoded;
                 net.minecraft.client.MinecraftClient.getInstance().execute(() -> callback.onMoreData(td));
                 if (totalDecoded >= totalExpected) break;
@@ -221,26 +219,27 @@ public class InternetAudioLoader {
         }
     }
 
+    /**
+     * Copy a decoded audio frame into the interleaved PCM array.
+     * @return number of frames (not shorts) written
+     */
     private int copyFrameToPcm(AudioFrame frame, short[] dest, int offset, int channels) {
         byte[] data = frame.getData();
         if (data == null) return 0;
-        short[] samples = new short[data.length / 2];
+        int frames = data.length / (2 * channels);
+        // Clamp to destination capacity to avoid ArrayIndexOutOfBounds
+        int maxFrames = dest.length / channels - offset;
+        if (maxFrames <= 0) return 0;
+        if (frames > maxFrames) frames = maxFrames;
         java.nio.ByteBuffer.wrap(data)
                 .order(java.nio.ByteOrder.BIG_ENDIAN)
                 .asShortBuffer()
-                .get(samples);
-        int count = samples.length / channels;
-        for (int i = 0; i < count && offset + i < dest.length; i++) {
-            int sum = samples[i * channels] + (channels >= 2 ? samples[i * channels + 1] : samples[i * channels]);
-            int mono = Math.round(sum * (1.0f / channels));
-            dest[offset + i] = (short) Math.max(-32768, Math.min(32767, mono));
-        }
-        return Math.min(count, dest.length - offset);
+                .get(dest, offset * channels, frames * channels);
+        return frames;
     }
 
     /**
-     * Decode an AudioTrack to mono PCM/**
-     * Decode an AudioTrack to mono PCM (16-bit signed, native sample rate).
+     * Decode an AudioTrack to interleaved stereo PCM.
      * This blocks until the entire track is decoded.
      */
     private void decodeTrack(AudioTrack track, TrackLoadCallback callback) {
@@ -248,11 +247,9 @@ public class InternetAudioLoader {
             AudioTrackInfo info = track.getInfo();
             String title = info.title;
 
-            // LavaPlayer outputs stereo PCM at the source's native sample rate
             int sampleRate = 48000;
             int channels = 2;
 
-            // Estimate buffer size: duration (ms) * sampleRate / 1000 * channels
             long durationMs = track.getDuration();
             if (durationMs <= 0 || durationMs > 20 * 60 * 1000) {
                 durationMs = 20 * 60 * 1000;
@@ -266,12 +263,10 @@ public class InternetAudioLoader {
             try {
                 player.playTrack(track);
 
-                // Read first frame to get real sample rate (VBR fix)
                 AudioFrame firstFrame = player.provide(5000, java.util.concurrent.TimeUnit.MILLISECONDS);
                 if (firstFrame != null && firstFrame.getFormat() != null) {
                     sampleRate = firstFrame.getFormat().sampleRate;
                     channels = firstFrame.getFormat().channelCount;
-                    // Reprocess first frame
                     byte[] data = firstFrame.getData();
                     if (data != null && data.length > 0) {
                         short[] samples = new short[data.length / 2];
@@ -289,12 +284,7 @@ public class InternetAudioLoader {
                     AudioFrame frame = player.provide(5000, java.util.concurrent.TimeUnit.MILLISECONDS);
 
                     if (frame == null) {
-                        // No more data or timeout — check if track ended
-                        if (player.getPlayingTrack() == null) {
-                            break; // Track finished
-                        }
-                        // Timeout without data, but track still playing — might be buffering
-                        // Try a few more times then give up
+                        if (player.getPlayingTrack() == null) break;
                         frame = player.provide(10000, java.util.concurrent.TimeUnit.MILLISECONDS);
                         if (frame == null) {
                             break;
@@ -323,30 +313,16 @@ public class InternetAudioLoader {
                 return;
             }
 
-            // Merge all chunks into a single array
+            // Merge all chunks into a single interleaved stereo array
             short[] stereoData = new short[totalSamples];
             int offset = 0;
             for (short[] chunk : chunks) {
                 System.arraycopy(chunk, 0, stereoData, offset, chunk.length);
                 offset += chunk.length;
             }
-            chunks.clear(); // Free memory
+            chunks.clear();
 
-            // Downmix stereo to mono (required for 3D OpenAL spatialization)
-            int monoSamples = totalSamples / channels;
-            short[] monoData = new short[monoSamples];
-            for (int i = 0; i < monoSamples; i++) {
-                int left = stereoData[i * 2];
-                int right = stereoData[i * 2 + 1];
-                int sum = (left + right);
-                int mono = Math.round(sum * 0.5f);
-                if (mono > 32767) mono = 32767;
-                if (mono < -32768) mono = -32768;
-                monoData[i] = (short) mono;
-            }
-            stereoData = null; // Free stereo data
-
-            callback.onTrackLoaded(monoData, sampleRate, title);
+            callback.onTrackLoaded(stereoData, sampleRate, title);
 
         } catch (Throwable e) {
             System.err.println("InternetAudioLoader: Decode error: " + e.toString());

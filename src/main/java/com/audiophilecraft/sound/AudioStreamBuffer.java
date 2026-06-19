@@ -4,214 +4,204 @@ import java.nio.ShortBuffer;
 import org.lwjgl.system.MemoryUtil;
 
 /**
- * Manages a global Ring Buffer for a specific audio track.
- * Supports both full-load and streaming (incremental decode) modes.
+ * Manages PCM audio data with per-channel access for stereo.
+ * Streaming mode: interleaved short[] (L,R,L,R,...).
+ * Legacy mode: interleaved ShortBuffer (L,R,L,R,...).
  *
- * STREAMING MODE: Data is decoded in chunks on a background thread.
- * The ring buffer advance() reads from pcmArray up to decodedLength.
- * Samples beyond decodedLength return silence until decoded.
+ * Ring buffer stores mono mix for BOTH channel (backward compat).
+ * LEFT/RIGHT read directly from interleaved array at appropriate offset.
  */
 public class AudioStreamBuffer {
 
     public final String trackId;
     public final int sampleRate;
-    public final int channels;
 
-    // The Ring Buffer (Stores ~47 seconds of audio)
-    // 2097152 = 2^21 samples. At 48kHz -> ~43.7 seconds.
-    // MUST BE A POWER OF TWO for bitwise masking.
+    private static final int BUFFER_SIZE = 2097152;
+    private static final int BUFFER_MASK = BUFFER_SIZE - 1;
+
     private final short[] ringBuffer;
-    private final int bufferSize;
-    private final int bufferMask; // Fast bitwise modulo
+    private volatile long globalWriteCursor = 0;
 
-    // Heads
-    private volatile long globalWriteCursor = 0; // Total samples written since start (volatile: read by audio thread)
+    // ── STREAMING MODE: interleaved stereo array ──
+    // pcmInterleaved = [L0, R0, L1, R1, L2, R2, ...]
+    // Number of frames = pcmInterleaved.length / 2
+    private short[] pcmInterleaved;
+    private volatile int decodedLength = 0;
+    private int totalExpectedSamples = 0;
+    private volatile int readCursor = 0;
 
-    // ── STREAMING MODE FIELDS ──
-    // Raw PCM array: entire track's worth of space, filled incrementally
-    private short[] pcmArray;
-    private volatile int decodedLength = 0; // How many mono samples have been decoded so far
-    private int totalExpectedSamples = 0; // Total expected samples (from OGG header)
-    private volatile int readCursor = 0; // Sequential read position — int is safe because pcmArray is int-indexed
-
-    // Legacy mode (backward compatibility)
-    private ShortBuffer fullPcmData; // Source data (entire track) — used by URL path
+    // ── LEGACY MODE ──
+    private ShortBuffer fullPcmData; // Interleaved stereo ShortBuffer
 
     public AudioStreamBuffer(String trackId, int sampleRate) {
         this.trackId = trackId;
         this.sampleRate = sampleRate;
-        this.channels = 1;
-
-        // 47 Seconds buffer for safety (max delay + jitter)
-        this.bufferSize = 2097152;
-        this.bufferMask = this.bufferSize - 1;
-        this.ringBuffer = new short[bufferSize];
+        this.ringBuffer = new short[BUFFER_SIZE];
     }
 
-    // ── STREAMING MODE SETUP ──
-
-    /**
-     * Initialize for streaming mode: allocates the full PCM array but marks
-     * only initialLength samples as available. Background thread continues
-     * filling via appendDecoded().
-     */
-    public void initStreaming(short[] data, int initialDecodedLength, int totalExpected) {
-        this.pcmArray = data;
+    /** Init with interleaved stereo data: [L,R,L,R,...] */
+    public void initStreaming(short[] interleaved, int initialDecodedLength, int totalExpected) {
+        this.pcmInterleaved = interleaved;
         this.decodedLength = initialDecodedLength;
         this.totalExpectedSamples = totalExpected;
         this.readCursor = 0;
-        this.fullPcmData = null; // Disable legacy mode
+        this.fullPcmData = null;
     }
 
-    /**
-     * Update the decoded length (called from background decoder thread).
-     * Thread-safe: only moves forward, audio thread reads up to this value.
-     */
     public void updateDecodedLength(int newLength) {
         this.decodedLength = newLength;
     }
 
-    // ── LEGACY MODE ──
-
     public void setSourceData(ShortBuffer pcm) {
         this.fullPcmData = pcm;
-        this.pcmArray = null; // Disable streaming mode
+        this.pcmInterleaved = null;
     }
 
-    // ── COMMON API ──
-
     public double getTotalDurationSeconds() {
-        if (pcmArray != null && sampleRate > 0) {
-            return (double) totalExpectedSamples / sampleRate;
-        }
-        if (fullPcmData != null && sampleRate > 0) {
-            return (double) fullPcmData.capacity() / sampleRate;
-        }
+        if (pcmInterleaved != null && sampleRate > 0) return (double) totalExpectedSamples / sampleRate;
+        if (fullPcmData != null && sampleRate > 0) return (double) (fullPcmData.capacity() / 2) / sampleRate;
         return 0.0;
     }
 
     public void seekToTime(double timeSeconds) {
         if (sampleRate <= 0) return;
-
         long targetCursor = (long) (timeSeconds * sampleRate);
-
         long maxSamples = getTotalSamples();
         if (targetCursor > maxSamples - 1) targetCursor = maxSamples - 1;
-        // Ensure within bounds (must be after maxSamples check to prevent -1)
         if (targetCursor < 0) targetCursor = 0;
 
-        // Reset read position
-        if (pcmArray != null) {
+        if (pcmInterleaved != null) {
             this.readCursor = (int) targetCursor;
         } else if (fullPcmData != null) {
-            fullPcmData.position((int) targetCursor);
+            fullPcmData.position((int) targetCursor * 2);
         }
 
-        // Zero ring buffer BEFORE updating cursor so audio thread never sees
-        // cursor pointing to partially-wiped data
         java.util.Arrays.fill(ringBuffer, (short) 0);
-
-        // Forcibly jump the stream cursor (volatile — read by audio thread)
         this.globalWriteCursor = targetCursor;
     }
 
-    /**
-     * Advances the write cursor and fills the ring buffer with new data.
-     * Called every tick by the audio thread.
-     */
+    /** Advance the ring buffer by writing mono mix (avg of L/R) from interleaved source. */
     public void advance(int samplesNeeded) {
         if (samplesNeeded <= 0) return;
 
-        if (pcmArray != null) {
-            // ── STREAMING MODE ──
-            int currentDecoded = decodedLength; // Snapshot volatile once
+        if (pcmInterleaved != null) {
+            int currentDecoded = decodedLength;
             for (int i = 0; i < samplesNeeded; i++) {
                 short sample = 0;
                 if (readCursor < currentDecoded) {
-                    sample = pcmArray[(int) (readCursor++)];
+                    int idx = readCursor * 2;
+                    int left = pcmInterleaved[idx];
+                    int right = pcmInterleaved[idx + 1];
+                    sample = (short) ((left + right + 1) >> 1); // round average
+                    readCursor++;
                 } else if (readCursor < totalExpectedSamples) {
-                    // Not yet decoded — output silence, keep readCursor in place
-                    // so when decoder catches up, these samples play correctly
+                    // Not yet decoded — silence, keep readCursor in place
                 }
-
-                int index = (int) (globalWriteCursor & bufferMask);
-                ringBuffer[index] = sample;
+                ringBuffer[(int) (globalWriteCursor & BUFFER_MASK)] = sample;
                 globalWriteCursor++;
             }
         } else if (fullPcmData != null) {
-            // ── LEGACY MODE ──
             for (int i = 0; i < samplesNeeded; i++) {
                 short sample = 0;
                 if (fullPcmData.hasRemaining()) {
-                    sample = fullPcmData.get();
+                    // Read mono (avg of L+R)
+                    int left = fullPcmData.get();
+                    if (fullPcmData.hasRemaining()) {
+                        int right = fullPcmData.get();
+                        sample = (short) ((left + right + 1) >> 1);
+                    } else {
+                        sample = (short) left;
+                    }
                 }
-
-                int index = (int) (globalWriteCursor & bufferMask);
-                ringBuffer[index] = sample;
+                ringBuffer[(int) (globalWriteCursor & BUFFER_MASK)] = sample;
                 globalWriteCursor++;
             }
         }
     }
 
-    /**
-     * Synchronizes the buffer to a specific absolute time point in the track.
-     * If we are behind, it fast-forwards.
-     */
     public void syncToTime(double timeSeconds) {
         long targetCursor = (long) (timeSeconds * sampleRate);
         long diff = targetCursor - globalWriteCursor;
-
-        // Prevent micro-jitter from violently scrubbing backwards
         if (diff > sampleRate * 15.0 || diff < -sampleRate * 0.1) {
             seekToTime(timeSeconds);
             return;
         }
-
-        if (diff > 0) {
-            advance((int) diff);
-        }
+        if (diff > 0) advance((int) diff);
     }
 
     /**
-     * Reads a sample from the ring buffer at a specific absolute position.
+     * Read a single sample at frame position {@code framePos} for the selected channel.
+     * 0=BOTH (average of L+R), 1=LEFT, 2=RIGHT.
+     * ALL channels read from the same interleaved source — zero async.
+     * Returns 0 (silence) until the decoder reaches this position.
      */
-    public short getSample(long absolutePosition) {
-        if (absolutePosition < 0) return 0;
+    public short getSample(long framePos, int channelMask) {
+        if (framePos < 0) return 0;
 
-        long writeCursor = globalWriteCursor; // snapshot volatile once
-
-        if (absolutePosition >= writeCursor) {
-            if (writeCursor <= 0) return 0;
-            absolutePosition = writeCursor - 1;
-        }
-
-        // Check if too old (overwritten)
-        if (absolutePosition < writeCursor - bufferSize) {
+        // Streaming: interleaved source
+        if (pcmInterleaved != null) {
+            int pos = (int) framePos;
+            if (pos >= 0 && pos < decodedLength) {
+                int idx = pos * 2;
+                short l = pcmInterleaved[idx];
+                short r = pcmInterleaved[idx + 1];
+                if (channelMask == 0) return (short) ((l + r + 1) >> 1);
+                return channelMask == 1 ? l : r;
+            }
             return 0;
         }
 
-        int index = (int) (absolutePosition & bufferMask);
-        return ringBuffer[index];
+        // Legacy: pre-decoded ShortBuffer
+        if (fullPcmData != null) {
+            int maxFrames = fullPcmData.limit() / 2;
+            int pos = (int) framePos;
+            if (pos >= 0 && pos < maxFrames) {
+                int l = fullPcmData.get(pos * 2);
+                int r = fullPcmData.get(pos * 2 + 1);
+                if (channelMask == 0) return (short) ((l + r + 1) >> 1);
+                return (short) (channelMask == 1 ? l : r);
+            }
+            return 0;
+        }
+
+        return 0;
     }
 
-    /**
-     * 4-Point Lagrange interpolation for fractional delay lines.
-     */
+    /** Legacy mono-only read (BOTH channel). */
+    public short getSample(long framePos) {
+        return readFromRing(framePos);
+    }
+
+    private short readFromRing(long absolutePosition) {
+        if (absolutePosition < 0) return 0;
+        long wc = globalWriteCursor;
+        if (absolutePosition >= wc) {
+            if (wc <= 0) return 0;
+            absolutePosition = wc - 1;
+        }
+        if (absolutePosition < wc - BUFFER_SIZE) return 0;
+        return ringBuffer[(int) (absolutePosition & BUFFER_MASK)];
+    }
+
     public short getSampleLagrange(double absolutePosition) {
+        return lagrange(absolutePosition, 0);
+    }
+
+    public short getSampleLagrange(double absolutePosition, int channelMask) {
+        return lagrange(absolutePosition, channelMask);
+    }
+
+    private short lagrange(double absolutePosition, int channelMask) {
         long idx = (long) Math.floor(absolutePosition);
         double f = absolutePosition - idx;
-
-        double y0 = getSample(idx - 1);
-        double y1 = getSample(idx);
-        double y2 = getSample(idx + 1);
-        double y3 = getSample(idx + 2);
-
-        // Lagrange basis polynomials evaluated at f ∈ [0, 1)
+        double y0 = getSample(idx - 1, channelMask);
+        double y1 = getSample(idx, channelMask);
+        double y2 = getSample(idx + 1, channelMask);
+        double y3 = getSample(idx + 2, channelMask);
         double out = y0 * (f * (f - 1) * (f - 2)) / (-6.0)
                 + y1 * ((f + 1) * (f - 1) * (f - 2)) / (2.0)
                 + y2 * ((f + 1) * f * (f - 2)) / (-2.0)
                 + y3 * ((f + 1) * f * (f - 1)) / (6.0);
-
         if (out > 32767.0) out = 32767.0;
         if (out < -32768.0) out = -32768.0;
         return (short) out;
@@ -222,13 +212,13 @@ public class AudioStreamBuffer {
     }
 
     public long getTotalSamples() {
-        if (pcmArray != null) return totalExpectedSamples;
-        return fullPcmData != null ? fullPcmData.limit() : 0;
+        if (pcmInterleaved != null) return totalExpectedSamples;
+        if (fullPcmData != null) return fullPcmData.limit() / 2;
+        return 0;
     }
 
-    /** Returns the raw PCM array (for streaming decode continuation). */
     public short[] getPcmArray() {
-        return pcmArray;
+        return pcmInterleaved;
     }
 
     public void cleanup() {
@@ -236,10 +226,10 @@ public class AudioStreamBuffer {
             try {
                 MemoryUtil.memFree(fullPcmData);
             } catch (Exception e) {
-                // Ignore if not freed or not alloc'd by memAlloc
+                /* ignore */
             }
         }
         fullPcmData = null;
-        pcmArray = null;
+        pcmInterleaved = null;
     }
 }

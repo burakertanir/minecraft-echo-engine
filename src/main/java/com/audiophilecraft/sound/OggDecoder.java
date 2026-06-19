@@ -14,7 +14,7 @@ import org.lwjgl.system.libc.LibCStdlib;
 public class OggDecoder {
 
     public static class RawTrackData {
-        public java.nio.ShortBuffer pcmData;
+        public java.nio.ShortBuffer pcmData; // Interleaved stereo: [L,R,L,R,...] or [M,M,M,M,...] for mono
         public int channels;
         public int sampleRate;
         public int format;
@@ -151,20 +151,19 @@ public class OggDecoder {
         }
     }
 
-    // Legacy full-decode method (kept for backward compatibility)
+    private static final boolean DEBUG_DECIBEL = false;
+
     public static RawTrackData loadOgg(String resourcePath) {
         try (MemoryStack stack = MemoryStack.stackPush()) {
             IntBuffer channels = stack.mallocInt(1);
             IntBuffer sampleRate = stack.mallocInt(1);
 
-            // Read resource into ByteBuffer
             ByteBuffer vorbisData = null;
             try {
                 var id = new net.minecraft.util.Identifier("audiophilecraft", resourcePath);
                 var resource = net.minecraft.client.MinecraftClient.getInstance()
                         .getResourceManager()
                         .getResource(id);
-
                 if (resource.isPresent()) {
                     try (var stream = resource.get().getInputStream()) {
                         byte[] bytes = stream.readAllBytes();
@@ -181,10 +180,7 @@ public class OggDecoder {
                 return null;
             }
 
-            // Decode from memory
             java.nio.ShortBuffer rawAudio = STBVorbis.stb_vorbis_decode_memory(vorbisData, channels, sampleRate);
-
-            // Clean up the raw file buffer as STB has decoded it
             MemoryUtil.memFree(vorbisData);
 
             if (rawAudio == null) {
@@ -193,51 +189,35 @@ public class OggDecoder {
             }
 
             int channelCount = channels.get(0);
-            int format = -1;
-            java.nio.ShortBuffer resultBuffer = rawAudio;
+            int sampleRateVal = sampleRate.get(0);
+            java.nio.ShortBuffer resultBuffer;
 
             if (channelCount == 1) {
-                format = AL_FORMAT_MONO16;
-                // Mono: copy data to LWJGL-managed buffer so we can free the STB buffer
-                java.nio.ShortBuffer copy = MemoryUtil.memAllocShort(rawAudio.remaining());
-                copy.put(rawAudio);
-                copy.flip();
-                resultBuffer = copy;
-            } else if (channelCount == 2) {
-                // Downmix to Mono for 3D support
-                java.nio.ShortBuffer monoAudio = MemoryUtil.memAllocShort(rawAudio.capacity() / 2);
-                for (int i = 0; i < rawAudio.capacity(); i += 2) {
-                    short left = rawAudio.get(i);
-                    short right = rawAudio.get(i + 1);
-                    int sum = (int) left + (int) right;
-                    int mono = Math.round(sum * 0.5f);
-                    if (mono > 32767) mono = 32767;
-                    if (mono < -32768) mono = -32768;
-                    monoAudio.put((short) mono);
+                // Mono: duplicate to pseudo-stereo [M,M,M,M,...]
+                int frames = rawAudio.capacity();
+                resultBuffer = MemoryUtil.memAllocShort(frames * 2);
+                for (int i = 0; i < frames; i++) {
+                    short s = rawAudio.get(i);
+                    resultBuffer.put(s);
+                    resultBuffer.put(s);
                 }
-                monoAudio.flip();
-                resultBuffer = monoAudio;
-                format = AL_FORMAT_MONO16;
-                channelCount = 1;
+                resultBuffer.flip();
+                // Free STB's buffer (it used C alloc, not MemoryUtil)
+                LibCStdlib.free(rawAudio);
+            } else if (channelCount == 2) {
+                // Already interleaved stereo — use as-is
+                resultBuffer = rawAudio;
             } else {
-                // Unknown channel count — wrap in LWJGL buffer to avoid double-free
-                java.nio.ShortBuffer copy = MemoryUtil.memAllocShort(rawAudio.remaining());
-                copy.put(rawAudio);
-                copy.flip();
-                resultBuffer = copy;
-                System.err.println("AudiophileCraft: Unsupported Ogg channel count: " + channelCount);
+                System.err.println("AudiophileCraft: Unsupported channel count: " + channelCount);
+                LibCStdlib.free(rawAudio);
+                return null;
             }
-
-            // Free the STB-allocated buffer using C's free() (STB uses malloc internally)
-            // MemoryUtil.memFree() uses LWJGL's allocator and causes Access Violation.
-            LibCStdlib.free(rawAudio);
 
             RawTrackData data = new RawTrackData();
             data.pcmData = resultBuffer;
             data.channels = channelCount;
-            data.sampleRate = sampleRate.get(0);
-            data.format = format;
-
+            data.sampleRate = sampleRateVal;
+            data.format = AL_FORMAT_MONO16;
             return data;
         }
     }

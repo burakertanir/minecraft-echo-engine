@@ -25,6 +25,8 @@ public class SpeakerBlockEntity extends BlockEntity implements ExtendedScreenHan
 
     private int verticalTiltDeg = 0; // -70 to +70 degrees (Line Array only)
 
+    private int channelMask = 0; // 0=BOTH, 1=LEFT, 2=RIGHT (Mid + Line Array only)
+
     private UUID ownerUUID = null; // Who placed this speaker (for future multiplayer filtering)
 
     public SpeakerBlockEntity(BlockPos pos, BlockState state) {
@@ -66,72 +68,67 @@ public class SpeakerBlockEntity extends BlockEntity implements ExtendedScreenHan
         }
     }
 
+    public int getChannelMask() {
+        return channelMask;
+    }
+
+    public void setChannelMask(int mask) {
+        this.channelMask = Math.max(0, Math.min(2, mask));
+        markDirty();
+        if (world != null && !world.isClient) {
+            world.updateListeners(pos, getCachedState(), getCachedState(), 3);
+        }
+    }
+
     @Override
     public void writeScreenOpeningData(ServerPlayerEntity player, PacketByteBuf buf) {
-
         buf.writeBlockPos(pos);
-
         buf.writeInt(sampleShift);
-
         buf.writeInt(verticalTiltDeg);
+        buf.writeInt(channelMask);
     }
 
     @Override
     public Text getDisplayName() {
-
         return Text.literal("Speaker Settings");
     }
 
     @Nullable
     @Override
     public ScreenHandler createMenu(int syncId, PlayerInventory playerInventory, PlayerEntity player) {
-
-        return new SpeakerScreenHandler(syncId, playerInventory, this.pos, this.sampleShift, this.verticalTiltDeg);
+        return new SpeakerScreenHandler(
+                syncId, playerInventory, this.pos, this.sampleShift, this.verticalTiltDeg, this.channelMask);
     }
 
     public UUID getOwnerUUID() {
-
         return ownerUUID;
     }
 
     public void setOwnerUUID(UUID uuid) {
-
         this.ownerUUID = uuid;
-
         markDirty();
     }
 
     @Override
     protected void writeNbt(NbtCompound nbt) {
-
         super.writeNbt(nbt);
-
         nbt.putInt("SampleShift", sampleShift);
-
         nbt.putInt("VerticalTilt", verticalTiltDeg);
-
+        nbt.putInt("ChannelMask", channelMask);
         if (ownerUUID != null) {
-
             nbt.putUuid("OwnerUUID", ownerUUID);
         }
     }
 
     @Override
     public void readNbt(NbtCompound nbt) {
-
         super.readNbt(nbt);
-
         sampleShift = nbt.getInt("SampleShift");
-
         verticalTiltDeg = nbt.getInt("VerticalTilt");
-
+        channelMask = nbt.contains("ChannelMask") ? nbt.getInt("ChannelMask") : 0;
         if (nbt.containsUuid("OwnerUUID")) {
-
             ownerUUID = nbt.getUuid("OwnerUUID");
         }
-
-        // Register in global registry with dimension on world load
-
         if (world != null) {
             com.audiophilecraft.registry.SpeakerRegistry.registerSpeaker(world, pos, ownerUUID);
         }

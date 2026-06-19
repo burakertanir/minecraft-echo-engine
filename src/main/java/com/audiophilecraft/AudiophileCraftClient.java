@@ -41,13 +41,11 @@ public class AudiophileCraftClient implements ClientModInitializer {
             }
         });
 
-        // Stop Audio on Disconnect (Main Menu) — only clean up the local player's session
+        // Stop ALL audio on Disconnect (Main Menu) — prevents audio leaking after server crash/disconnect
         net.fabricmc.fabric.api.client.networking.v1.ClientPlayConnectionEvents.DISCONNECT.register(
                 (handler, client) -> {
                     System.out.println("AudiophileCraft: Disconnected. Cleaning up audio.");
-                    if (client.player != null) {
-                        com.audiophilecraft.sound.AudioEngine.getInstance().stopSession(client.player.getUuid());
-                    }
+                    com.audiophilecraft.sound.AudioEngine.getInstance().stopAll();
                     com.audiophilecraft.sound.AudioEngine.getInstance().cleanupEfx();
                     com.audiophilecraft.registry.SpeakerRegistry.clear();
                     System.out.println("AudiophileCraft: Speaker registry cleared.");

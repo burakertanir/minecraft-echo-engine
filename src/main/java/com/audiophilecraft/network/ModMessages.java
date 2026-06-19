@@ -41,11 +41,79 @@ public class ModMessages {
     public static final Identifier S2C_STOP_AUDIO = new Identifier(AudiophileCraft.MOD_ID, "s2c_stop_audio");
     public static final Identifier C2S_TOGGLE_PAUSE = new Identifier(AudiophileCraft.MOD_ID, "c2s_toggle_pause");
     public static final Identifier S2C_TOGGLE_PAUSE = new Identifier(AudiophileCraft.MOD_ID, "s2c_toggle_pause");
+    public static final Identifier C2S_CHANNEL_MASK = new Identifier(AudiophileCraft.MOD_ID, "c2s_channel_mask");
+    public static final Identifier S2C_SYNC_CHANNEL_MASK =
+            new Identifier(AudiophileCraft.MOD_ID, "s2c_sync_channel_mask");
+
+    // --- Multiplayer Sync: all-players-must-be-ready handshake ---
+    public static final Identifier C2S_PLAYBACK_READY = new Identifier(AudiophileCraft.MOD_ID, "c2s_playback_ready");
+    public static final Identifier S2C_START_PLAYBACK = new Identifier(AudiophileCraft.MOD_ID, "s2c_start_playback");
+    public static final Identifier S2C_PREP_SEEK = new Identifier(AudiophileCraft.MOD_ID, "s2c_prep_seek");
+    public static final Identifier C2S_SEEK_READY = new Identifier(AudiophileCraft.MOD_ID, "c2s_seek_ready");
+    public static final Identifier S2C_SYNC_SEEK = new Identifier(AudiophileCraft.MOD_ID, "s2c_sync_seek");
+
+    // Server-side tracking: sessionUUID → (readySet, startTimeMs)
+    private static final java.util.concurrent.ConcurrentHashMap<
+                    java.util.UUID, java.util.AbstractMap.SimpleEntry<java.util.Set<java.util.UUID>, Long>>
+            pendingPlayReady = new java.util.concurrent.ConcurrentHashMap<>();
+    private static final java.util.concurrent.ConcurrentHashMap<
+                    java.util.UUID, java.util.AbstractMap.SimpleEntry<java.util.Set<java.util.UUID>, Long>>
+            pendingSeekReady = new java.util.concurrent.ConcurrentHashMap<>();
+
+    /** Check if timeout has passed for a pending sync (30s) */
+    private static boolean isSyncTimedOut(
+            java.util.AbstractMap.SimpleEntry<java.util.Set<java.util.UUID>, Long> entry) {
+        return System.currentTimeMillis() - entry.getValue() > 30_000;
+    }
+
+    /** Clean up pending sync entries when a player disconnects */
+    public static void cleanupDisconnectedPlayer(
+            java.util.UUID playerUUID, net.minecraft.server.MinecraftServer server) {
+        // Remove disconnected player from all pending sets
+        for (var entry : pendingPlayReady.entrySet()) entry.getValue().getKey().remove(playerUUID);
+        for (var entry : pendingSeekReady.entrySet()) entry.getValue().getKey().remove(playerUUID);
+        // If a set became empty or timed out, trigger immediately
+        long now = System.currentTimeMillis();
+        pendingPlayReady.entrySet().removeIf(e -> {
+            if (e.getValue().getKey().isEmpty() || now - e.getValue().getValue() > 30_000) {
+                broadcastToAll(server, S2C_START_PLAYBACK, buf -> buf.writeUuid(e.getKey()));
+                return true;
+            }
+            return false;
+        });
+        pendingSeekReady.entrySet().removeIf(e -> {
+            if (e.getValue().getKey().isEmpty() || now - e.getValue().getValue() > 30_000) {
+                broadcastToAll(server, S2C_SYNC_SEEK, buf -> buf.writeUuid(e.getKey()));
+                return true;
+            }
+            return false;
+        });
+    }
+
+    /** Check if all online players have reported ready for a given session tracking map */
+    private static boolean allPlayersReady(
+            net.minecraft.server.MinecraftServer server, java.util.Set<java.util.UUID> readySet) {
+        int online = 0;
+        for (net.minecraft.server.network.ServerPlayerEntity p :
+                server.getPlayerManager().getPlayerList()) {
+            if (readySet.contains(p.getUuid())) online++;
+        }
+        return server.getPlayerManager().getPlayerList().size() <= readySet.size();
+    }
 
     /** Helper: get the tablet ItemStack from the player's hand ordinal */
     private static ItemStack getTabletStack(net.minecraft.server.network.ServerPlayerEntity player, int handOrdinal) {
         Hand hand = Hand.values()[handOrdinal];
         return player.getStackInHand(hand);
+    }
+
+    /** Helper: get the tablet ItemStack from either hand (for packets without hand ordinal) */
+    private static ItemStack getTabletStack(net.minecraft.server.network.ServerPlayerEntity player) {
+        ItemStack main = player.getMainHandStack();
+        if (main.getItem() instanceof AmplifierTabletItem) return main;
+        ItemStack off = player.getOffHandStack();
+        if (off.getItem() instanceof AmplifierTabletItem) return off;
+        return ItemStack.EMPTY;
     }
 
     /**
@@ -100,19 +168,40 @@ public class ModMessages {
                 ItemStack stack = getTabletStack(player, handOrdinal);
                 if (stack.getItem() instanceof AmplifierTabletItem) {
                     UUID ownerUUID = player.getUuid();
-                    // Only find speakers owned by this player, in their dimension
                     List<BlockPos> speakers = SpeakerRegistry.findSpeakersByOwner(
                             player.getWorld().getRegistryKey(), ownerUUID);
                     float power = AmplifierTabletItem.getSpeakerPower(stack);
                     float inputGain = AmplifierTabletItem.getInputGain(stack);
-                    // Broadcast to all online players so everyone hears the music
-                    for (net.minecraft.server.network.ServerPlayerEntity nearby :
+                    // Init sync tracking for all online players
+                    java.util.Set<UUID> readySet = java.util.concurrent.ConcurrentHashMap.newKeySet();
+                    for (net.minecraft.server.network.ServerPlayerEntity p :
                             server.getPlayerManager().getPlayerList()) {
-                        sendPlayUrl(nearby, ownerUUID, url, speakers, power, inputGain);
+                        sendPlayUrl(p, ownerUUID, url, speakers, power, inputGain);
+                        readySet.add(p.getUuid());
                     }
+                    pendingPlayReady.put(
+                            ownerUUID, new java.util.AbstractMap.SimpleEntry<>(readySet, System.currentTimeMillis()));
                 }
             });
         });
+
+        // Client confirms pre-buffer complete → check if all ready → broadcast start
+        ServerPlayNetworking.registerGlobalReceiver(
+                C2S_PLAYBACK_READY, (server, player, handler, buf, responseSender) -> {
+                    UUID sessionUUID = buf.readUuid();
+                    server.execute(() -> {
+                        var entry = pendingPlayReady.get(sessionUUID);
+                        if (entry == null) return;
+                        java.util.Set<UUID> readySet = entry.getKey();
+                        readySet.remove(player.getUuid());
+                        if (readySet.isEmpty() || isSyncTimedOut(entry)) {
+                            pendingPlayReady.remove(sessionUUID);
+                            broadcastToAll(server, S2C_START_PLAYBACK, syncBuf -> {
+                                syncBuf.writeUuid(sessionUUID);
+                            });
+                        }
+                    });
+                });
 
         // Update speaker power — synced to all players
         ServerPlayNetworking.registerGlobalReceiver(
@@ -152,12 +241,17 @@ public class ModMessages {
                     });
                 });
 
-        // EQ update — synced to all players
+        // EQ update — synced to all players AND persisted to tablet NBT
         ServerPlayNetworking.registerGlobalReceiver(C2S_UPDATE_EQ, (server, player, handler, buf, responseSender) -> {
             String speakerType = buf.readString();
             int band = buf.readInt();
             float db = buf.readFloat();
             server.execute(() -> {
+                // Persist to tablet NBT
+                ItemStack stack = getTabletStack(player);
+                if (stack.getItem() instanceof AmplifierTabletItem) {
+                    AmplifierTabletItem.setEqDb(stack, speakerType, band, db);
+                }
                 UUID ownerUUID = player.getUuid();
                 broadcastToAll(server, S2C_SYNC_EQ, syncBuf -> {
                     syncBuf.writeUuid(ownerUUID);
@@ -168,12 +262,17 @@ public class ModMessages {
             });
         });
 
-        // EQ Q (bandwidth) update — synced to all players
+        // EQ Q (bandwidth) update — synced to all players AND persisted to tablet NBT
         ServerPlayNetworking.registerGlobalReceiver(C2S_UPDATE_EQ_Q, (server, player, handler, buf, responseSender) -> {
             String speakerType = buf.readString();
             int band = buf.readInt();
             float q = buf.readFloat();
             server.execute(() -> {
+                // Persist to tablet NBT
+                ItemStack stack = getTabletStack(player);
+                if (stack.getItem() instanceof AmplifierTabletItem) {
+                    AmplifierTabletItem.setEqQ(stack, speakerType, band, q);
+                }
                 UUID ownerUUID = player.getUuid();
                 broadcastToAll(server, S2C_SYNC_EQ_Q, syncBuf -> {
                     syncBuf.writeUuid(ownerUUID);
@@ -184,12 +283,17 @@ public class ModMessages {
             });
         });
 
-        // Mixer Gain (volume fader per speaker type) — synced to all players
+        // Mixer Gain (volume fader per speaker type) — synced to all players AND persisted to tablet NBT
         ServerPlayNetworking.registerGlobalReceiver(
                 C2S_UPDATE_MIXER_GAIN, (server, player, handler, buf, responseSender) -> {
                     String speakerType = buf.readString();
                     float gain = buf.readFloat();
                     server.execute(() -> {
+                        // Persist to tablet NBT
+                        ItemStack stack = getTabletStack(player);
+                        if (stack.getItem() instanceof AmplifierTabletItem) {
+                            AmplifierTabletItem.setMixerGain(stack, speakerType, gain);
+                        }
                         UUID ownerUUID = player.getUuid();
                         broadcastToAll(server, S2C_SYNC_MIXER_GAIN, syncBuf -> {
                             syncBuf.writeUuid(ownerUUID);
@@ -235,23 +339,47 @@ public class ModMessages {
             });
         });
 
-        // Track Timeline Seek Sync — with tablet validation
+        // Seek Track — broadcast prep-seek to all, init sync tracking
         ServerPlayNetworking.registerGlobalReceiver(C2S_SEEK_TRACK, (server, player, handler, buf, responseSender) -> {
             float targetTime = buf.readFloat();
             server.execute(() -> {
-                // Validate player is holding an amplifier tablet
                 ItemStack mainStack = player.getMainHandStack();
                 ItemStack offStack = player.getOffHandStack();
                 if (!(mainStack.getItem() instanceof AmplifierTabletItem)
                         && !(offStack.getItem() instanceof AmplifierTabletItem)) {
-                    return; // Ignore if not holding tablet
+                    return;
                 }
                 UUID senderUUID = player.getUuid();
-                // Echo to all online players so everyone's seek stays in sync
-                broadcastToAll(server, S2C_SEEK_TRACK, syncBuf -> {
-                    syncBuf.writeUuid(senderUUID);
-                    syncBuf.writeFloat(targetTime);
-                });
+                // Init sync tracking
+                java.util.Set<UUID> readySet = java.util.concurrent.ConcurrentHashMap.newKeySet();
+                for (net.minecraft.server.network.ServerPlayerEntity p :
+                        server.getPlayerManager().getPlayerList()) {
+                    // Send PREP_SEEK instead of direct S2C_SEEK_TRACK
+                    PacketByteBuf prepBuf = PacketByteBufs.create();
+                    prepBuf.writeUuid(senderUUID);
+                    prepBuf.writeFloat(targetTime);
+                    ServerPlayNetworking.send(p, S2C_PREP_SEEK, prepBuf);
+                    readySet.add(p.getUuid());
+                }
+                pendingSeekReady.put(
+                        senderUUID, new java.util.AbstractMap.SimpleEntry<>(readySet, System.currentTimeMillis()));
+            });
+        });
+
+        // Client confirms seek ready → check if all ready → broadcast sync seek
+        ServerPlayNetworking.registerGlobalReceiver(C2S_SEEK_READY, (server, player, handler, buf, responseSender) -> {
+            UUID sessionUUID = buf.readUuid();
+            server.execute(() -> {
+                var entry = pendingSeekReady.get(sessionUUID);
+                if (entry == null) return;
+                java.util.Set<UUID> readySet = entry.getKey();
+                readySet.remove(player.getUuid());
+                if (readySet.isEmpty() || isSyncTimedOut(entry)) {
+                    pendingSeekReady.remove(sessionUUID);
+                    broadcastToAll(server, S2C_SYNC_SEEK, syncBuf -> {
+                        syncBuf.writeUuid(sessionUUID);
+                    });
+                }
             });
         });
         // Stop Audio - broadcast to all players
@@ -264,6 +392,55 @@ public class ModMessages {
             });
         });
 
+        // Channel mask update — OWNERSHIP PROTECTED, updates server-side BE + broadcasts to all players
+        ServerPlayNetworking.registerGlobalReceiver(
+                C2S_CHANNEL_MASK, (server, player, handler, buf, responseSender) -> {
+                    BlockPos pos = buf.readBlockPos();
+                    int mask = buf.readInt();
+                    server.execute(() -> {
+                        UUID speakerOwner = SpeakerRegistry.getOwner(pos);
+                        if (speakerOwner != null && !speakerOwner.equals(player.getUuid())) return;
+                        // Find all speakers owned by this player in this dimension
+                        java.util.List<BlockPos> allOwned = SpeakerRegistry.findSpeakersByOwner(
+                                player.getWorld().getRegistryKey(), player.getUuid());
+                        // Cluster them
+                        java.util.List<java.util.List<BlockPos>> clusters =
+                                com.audiophilecraft.sound.SpeakerClusterer.clusterSpeakers(allOwned);
+                        // Find which cluster the clicked speaker belongs to
+                        for (java.util.List<BlockPos> cluster : clusters) {
+                            boolean found = false;
+                            for (BlockPos p : cluster) {
+                                if (p.equals(pos)) {
+                                    found = true;
+                                    break;
+                                }
+                            }
+                            if (found) {
+                                // Update ALL BlockEntities in this cluster
+                                for (BlockPos p : cluster) {
+                                    net.minecraft.block.entity.BlockEntity be =
+                                            player.getWorld().getBlockEntity(p);
+                                    if (be instanceof com.audiophilecraft.block.entity.SpeakerBlockEntity speaker) {
+                                        speaker.setChannelMask(mask);
+                                    }
+                                }
+                                // Broadcast channel mask change to ALL players (including sender)
+                                // so StreamSource objects are updated on every client
+                                java.util.List<BlockPos> finalCluster = cluster;
+                                broadcastToAll(server, S2C_SYNC_CHANNEL_MASK, syncBuf -> {
+                                    syncBuf.writeUuid(player.getUuid());
+                                    syncBuf.writeInt(mask);
+                                    syncBuf.writeInt(finalCluster.size());
+                                    for (BlockPos cp : finalCluster) {
+                                        syncBuf.writeBlockPos(cp);
+                                    }
+                                });
+                                break;
+                            }
+                        }
+                    });
+                });
+
         // Toggle Pause Audio - broadcast to all players
         ServerPlayNetworking.registerGlobalReceiver(
                 C2S_TOGGLE_PAUSE, (server, player, handler, buf, responseSender) -> {
@@ -274,6 +451,10 @@ public class ModMessages {
                         });
                     });
                 });
+        // Disconnect cleanup: remove from any pending sync sets
+        net.fabricmc.fabric.api.networking.v1.ServerPlayConnectionEvents.DISCONNECT.register((handler2, server2) -> {
+            cleanupDisconnectedPlayer(handler2.getPlayer().getUuid(), server2);
+        });
     }
 
     public static void registerS2CPackets() {
@@ -305,8 +486,44 @@ public class ModMessages {
             }
             client.execute(() -> {
                 com.audiophilecraft.sound.AudioEngine engine = com.audiophilecraft.sound.AudioEngine.getInstance();
-                engine.playFromUrl(sessionUUID, url, speakers, power, inputGain);
+                // Preload with sync: don't start playing yet, send ready when buffer complete
+                engine.playFromUrl(sessionUUID, url, speakers, power, inputGain, false, (loadedUUID) -> {
+                    // Pre-buffer done → tell server we're ready
+                    PacketByteBuf readyBuf = PacketByteBufs.create();
+                    readyBuf.writeUuid(loadedUUID);
+                    ClientPlayNetworking.send(C2S_PLAYBACK_READY, readyBuf);
+                });
             });
+        });
+
+        // S2C: All players ready → start playback simultaneously
+        ClientPlayNetworking.registerGlobalReceiver(S2C_START_PLAYBACK, (client, handler, buf, responseSender) -> {
+            UUID sessionUUID = buf.readUuid();
+            client.execute(() -> {
+                com.audiophilecraft.sound.AudioEngine engine = com.audiophilecraft.sound.AudioEngine.getInstance();
+                engine.startSessionPlayback(sessionUUID);
+            });
+        });
+
+        // S2C: Prepare seek (seek + pause, then wait for all-ready signal)
+        ClientPlayNetworking.registerGlobalReceiver(S2C_PREP_SEEK, (client, handler, buf, responseSender) -> {
+            UUID sessionUUID = buf.readUuid();
+            float targetTime = buf.readFloat();
+            client.execute(() -> {
+                com.audiophilecraft.sound.AudioEngine engine = com.audiophilecraft.sound.AudioEngine.getInstance();
+                engine.seekForSession(sessionUUID, targetTime);
+                // Notify server we're done seeking
+                PacketByteBuf readyBuf = PacketByteBufs.create();
+                readyBuf.writeUuid(sessionUUID);
+                readyBuf.writeFloat(targetTime);
+                ClientPlayNetworking.send(C2S_SEEK_READY, readyBuf);
+            });
+        });
+
+        // S2C: All players have seeked → resume (already seeked locally, this just syncs the tick)
+        ClientPlayNetworking.registerGlobalReceiver(S2C_SYNC_SEEK, (client, handler, buf, responseSender) -> {
+            // All players seeked at the same position — nothing extra to do here
+            // (the seek was already applied in PREP_SEEK)
         });
 
         ClientPlayNetworking.registerGlobalReceiver(S2C_SYNC_INPUT_GAIN, (client, handler, buf, responseSender) -> {
@@ -401,6 +618,25 @@ public class ModMessages {
             client.execute(() -> {
                 com.audiophilecraft.sound.AudioEngine engine = com.audiophilecraft.sound.AudioEngine.getInstance();
                 engine.toggleManualPause(sessionUUID);
+            });
+        });
+
+        // Channel Mask Sync — update StreamSource objects on all clients
+        ClientPlayNetworking.registerGlobalReceiver(S2C_SYNC_CHANNEL_MASK, (client, handler, buf, responseSender) -> {
+            UUID senderUUID = buf.readUuid();
+            int mask = buf.readInt();
+            int count = buf.readInt();
+            java.util.List<BlockPos> cluster = new ArrayList<>();
+            for (int i = 0; i < count; i++) {
+                cluster.add(buf.readBlockPos());
+            }
+            client.execute(() -> {
+                // Skip if sender is self (already applied locally via SpeakerScreen)
+                if (client.player != null && senderUUID.equals(client.player.getUuid())) return;
+                com.audiophilecraft.sound.AudioEngine engine = com.audiophilecraft.sound.AudioEngine.getInstance();
+                for (BlockPos p : cluster) {
+                    engine.applyChannelMaskToSpeaker(p, mask);
+                }
             });
         });
     }

@@ -10,7 +10,7 @@ import org.lwjgl.system.MemoryUtil;
 
 public class StreamSource {
     public final int sourceId;
-    public final AudioStreamBuffer streamBuffer;
+    private AudioStreamBuffer streamBuffer; // non-final — swapped for L/R channel changes
 
     // ═══════════════════════════════════════════════════════════════════════
     // GLOBAL MASTER CLOCK ARCHITECTURE
@@ -82,6 +82,10 @@ public class StreamSource {
 
     public volatile boolean isFinished = false;
 
+    // Channel selection: 0=BOTH, 1=LEFT, 2=RIGHT
+    // Changed via setChannelMask() at runtime — next buffer fill picks up new channel
+    private volatile int channelMask = 0;
+
     // Publishes the fully-constructed object: set after all fields initialized
     private void publish() {
         this.isFinished = false;
@@ -110,10 +114,12 @@ public class StreamSource {
             int sampleShiftMs,
             int speakerCount,
             StreamSource clusterLeader,
-            int clusterSize) {
+            int clusterSize,
+            int initialChannelMask) {
         this.session = session;
         this.sourceId = sourceId;
         this.streamBuffer = streamBuffer;
+        this.channelMask = initialChannelMask;
 
         // Metadata
         this.pos = pos;
@@ -190,6 +196,19 @@ public class StreamSource {
     }
 
     /**
+     * Set stereo channel for this source at runtime.
+     * 0 = BOTH (mono mix), 1 = LEFT only, 2 = RIGHT only.
+     * Takes effect on the next OpenAL buffer refill (~10ms).
+     */
+    public void setChannelMask(int mask) {
+        this.channelMask = mask;
+    }
+
+    public int getChannelMask() {
+        return channelMask;
+    }
+
+    /**
      * Start playback. Called AFTER all StreamSources are created
      * to ensure all speakers start at exactly the same time.
      */
@@ -217,6 +236,7 @@ public class StreamSource {
         }
         // Reset delay state so it re-initializes from current distance
         this.lastRenderedDelaySamples = -1.0;
+        this.prevTargetDelaySamples = -1.0;
 
         // Flush OpenAL's queued buffers
         org.lwjgl.openal.AL10.alSourceStop(sourceId);
@@ -1012,8 +1032,10 @@ public class StreamSource {
 
                     org.lwjgl.openal.EXTEfx.alFilterf(
                             echoSendFilterId, org.lwjgl.openal.EXTEfx.AL_LOWPASS_GAIN, echoSendGain);
+                    // Apply echo damping directly to the input filter so the FIRST bounce is muffled
+                    float echoSendHF = reverbSendHF * Math.max(0.01f, (1.0f - cfg.echo_damping));
                     org.lwjgl.openal.EXTEfx.alFilterf(
-                            echoSendFilterId, org.lwjgl.openal.EXTEfx.AL_LOWPASS_GAINHF, reverbSendHF);
+                            echoSendFilterId, org.lwjgl.openal.EXTEfx.AL_LOWPASS_GAINHF, echoSendHF);
                     org.lwjgl.openal.AL11.alSource3i(
                             sourceId,
                             org.lwjgl.openal.EXTEfx.AL_AUXILIARY_SEND_FILTER,
@@ -1041,6 +1063,7 @@ public class StreamSource {
 
     // Delay State — single authoritative source across both thread paths
     private double lastRenderedDelaySamples = -1.0;
+    private double prevTargetDelaySamples = -1.0;
 
     /**
      * ═══════════════════════════════════════════════════════════════════════
@@ -1177,24 +1200,46 @@ public class StreamSource {
         if (lastRenderedDelaySamples < 0) {
             lastRenderedDelaySamples = targetDelaySamples;
         }
+        if (prevTargetDelaySamples < 0) {
+            prevTargetDelaySamples = targetDelaySamples;
+        }
 
         boolean finished = false;
 
+        // Snapshot channel mask once per buffer for consistent stereo channel
+        int currentChannelMask = this.channelMask;
+
         // ═══════════════════════════════════════════════════════════════
-        // ALWAYS SMOOTH: Slew-Limited Exponential Moving Average (EMA)
-        // Decoupled from buffer boundaries, completely eliminating
-        // "staircase" pitch-crackling when flying quickly.
+        // ADAPTIVE PER-SAMPLE DELAY SMOOTHING with TARGET INTERPOLATION
+        // Delay target linearly interpolates from old to new across buffer,
+        // eliminating the "stepped" pitch feeling from 21ms target jumps.
         // ═══════════════════════════════════════════════════════════════
         double currentDelay = lastRenderedDelaySamples;
-        double endDelay = targetDelaySamples;
+        double startTarget = prevTargetDelaySamples;
+        double endTarget = targetDelaySamples;
+        double targetDelta = endTarget - startTarget;
+        prevTargetDelaySamples = endTarget;
 
         // 1.5% max pitch shift limit (Doppler shift clamp).
-        // Prevents sound from playing backwards if teleporting.
         double maxDeltaPerSample = 0.015;
 
         for (int i = 0; i < STREAM_BUFFER_SIZE; i++) {
-            double delta = endDelay - currentDelay;
-            double step = delta * 0.001; // ~50ms smooth approach curve
+            // Linear interpolate target from old to new — no more 21ms steps
+            double t = (double) (i + 1) / STREAM_BUFFER_SIZE;
+            double interpolatedTarget = startTarget + targetDelta * t;
+            double delta = interpolatedTarget - currentDelay;
+
+            double absDelta = Math.abs(delta);
+            double slewCoeff;
+            if (absDelta > 500.0) { // >10ms gecikme değişimi (hızlı hareket)
+                slewCoeff = 0.05; // ~1 buffer'da oturur
+            } else if (absDelta > 50.0) { // 1-10ms arası (normal yürüme)
+                slewCoeff = 0.01; // ~4 buffer'da oturur
+            } else { // <1ms (duruyorum / çok yavaş)
+                slewCoeff = 0.002; // yavaş otur, click olmaz
+            }
+
+            double step = delta * slewCoeff;
 
             if (step > maxDeltaPerSample) step = maxDeltaPerSample;
             if (step < -maxDeltaPerSample) step = -maxDeltaPerSample;
@@ -1210,25 +1255,11 @@ public class StreamSource {
             } else if (readPos < 0) {
                 output[i] = 0;
             } else {
-                output[i] = streamBuffer.getSampleLagrange(readPos);
+                output[i] = streamBuffer.getSampleLagrange(readPos, currentChannelMask);
             }
         }
 
         lastRenderedDelaySamples = currentDelay;
-
-        // --- CUSHION FADE: Prevent arbitrary waveform snap Pops via 50ms lerp ---
-        if (seekFadeSamplesRemaining > 0) {
-            double totalFadeSamples = 0.05 * streamBuffer.sampleRate;
-            for (int i = 0; i < STREAM_BUFFER_SIZE; i++) {
-                if (seekFadeSamplesRemaining > 0) {
-                    double fade = 1.0 - ((double) seekFadeSamplesRemaining / totalFadeSamples);
-                    // Fast sine ease-in for smoothest acoustical transition
-                    fade = Math.sin(fade * Math.PI / 2.0);
-                    output[i] = (short) (output[i] * fade);
-                    seekFadeSamplesRemaining--;
-                }
-            }
-        }
 
         // ═══════════════════════════════════════════════════════════════
         // DSP STAGE (shared by all branches)

@@ -84,4 +84,46 @@ public class AmplifierTabletItem extends Item {
         NbtCompound nbt = stack.getOrCreateNbt();
         nbt.putFloat("InputGain", Math.max(0.0f, Math.min(gain, 3.0f)));
     }
+
+    // --- Mixer Gains (persisted across songs and server restarts) ---
+
+    public static float getMixerGain(ItemStack stack, String speakerType) {
+        NbtCompound nbt = stack.getNbt();
+        String key = "Mixer_" + speakerType;
+        if (nbt != null && nbt.contains(key)) return nbt.getFloat(key);
+        return 1.0f;
+    }
+
+    public static void setMixerGain(ItemStack stack, String speakerType, float gain) {
+        NbtCompound nbt = stack.getOrCreateNbt();
+        nbt.putFloat("Mixer_" + speakerType, Math.max(0.0f, Math.min(gain, 1.0f)));
+    }
+
+    // --- EQ dB (persisted across songs and server restarts) ---
+
+    public static float getEqDb(ItemStack stack, String speakerType, int band) {
+        NbtCompound nbt = stack.getNbt();
+        String key = "EqDb_" + speakerType + "_" + band;
+        if (nbt != null && nbt.contains(key)) return nbt.getFloat(key);
+        return 0f;
+    }
+
+    public static void setEqDb(ItemStack stack, String speakerType, int band, float db) {
+        NbtCompound nbt = stack.getOrCreateNbt();
+        nbt.putFloat("EqDb_" + speakerType + "_" + band, Math.max(-12f, Math.min(db, 12f)));
+    }
+
+    // --- EQ Q (bandwidth, persisted across songs and server restarts) ---
+
+    public static float getEqQ(ItemStack stack, String speakerType, int band) {
+        NbtCompound nbt = stack.getNbt();
+        String key = "EqQ_" + speakerType + "_" + band;
+        if (nbt != null && nbt.contains(key)) return nbt.getFloat(key);
+        return 1f;
+    }
+
+    public static void setEqQ(ItemStack stack, String speakerType, int band, float q) {
+        NbtCompound nbt = stack.getOrCreateNbt();
+        nbt.putFloat("EqQ_" + speakerType + "_" + band, Math.max(0.1f, Math.min(q, 10f)));
+    }
 }

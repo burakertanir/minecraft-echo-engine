@@ -193,7 +193,8 @@ public class AudioEngine {
     private int slapbackEffectId = 0;
     private int slapbackAuxSlotId = 0;
     // Dynamic echo gain based on listener distance to nearest wall.
-    // Computed in updateListenerSlapback() (20Hz), consumed by StreamSource per-source filter.
+    // Computed in updateListenerSlapback() (20Hz), consumed by StreamSource
+    // per-source filter.
     // NEVER written to AL_EFFECTSLOT_GAIN — that stays 1.0 to avoid buffer resets.
     private volatile float currentSlapbackGain = 0.0f;
 
@@ -456,9 +457,11 @@ public class AudioEngine {
         }
 
         // 1. Dynamic Delay based on NEAREST wall
-        // delay = minDist * 2.0 / 2000.0 -> round-trip time from wall to listener (speed of sound ~343m/s, block =
+        // delay = minDist * 2.0 / 2000.0 -> round-trip time from wall to listener
+        // (speed of sound ~343m/s, block =
         // meter)
-        // 2000.0 = 2x half-distance + ms conversion factor. max 0.3s = ~30ms hard limit for fusion
+        // 2000.0 = 2x half-distance + ms conversion factor. max 0.3s = ~30ms hard limit
+        // for fusion
         float dynamicReflDelay = Math.max(0.001f, Math.min(minDist * 2.0f / 2000.0f, 0.3f));
 
         // 2. Dynamic Gain based on distance to the NEAREST wall.
@@ -526,8 +529,10 @@ public class AudioEngine {
         // Dynamic Live Tuning Parameters
         com.audiophilecraft.config.LiveTuningConfig config = com.audiophilecraft.config.LiveTuningConfig.get();
 
-        // The echo never fully mutes; it stays at a subtle 15% volume when far away (40 blocks or more).
-        // As you get closer to a wall (minDist -> 0), the echo bounces harder and increases up to 100% volume.
+        // The echo never fully mutes; it stays at a subtle 15% volume when far away (40
+        // blocks or more).
+        // As you get closer to a wall (minDist -> 0), the echo bounces harder and
+        // increases up to 100% volume.
         float baseGain = config.echo_baseGain;
         float maxGain = config.echo_maxGain;
         // Mapping: 40 blocks = baseGain, 0 blocks = maxGain
@@ -535,7 +540,8 @@ public class AudioEngine {
 
         // --- NEW: Cotton/Wool Absorption Penalty ---
         // Only penalize if the wall is highly absorptive (e.g., > 30% absorption).
-        // Ignore stone/wood so we don't ruin the finely tuned echo gain for normal rooms.
+        // Ignore stone/wood so we don't ruin the finely tuned echo gain for normal
+        // rooms.
         if (bestAbsorption > 0.30f) {
             gain *= (1.0f - bestAbsorption);
         }
@@ -679,38 +685,94 @@ public class AudioEngine {
 
     // 5-Band Parametric EQ per speaker type (dB, range: -12 to +12)
 
+    /**
+     * Get current mixer gain for a speaker type.
+     * Reads from the player's amplifier tablet NBT for persistence across sessions
+     * and world reloads.
+     * Falls back to the active session for immediate runtime changes not yet saved
+     * to NBT.
+     */
     public float getMixerGain(String speakerType) {
+        // First try tablet NBT for persistence across sessions
+        float tabletVal = getTabletNbtValue("Mixer_" + speakerType);
+        if (tabletVal != NBT_NOT_FOUND) return tabletVal;
+        // Fallback to active session for runtime
         PlaybackSession session = getActiveSession();
         return session != null ? session.getMixerGain(speakerType) : 1.0f;
     }
 
     public void setMixerGain(String speakerType, float gain) {
+        // Save to tablet NBT for persistence
+        setTabletNbtValue("Mixer_" + speakerType, gain);
+        // Also apply to running session
         PlaybackSession session = getActiveSession();
         if (session != null) session.setMixerGain(speakerType, gain);
     }
 
-    /** Get EQ dB for a speaker type and band (0 to 4) */
+    /**
+     * Get EQ dB for a speaker type and band (0 to 4).
+     * Reads from the player's amplifier tablet NBT for persistence.
+     */
     public synchronized float getEqDb(String speakerType, int band) {
+        float tabletVal = getTabletNbtValue("EqDb_" + speakerType + "_" + band);
+        if (tabletVal != NBT_NOT_FOUND) return tabletVal;
         PlaybackSession session = getActiveSession();
         return session != null ? session.getEqDb(speakerType, band) : 0f;
     }
 
     /** Set EQ dB for a speaker type and band (0 to 4). Range: -12 to +12 */
     public synchronized void setEqDb(String speakerType, int band, float db) {
+        setTabletNbtValue("EqDb_" + speakerType + "_" + band, db);
         PlaybackSession session = getActiveSession();
         if (session != null) session.setEqDb(speakerType, band, db);
     }
 
-    /** Get EQ Q for a speaker type and band (0 to 4) */
+    /**
+     * Get EQ Q for a speaker type and band (0 to 4).
+     * Reads from the player's amplifier tablet NBT for persistence.
+     */
     public synchronized float getEqQ(String speakerType, int band) {
+        float tabletVal = getTabletNbtValue("EqQ_" + speakerType + "_" + band);
+        if (tabletVal != NBT_NOT_FOUND) return tabletVal;
         PlaybackSession session = getActiveSession();
         return session != null ? session.getEqQ(speakerType, band) : 1f;
     }
 
     /** Set EQ Q for a speaker type and band (0 to 4). Range: 0.1 to 10.0 */
     public synchronized void setEqQ(String speakerType, int band, float q) {
+        setTabletNbtValue("EqQ_" + speakerType + "_" + band, q);
         PlaybackSession session = getActiveSession();
         if (session != null) session.setEqQ(speakerType, band, q);
+    }
+
+    // --- Tablet NBT helpers (reads/writes the amplifier tablet ItemStack NBT) ---
+
+    private net.minecraft.item.ItemStack getTabletStack() {
+        net.minecraft.client.MinecraftClient client = net.minecraft.client.MinecraftClient.getInstance();
+        if (client.player == null) return net.minecraft.item.ItemStack.EMPTY;
+        net.minecraft.item.ItemStack main = client.player.getMainHandStack();
+        if (main.getItem() instanceof com.audiophilecraft.item.AmplifierTabletItem) return main;
+        net.minecraft.item.ItemStack off = client.player.getOffHandStack();
+        if (off.getItem() instanceof com.audiophilecraft.item.AmplifierTabletItem) return off;
+        return net.minecraft.item.ItemStack.EMPTY;
+    }
+
+    private static final float NBT_NOT_FOUND = -13f;
+
+    /** Returns NBT_NOT_FOUND if not found in NBT */
+    private float getTabletNbtValue(String key) {
+        net.minecraft.item.ItemStack stack = getTabletStack();
+        if (stack.isEmpty()) return NBT_NOT_FOUND;
+        net.minecraft.nbt.NbtCompound nbt = stack.getNbt();
+        if (nbt != null && nbt.contains(key)) return nbt.getFloat(key);
+        return NBT_NOT_FOUND;
+    }
+
+    private void setTabletNbtValue(String key, float value) {
+        net.minecraft.item.ItemStack stack = getTabletStack();
+        if (stack.isEmpty()) return;
+        net.minecraft.nbt.NbtCompound nbt = stack.getOrCreateNbt();
+        nbt.putFloat(key, value);
     }
 
     /**
@@ -946,7 +1008,7 @@ public class AudioEngine {
     /**
      * Stops all active audio sources across all sessions immediately.
      */
-    public void stopAll() {
+    public synchronized void stopAll() {
         for (PlaybackSession session : sessions.values()) {
             session.stopAll();
         }
@@ -1041,12 +1103,17 @@ public class AudioEngine {
         try {
             double currentWallTime = 0.0;
             // Phase 0: Decode OGG on background thread
-            for (PlaybackSession session : sessions.values()) {
+            // Snapshot sessions to avoid ConcurrentModification with stopAll()
+            java.util.List<PlaybackSession> sessionSnapshot = new java.util.ArrayList<>(sessions.values());
+            for (PlaybackSession session : sessionSnapshot) {
                 if (!session.isPlaying() || session.isPaused() || session.isSeeking()) continue;
                 currentWallTime = session.getStreamStartTime() > 0
                         ? (System.nanoTime() - session.getStreamStartTime()) / 1_000_000_000.0
                         : 0.0;
-                for (AudioStreamBuffer buffer : session.getStreamBuffers().values()) {
+                // Snapshot stream buffers to avoid race with clear()
+                java.util.List<AudioStreamBuffer> bufferSnapshot =
+                        new java.util.ArrayList<>(session.getStreamBuffers().values());
+                for (AudioStreamBuffer buffer : bufferSnapshot) {
                     if (buffer.sampleRate > 0) {
                         buffer.syncToTime(currentWallTime + BUFFER_LOOKAHEAD);
                     }
@@ -1066,7 +1133,7 @@ public class AudioEngine {
             }
             Vec3d currentPos = this.smoothedListenerPos;
 
-            for (PlaybackSession session : sessions.values()) {
+            for (PlaybackSession session : sessionSnapshot) {
                 if (!session.isPlaying() || session.isPaused() || session.isSeeking()) continue;
                 double sessionWallTime = session.getStreamStartTime() > 0
                         ? (System.nanoTime() - session.getStreamStartTime()) / 1_000_000_000.0
@@ -1083,7 +1150,10 @@ public class AudioEngine {
                 for (StreamSource source : session.getStreamSources()) {
                     if (source.feedOpenALFromAudioThread(globalSampleTime, currentPos)) {
                         if (reusableRestartBuffer.remaining() > 0) {
-                            reusableRestartBuffer.put(source.sourceId);
+                            // Validate source still valid before adding to restart buffer
+                            if (source.isValid) {
+                                reusableRestartBuffer.put(source.sourceId);
+                            }
                         }
                     }
                 }
@@ -1127,6 +1197,36 @@ public class AudioEngine {
     private static final String TYPE_SUB = "sub";
     private static final String TYPE_MID = "mid";
     private static final String TYPE_LINE = "line";
+    private static final String[] EQ_SPEAKER_TYPES = {TYPE_NORMAL, TYPE_SUB, TYPE_MID, TYPE_LINE};
+    private static final int EQ_BAND_COUNT = 5;
+
+    /**
+     * Load persisted EQ/Mixer values from the local tablet NBT into a session.
+     * Called when a session is created/reused so settings survive disconnect/reconnect.
+     * Only loads if the local player owns the session.
+     */
+    private void loadPersistedEqIntoSession(PlaybackSession session, java.util.UUID sessionUUID) {
+        net.minecraft.client.MinecraftClient client = net.minecraft.client.MinecraftClient.getInstance();
+        if (client.player == null || !client.player.getUuid().equals(sessionUUID)) return;
+        for (String type : EQ_SPEAKER_TYPES) {
+            // Load EQ dB
+            for (int band = 0; band < EQ_BAND_COUNT; band++) {
+                float db = getTabletNbtValue("EqDb_" + type + "_" + band);
+                if (db != NBT_NOT_FOUND) {
+                    session.setEqDb(type, band, db);
+                }
+                float q = getTabletNbtValue("EqQ_" + type + "_" + band);
+                if (q != NBT_NOT_FOUND) {
+                    session.setEqQ(type, band, q);
+                }
+            }
+            // Load mixer gain
+            float gain = getTabletNbtValue("Mixer_" + type);
+            if (gain != NBT_NOT_FOUND) {
+                session.setMixerGain(type, gain);
+            }
+        }
+    }
 
     // Stream Buffers Management
     public void prepareStreamBuffers(PlaybackSession session, String trackId) {
@@ -1140,36 +1240,27 @@ public class AudioEngine {
         if (rawData == null) return;
 
         try {
-            // Create 3 Buffers (Sub, Mid, Line) + Normal?
             createStreamBufferForType(session, trackId, rawData, TYPE_SUB);
             createStreamBufferForType(session, trackId, rawData, TYPE_MID);
             createStreamBufferForType(session, trackId, rawData, TYPE_LINE);
             createStreamBufferForType(session, trackId, rawData, TYPE_NORMAL);
         } finally {
-            // Free the native PCM buffer to prevent memory leak even on exception
-            MemoryUtil.memFree(rawData.pcmData);
+            if (rawData.pcmData != null) MemoryUtil.memFree(rawData.pcmData);
         }
     }
 
     private void createStreamBufferForType(
             PlaybackSession session, String trackId, OggDecoder.RawTrackData rawData, String type) {
-        // Clone data for processing — rewind BEFORE remaining() so every type gets the full PCM
         rawData.pcmData.rewind();
         short[] audioData = new short[rawData.pcmData.remaining()];
         rawData.pcmData.rewind();
         rawData.pcmData.get(audioData);
-
-        // Apply DSP
         applyDspForType(audioData, rawData.sampleRate, type);
 
-        // Create Buffer
         AudioStreamBuffer buffer = new AudioStreamBuffer(trackId + "_" + type, rawData.sampleRate);
-
-        // Fill Buffer
         ShortBuffer pcm = MemoryUtil.memAllocShort(audioData.length);
         pcm.put(audioData);
         pcm.flip();
-
         buffer.setSourceData(pcm);
         session.getStreamBuffers().put(type, buffer);
     }
@@ -1222,11 +1313,14 @@ public class AudioEngine {
     }
 
     private void finalizePlaybackPipeline(
-            java.util.UUID sessionUUID, List<BlockPos> speakers, float power, float inputGain, boolean atomicStart) {
+            java.util.UUID sessionUUID,
+            List<BlockPos> speakers,
+            float power,
+            float inputGain,
+            boolean startImmediately) {
         if (speakers == null || speakers.isEmpty()) return;
 
-        sessions.get(sessionUUID).setPlaying(true);
-        sessions.get(sessionUUID).setPaused(false);
+        // syncToTime first so the buffer write cursor is at 0.5s before source creation
         for (AudioStreamBuffer buffer :
                 sessions.get(sessionUUID).getStreamBuffers().values()) {
             if (buffer.sampleRate > 0) buffer.syncToTime(BUFFER_LOOKAHEAD);
@@ -1236,19 +1330,25 @@ public class AudioEngine {
         int[] counts = SpeakerClusterer.countSpeakerTypes(speakers, world);
         List<List<BlockPos>> clusters = SpeakerClusterer.clusterSpeakers(speakers);
         createSourcesFromClusters(sessions.get(sessionUUID), clusters, counts, world, power, inputGain);
-        startPlaybackWithVenueScan(sessions.get(sessionUUID), world, speakers, atomicStart);
+
+        if (startImmediately) {
+            sessions.get(sessionUUID).setPlaying(true);
+            sessions.get(sessionUUID).setPaused(false);
+        }
+        startPlaybackWithVenueScan(sessions.get(sessionUUID), world, speakers, startImmediately);
     }
 
     public void playTrack(
             java.util.UUID sessionUUID, String trackId, List<BlockPos> speakers, float power, float inputGain) {
         PlaybackSession session = sessions.computeIfAbsent(sessionUUID, k -> new PlaybackSession(this));
         session.stopAll();
+        loadPersistedEqIntoSession(session, sessionUUID);
         session.setPlayUrl(""); // Empty URL for local SD card tracks
         resetGlobalVenueState(speakers);
 
         try {
             prepareStreamBuffers(sessions.get(sessionUUID), trackId);
-            finalizePlaybackPipeline(sessionUUID, speakers, power, inputGain, false);
+            finalizePlaybackPipeline(sessionUUID, speakers, power, inputGain, true);
         } catch (Exception e) {
             e.printStackTrace();
         }
@@ -1285,9 +1385,18 @@ public class AudioEngine {
      */
     public void playFromUrl(
             java.util.UUID sessionUUID, String url, List<BlockPos> speakers, float power, float inputGain) {
+        playFromUrl(sessionUUID, url, speakers, power, inputGain, true, null);
+    }
 
-        // Stop the old track IMMEDIATELY so we don't hear ghosts while the new track
-        // pre-buffers asynchronously
+    public void playFromUrl(
+            java.util.UUID sessionUUID,
+            String url,
+            List<BlockPos> speakers,
+            float power,
+            float inputGain,
+            boolean startImmediately,
+            java.util.function.Consumer<java.util.UUID> onReadyCallback) {
+
         PlaybackSession existingSession = sessions.get(sessionUUID);
         if (existingSession != null) {
             existingSession.stopAll();
@@ -1295,13 +1404,16 @@ public class AudioEngine {
 
         InternetAudioLoader.getInstance().loadTrackStreaming(url, new InternetAudioLoader.StreamingCallback() {
             @Override
-            public void onReady(short[] pcmArray, int decodedSamples, int totalExpected, int sampleRate, String title) {
+            public void onReady(
+                    short[] pcmInterleaved, int decodedFrames, int totalExpected, int sampleRate, String title) {
                 AudioStreamBuffer sharedBuf = new AudioStreamBuffer("url_stream", sampleRate);
-                sharedBuf.initStreaming(pcmArray, decodedSamples, totalExpected);
+                sharedBuf.initStreaming(pcmInterleaved, decodedFrames, totalExpected);
+
                 PlaybackSession session =
                         sessions.computeIfAbsent(sessionUUID, k -> new PlaybackSession(AudioEngine.this));
                 session.stopAll();
-                session.setPlayUrl(url); // Set the active URL for this session
+                loadPersistedEqIntoSession(session, sessionUUID);
+                session.setPlayUrl(url);
                 session.getStreamBuffers().clear();
                 session.getStreamBuffers().put(TYPE_SUB, sharedBuf);
                 session.getStreamBuffers().put(TYPE_MID, sharedBuf);
@@ -1309,7 +1421,10 @@ public class AudioEngine {
                 session.getStreamBuffers().put(TYPE_NORMAL, sharedBuf);
 
                 resetGlobalVenueState(speakers);
-                finalizePlaybackPipeline(sessionUUID, speakers, power, inputGain, false);
+                finalizePlaybackPipeline(sessionUUID, speakers, power, inputGain, startImmediately);
+                if (!startImmediately && onReadyCallback != null) {
+                    onReadyCallback.accept(sessionUUID);
+                }
             }
 
             @Override
@@ -1353,12 +1468,14 @@ public class AudioEngine {
             float power,
             float inputGain) {
         for (List<BlockPos> cluster : clusters) {
+            int[] clusterCounts = SpeakerClusterer.countSpeakerTypes(cluster, world);
             StreamSource leaderSource = null;
             for (BlockPos pos : cluster) {
                 String speakerType = TYPE_NORMAL;
                 float baseRefDist = 3.0f;
                 float baseMaxDist = 64.0f;
                 int sampleShiftMs = 0;
+                int channelMask = 0;
                 int speakerCount = 1;
 
                 if (world != null) {
@@ -1368,23 +1485,24 @@ public class AudioEngine {
                         speakerType = TYPE_SUB;
                         baseRefDist = 10.0f;
                         baseMaxDist = 85.0f;
-                        speakerCount = counts[0];
+                        speakerCount = clusterCounts[0];
                     } else if (block instanceof com.audiophilecraft.block.MidRangeBlock) {
                         speakerType = TYPE_MID;
                         baseRefDist = 5.0f;
                         baseMaxDist = 60.0f;
-                        speakerCount = counts[1];
+                        speakerCount = clusterCounts[1];
                     } else if (block instanceof com.audiophilecraft.block.LineArrayBlock) {
                         speakerType = TYPE_LINE;
                         baseRefDist = 3.0f;
                         baseMaxDist = 50.0f;
-                        speakerCount = counts[2];
+                        speakerCount = clusterCounts[2];
                     } else {
-                        speakerCount = counts[3];
+                        speakerCount = clusterCounts[3];
                     }
                     net.minecraft.block.entity.BlockEntity be = world.getBlockEntity(pos);
                     if (be instanceof com.audiophilecraft.block.entity.SpeakerBlockEntity speakerBe) {
                         sampleShiftMs = speakerBe.getSampleShift();
+                        channelMask = speakerBe.getChannelMask();
                     }
                 }
 
@@ -1485,7 +1603,8 @@ public class AudioEngine {
                         sampleShiftMs,
                         speakerCount,
                         leaderSource,
-                        cluster.size());
+                        cluster.size(),
+                        channelMask);
                 session.getStreamSources().add(ss);
 
                 if (leaderSource == null) leaderSource = ss;
@@ -1513,10 +1632,8 @@ public class AudioEngine {
                 this.smoothedListenerPos = this.listenerPos;
             }
 
-            // Start the audio thread FIRST so it's warmed up and scheduled before the sound
-            // card begins draining
-            startAudioThread();
-
+            // Atomic hardware start FIRST so all sources begin at the exact same cycle.
+            // Audio thread starts AFTER to avoid asymmetric buffer pre-fill between sources.
             if (atomicStart) {
                 java.nio.IntBuffer sourceIds = org.lwjgl.BufferUtils.createIntBuffer(
                         session.getStreamSources().size());
@@ -1532,6 +1649,10 @@ public class AudioEngine {
                     source.start();
                 }
             }
+
+            // Start the audio thread last — sources are already playing silent buffers,
+            // the audio thread fills real PCM at the same rate for all speakers.
+            startAudioThread();
         };
 
         if (!session.getStreamSources().isEmpty() && world != null) {
@@ -1591,7 +1712,9 @@ public class AudioEngine {
             List<BlockPos> speakers,
             float power,
             float inputGain) {
-        sessions.computeIfAbsent(sessionUUID, k -> new PlaybackSession(this)).stopAll();
+        PlaybackSession session = sessions.computeIfAbsent(sessionUUID, k -> new PlaybackSession(this));
+        session.stopAll();
+        loadPersistedEqIntoSession(session, sessionUUID);
         resetGlobalVenueState(speakers);
 
         java.nio.ShortBuffer pcmBuffer = null;
@@ -1761,7 +1884,11 @@ public class AudioEngine {
                 sourceIds.put(source.sourceId);
             }
             sourceIds.flip();
-            org.lwjgl.openal.AL10.alSourcePlayv(sourceIds); // ATOMIC HARDWARE START: NO SPEAKER PHASE STAGGER
+            // Only start playback if NOT paused — otherwise 1 buffer (~21ms) leaks through
+            // before the next tick's pause check fires.
+            if (!session.isPaused()) {
+                org.lwjgl.openal.AL10.alSourcePlayv(sourceIds); // ATOMIC HARDWARE START
+            }
         } finally {
             session.setSeeking(false); // Resume audio thread feeding
         }
@@ -1772,6 +1899,21 @@ public class AudioEngine {
     // Called by S2C packet handlers to update running sessions remotely.
     // ═══════════════════════════════════════════════════════════════════════
 
+    /**
+     * Start playback for a session that was pre-loaded (multiplayer sync).
+     * Called when all players confirm they've buffered enough.
+     */
+    public void startSessionPlayback(java.util.UUID sessionUUID) {
+        PlaybackSession session = sessions.get(sessionUUID);
+        if (session != null) {
+            session.setPlaying(true);
+            session.setPaused(false);
+            for (AudioStreamBuffer buffer : session.getStreamBuffers().values()) {
+                if (buffer.sampleRate > 0) buffer.syncToTime(BUFFER_LOOKAHEAD);
+            }
+        }
+    }
+
     public void seekForSession(java.util.UUID sessionUUID, float targetTime) {
         PlaybackSession session = sessions.get(sessionUUID);
         if (session != null) {
@@ -1780,16 +1922,28 @@ public class AudioEngine {
     }
 
     public void setEqDbForSession(java.util.UUID sessionUUID, String speakerType, int band, float db) {
+        net.minecraft.client.MinecraftClient client = net.minecraft.client.MinecraftClient.getInstance();
+        if (client.player != null && client.player.getUuid().equals(sessionUUID)) {
+            setTabletNbtValue("EqDb_" + speakerType + "_" + band, db);
+        }
         PlaybackSession session = sessions.get(sessionUUID);
         if (session != null) session.setEqDb(speakerType, band, db);
     }
 
     public void setEqQForSession(java.util.UUID sessionUUID, String speakerType, int band, float q) {
+        net.minecraft.client.MinecraftClient client = net.minecraft.client.MinecraftClient.getInstance();
+        if (client.player != null && client.player.getUuid().equals(sessionUUID)) {
+            setTabletNbtValue("EqQ_" + speakerType + "_" + band, q);
+        }
         PlaybackSession session = sessions.get(sessionUUID);
         if (session != null) session.setEqQ(speakerType, band, q);
     }
 
     public void setMixerGainForSession(java.util.UUID sessionUUID, String speakerType, float gain) {
+        net.minecraft.client.MinecraftClient client = net.minecraft.client.MinecraftClient.getInstance();
+        if (client.player != null && client.player.getUuid().equals(sessionUUID)) {
+            setTabletNbtValue("Mixer_" + speakerType, gain);
+        }
         PlaybackSession session = sessions.get(sessionUUID);
         if (session != null) session.setMixerGain(speakerType, gain);
     }
@@ -1808,6 +1962,61 @@ public class AudioEngine {
         if (session != null) {
             for (StreamSource source : session.getStreamSources()) {
                 source.power = power;
+            }
+        }
+    }
+
+    /**
+     * Apply channel mask to the given speaker AND all nearby speakers in the same
+     * cluster.
+     * Also updates all client-side BlockEntities so settings persist across world
+     * reloads.
+     * 0=BOTH, 1=LEFT, 2=RIGHT. Takes effect on next buffer refill (~10ms).
+     */
+    public void applyChannelMaskToSpeaker(BlockPos speakerPos, int mask) {
+        for (PlaybackSession session : sessions.values()) {
+            if (!session.isPlaying()) continue;
+            java.util.List<BlockPos> positions = session.getStreamSources().stream()
+                    .map(s -> s.pos)
+                    .distinct()
+                    .toList();
+            java.util.List<BlockPos> targetCluster = null;
+            for (java.util.List<BlockPos> cluster : SpeakerClusterer.clusterSpeakers(positions)) {
+                for (BlockPos p : cluster) {
+                    if (p.equals(speakerPos)) {
+                        targetCluster = cluster;
+                        break;
+                    }
+                }
+                if (targetCluster != null) break;
+            }
+            if (targetCluster != null) {
+                for (BlockPos pos : targetCluster) {
+                    // Update client-side BlockEntity for persistence
+                    updateClientBlockEntityChannel(pos, mask);
+                    for (StreamSource source : session.getStreamSources()) {
+                        if (source.pos.equals(pos)) {
+                            source.setChannelMask(mask);
+                        }
+                    }
+                }
+            } else {
+                updateClientBlockEntityChannel(speakerPos, mask);
+                for (StreamSource source : session.getStreamSources()) {
+                    if (source.pos.equals(speakerPos)) {
+                        source.setChannelMask(mask);
+                    }
+                }
+            }
+        }
+    }
+
+    private void updateClientBlockEntityChannel(BlockPos pos, int mask) {
+        net.minecraft.client.MinecraftClient mc = net.minecraft.client.MinecraftClient.getInstance();
+        if (mc.world != null) {
+            net.minecraft.block.entity.BlockEntity be = mc.world.getBlockEntity(pos);
+            if (be instanceof com.audiophilecraft.block.entity.SpeakerBlockEntity speaker) {
+                speaker.setChannelMask(mask);
             }
         }
     }
