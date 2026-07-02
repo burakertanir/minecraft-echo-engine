@@ -56,14 +56,14 @@ public class PlaybackSession {
     private volatile boolean sideMuted = false;
 
     // 5-band EQ (dB) — elements accessed only under synchronized(getEqDb/setEqDb)
-    private final float[] subEq = new float[5];
-    private final float[] midEq = new float[5];
-    private final float[] lineEq = new float[5];
+    private final float[] subEq = new float[] {0.0f, 0.0f, 0.0f, 0.0f, 0.0f};
+    private final float[] midEq = new float[] {-3.0f, 0.0f, 0.0f, 2.0f, 3.0f};
+    private final float[] lineEq = new float[] {-3.0f, 0.0f, 0.0f, 2.0f, 3.0f};
 
     // 5-band EQ Q (bandwidth), default 1.0
     private final float[] subEqQ = new float[] {1f, 1f, 1f, 1f, 1f};
-    private final float[] midEqQ = new float[] {1f, 1f, 1f, 1f, 1f};
-    private final float[] lineEqQ = new float[] {1f, 1f, 1f, 1f, 1f};
+    private final float[] midEqQ = new float[] {0.1f, 1.0f, 1.0f, 0.7f, 0.1f};
+    private final float[] lineEqQ = new float[] {0.1f, 1.0f, 1.0f, 0.7f, 0.1f};
 
     public PlaybackSession(AudioEngine engine) {
         this.engine = engine;

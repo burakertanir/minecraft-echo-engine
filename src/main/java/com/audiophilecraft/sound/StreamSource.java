@@ -1230,14 +1230,13 @@ public class StreamSource {
             double delta = interpolatedTarget - currentDelay;
 
             double absDelta = Math.abs(delta);
-            double slewCoeff;
-            if (absDelta > 500.0) { // >10ms gecikme değişimi (hızlı hareket)
-                slewCoeff = 0.05; // ~1 buffer'da oturur
-            } else if (absDelta > 50.0) { // 1-10ms arası (normal yürüme)
-                slewCoeff = 0.01; // ~4 buffer'da oturur
-            } else { // <1ms (duruyorum / çok yavaş)
-                slewCoeff = 0.002; // yavaş otur, click olmaz
-            }
+
+            // ═══════════════════════════════════════════════════════════════
+            // CONTINUOUS QUADRATIC SLEW COEFFICIENT
+            // Replaces the old stepped if-else logic for perfectly smooth pitch
+            // ═══════════════════════════════════════════════════════════════
+            double factor = Math.min(absDelta / 500.0, 1.0);
+            double slewCoeff = 0.002 + (factor * factor) * 0.048;
 
             double step = delta * slewCoeff;
 
@@ -1269,7 +1268,11 @@ public class StreamSource {
         this.dspPipeline.process(output, (float) streamBuffer.sampleRate, this.smoothedInputGain, this.smoothedPower);
 
         // Feed peak meter (post-DSP, pre-OpenAL) — ~0 cost: 1 loop + 1 volatile write
-        PeakMeter.getInstance().feedPeak(this.speakerType, output, STREAM_BUFFER_SIZE);
+        // BUG FIX: Only feed peaks if this source belongs to the local player's active session,
+        // otherwise the tablet shows peaks from other players' speakers in multiplayer.
+        if (this.session == com.audiophilecraft.sound.AudioEngine.getInstance().getActiveSession()) {
+            PeakMeter.getInstance().feedPeak(this.speakerType, output, STREAM_BUFFER_SIZE);
+        }
 
         if (finished) {
             isFinished = true;

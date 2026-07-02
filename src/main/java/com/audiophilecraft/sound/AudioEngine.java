@@ -485,10 +485,7 @@ public class AudioEngine {
     private void updateListenerSlapback(World world) {
         if (slapbackEffectId == 0 || slapbackAuxSlotId == 0) return;
 
-        // Only horizontal + up rays. Down (-Y) is excluded because when flying
-        // or on uneven terrain the ground distance oscillates rapidly, causing
-        // the echo gain to pump/peak every tick.
-        float[][] DIRS = {{1, 0, 0}, {-1, 0, 0}, {0, 1, 0}, {0, 0, 1}, {0, 0, -1}};
+        float[][] DIRS = {{1, 0, 0}, {-1, 0, 0}, {0, 1, 0}, {0, -1, 0}, {0, 0, 1}, {0, 0, -1}};
 
         int maxDist = 40;
         float minDist = maxDist;
@@ -856,18 +853,22 @@ public class AudioEngine {
         // If manually paused via tablet, let the reverb tail ring out naturally.
         if (auxSlotId != 0) {
             if (gamePaused) {
-                org.lwjgl.openal.EXTEfx.alAuxiliaryEffectSlotf(
-                        auxSlotId, org.lwjgl.openal.EXTEfx.AL_EFFECTSLOT_GAIN, 0.0f);
+                org.lwjgl.openal.EXTEfx.alAuxiliaryEffectSloti(
+                        auxSlotId,
+                        org.lwjgl.openal.EXTEfx.AL_EFFECTSLOT_EFFECT,
+                        org.lwjgl.openal.EXTEfx.AL_EFFECT_NULL);
                 if (slapbackAuxSlotId != 0) {
-                    org.lwjgl.openal.EXTEfx.alAuxiliaryEffectSlotf(
-                            slapbackAuxSlotId, org.lwjgl.openal.EXTEfx.AL_EFFECTSLOT_GAIN, 0.0f);
+                    org.lwjgl.openal.EXTEfx.alAuxiliaryEffectSloti(
+                            slapbackAuxSlotId,
+                            org.lwjgl.openal.EXTEfx.AL_EFFECTSLOT_EFFECT,
+                            org.lwjgl.openal.EXTEfx.AL_EFFECT_NULL);
                 }
             } else {
-                org.lwjgl.openal.EXTEfx.alAuxiliaryEffectSlotf(
-                        auxSlotId, org.lwjgl.openal.EXTEfx.AL_EFFECTSLOT_GAIN, 1.0f);
+                org.lwjgl.openal.EXTEfx.alAuxiliaryEffectSloti(
+                        auxSlotId, org.lwjgl.openal.EXTEfx.AL_EFFECTSLOT_EFFECT, reverbEffectId);
                 if (slapbackAuxSlotId != 0) {
-                    org.lwjgl.openal.EXTEfx.alAuxiliaryEffectSlotf(
-                            slapbackAuxSlotId, org.lwjgl.openal.EXTEfx.AL_EFFECTSLOT_GAIN, 1.0f);
+                    org.lwjgl.openal.EXTEfx.alAuxiliaryEffectSloti(
+                            slapbackAuxSlotId, org.lwjgl.openal.EXTEfx.AL_EFFECTSLOT_EFFECT, slapbackEffectId);
                 }
             }
         }
@@ -1179,6 +1180,15 @@ public class AudioEngine {
      * Does NOT stop sessions — those are managed per-player.
      */
     public void cleanupEfx() {
+        if (slapbackAuxSlotId != 0) {
+            alAuxiliaryEffectSloti(slapbackAuxSlotId, AL_EFFECTSLOT_EFFECT, AL_EFFECT_NULL);
+            alDeleteAuxiliaryEffectSlots(slapbackAuxSlotId);
+            slapbackAuxSlotId = 0;
+        }
+        if (slapbackEffectId != 0) {
+            alDeleteEffects(slapbackEffectId);
+            slapbackEffectId = 0;
+        }
         if (auxSlotId != 0) {
             alAuxiliaryEffectSloti(auxSlotId, AL_EFFECTSLOT_EFFECT, AL_EFFECT_NULL);
             alDeleteAuxiliaryEffectSlots(auxSlotId);
@@ -1188,6 +1198,7 @@ public class AudioEngine {
             alDeleteEffects(reverbEffectId);
             reverbEffectId = 0;
         }
+        currentSlapbackGain = 0.0f;
         efxInitialized = false;
     }
 

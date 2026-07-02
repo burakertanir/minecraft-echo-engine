@@ -9,7 +9,6 @@ import net.fabricmc.fabric.api.networking.v1.PacketByteBufs;
 import net.minecraft.client.MinecraftClient;
 import net.minecraft.client.gui.DrawContext;
 import net.minecraft.client.gui.screen.ingame.HandledScreen;
-import net.minecraft.client.gui.widget.ButtonWidget;
 import net.minecraft.client.gui.widget.SliderWidget;
 import net.minecraft.entity.player.PlayerInventory;
 import net.minecraft.network.PacketByteBuf;
@@ -26,7 +25,7 @@ public class SpeakerScreen extends HandledScreen<SpeakerScreenHandler> {
     private static final int[] currentColors = new int[] {0xFF333333, 0xFF555555, 0xFF444444, 0xFF333333};
     private static final int currentAdaptiveThemeColor = 0xFFFFFFFF;
 
-    private static final String[] CHANNEL_LABELS = {"BOTH", "L", "R"};
+    private static final String[] CHANNEL_LABELS = {"MONO", "L", "R"};
 
     public SpeakerScreen(SpeakerScreenHandler handler, PlayerInventory inventory, Text title) {
         super(handler, inventory, title);
@@ -94,16 +93,15 @@ public class SpeakerScreen extends HandledScreen<SpeakerScreenHandler> {
                 final int mask = i;
                 boolean isSelected = (currentMask == mask);
                 Text label = isSelected ? Text.literal("[" + CHANNEL_LABELS[i] + "]") : Text.literal(CHANNEL_LABELS[i]);
-                ButtonWidget btn = ButtonWidget.builder(label, b -> {
+                TransparentButton btn =
+                        new TransparentButton(btnX + i * (btnWidth + 4), btnY, btnWidth, 20, label, b -> {
                             handler.setChannelMask(mask);
                             updateClientBlockEntity(mask);
                             sendChannelMaskUpdate(mask);
                             applyChannelMaskToRunningSources(mask);
                             clearChildren();
                             init();
-                        })
-                        .dimensions(btnX + i * (btnWidth + 4), btnY, btnWidth, 20)
-                        .build();
+                        });
                 addDrawableChild(btn);
             }
         }
@@ -424,6 +422,31 @@ public class SpeakerScreen extends HandledScreen<SpeakerScreenHandler> {
             if (isHovered()) {
                 context.fill(knobX, getY(), knobX + knobWidth, getY() + height, 0x66FFFFFF);
             }
+            int textWidth = textRenderer.getWidth(getMessage());
+            context.drawText(
+                    textRenderer,
+                    getMessage(),
+                    getX() + (width - textWidth) / 2,
+                    getY() + (height - 8) / 2,
+                    currentAdaptiveThemeColor,
+                    false);
+        }
+    }
+
+    private class TransparentButton extends net.minecraft.client.gui.widget.ButtonWidget {
+        public TransparentButton(int x, int y, int width, int height, Text message, PressAction onPress) {
+            super(x, y, width, height, message, onPress, supplier -> supplier.get());
+        }
+
+        @Override
+        public void renderButton(DrawContext context, int mouseX, int mouseY, float delta) {
+            int fillAlpha = isHovered() ? 0x44FFFFFF : 0x00000000;
+            context.fill(getX(), getY(), getX() + width, getY() + 1, currentAdaptiveThemeColor);
+            context.fill(getX(), getY() + height - 1, getX() + width, getY() + height, currentAdaptiveThemeColor);
+            context.fill(getX(), getY(), getX() + 1, getY() + height, currentAdaptiveThemeColor);
+            context.fill(getX() + width - 1, getY(), getX() + width, getY() + height, currentAdaptiveThemeColor);
+            if (fillAlpha != 0)
+                context.fill(getX() + 1, getY() + 1, getX() + width - 1, getY() + height - 1, fillAlpha);
             int textWidth = textRenderer.getWidth(getMessage());
             context.drawText(
                     textRenderer,

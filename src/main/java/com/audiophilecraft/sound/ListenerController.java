@@ -108,7 +108,10 @@ public class ListenerController {
 
         // Underwater detection
         MinecraftClient mc = MinecraftClient.getInstance();
-        if (mc.player != null) {
+        if (mc.gameRenderer != null && mc.gameRenderer.getCamera() != null) {
+            isUnderwater = mc.gameRenderer.getCamera().getSubmersionType()
+                    == net.minecraft.client.render.CameraSubmersionType.WATER;
+        } else if (mc.player != null) {
             isUnderwater = mc.player.isSubmergedInWater();
         }
         float targetHF = isUnderwater ? 0.08f : 1.0f;

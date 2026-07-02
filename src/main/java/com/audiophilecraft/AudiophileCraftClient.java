@@ -34,9 +34,16 @@ public class AudiophileCraftClient implements ClientModInitializer {
         // Render Frame (60-120Hz+): smooth gain interpolation + listener position
         net.fabricmc.fabric.api.client.rendering.v1.WorldRenderEvents.START.register(context -> {
             net.minecraft.client.MinecraftClient mc = net.minecraft.client.MinecraftClient.getInstance();
-            if (mc.player != null) {
+            net.minecraft.client.render.Camera camera = context.camera();
+            if (camera != null && camera.isReady()) {
+                com.audiophilecraft.sound.AudioEngine.getInstance()
+                        .updateListener(camera.getPos(), camera.getYaw(), camera.getPitch());
+            } else if (mc.player != null) {
+                // Fallback if camera is somehow not ready
                 com.audiophilecraft.sound.AudioEngine.getInstance()
                         .updateListener(mc.player.getEyePos(), mc.player.getYaw(), mc.player.getPitch());
+            }
+            if (mc.player != null) {
                 com.audiophilecraft.sound.AudioEngine.getInstance().updateGains();
             }
         });

@@ -31,7 +31,7 @@ public class StreamDSPPipeline {
             crossoverFilter1 =
                     new AudioDSP.BiquadFilter(AudioDSP.FilterType.HIGH_PASS, sampleRate, 45.0f, 0.577f, 0.0f);
             crossoverFilter2 = null;
-            eqFrequencies = new float[] {250f, 500f, 1000f, 2000f, 4000f};
+            eqFrequencies = new float[] {100f, 400f, 1000f, 4000f, 10000f};
         } else if ("line".equals(speakerType)) {
             // 24dB/oct HP at 120Hz — sub ile eslesir
             crossoverFilter1 =

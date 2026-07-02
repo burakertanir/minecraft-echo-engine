@@ -198,34 +198,28 @@ public class AmplifierScreen extends HandledScreen<AmplifierScreenHandler> {
                 }
             }
         });
-        int buttonStartX = x + (backgroundWidth - 50) / 2;
-        playButton = new TransparentButton(buttonStartX + 2, clusterY + 85, 20, 20, Text.literal("\u25B6"), button -> {
+        int buttonStartX = x + (backgroundWidth - 104) / 2;
+        playButton = new TransparentButton(buttonStartX, clusterY + 85, 20, 20, Text.literal("\u25B6"), button -> {
             attemptStartPlaying();
         });
         // Stop Button
-        stopButton = new TransparentButton(buttonStartX + 30, clusterY + 85, 20, 20, Text.literal("\u25A0"), button -> {
+        stopButton = new TransparentButton(buttonStartX + 28, clusterY + 85, 20, 20, Text.literal("\u25A0"), button -> {
             net.minecraft.network.PacketByteBuf buf = net.fabricmc.fabric.api.networking.v1.PacketByteBufs.create();
             net.fabricmc.fabric.api.client.networking.v1.ClientPlayNetworking.send(ModMessages.C2S_STOP_AUDIO, buf);
         });
-        // Mixer Button
-        mixerButton = new TransparentButton(
-                buttonStartX + 58, clusterY + 85, 20, 20, Text.literal("\uD83C\uDF9B"), button -> {
+        // Mixer Button (EQ Icon)
+        mixerButton =
+                new TransparentButton(buttonStartX + 56, clusterY + 85, 20, 20, Text.literal("\u2630"), button -> {
                     isMixerOpen = !isMixerOpen;
                     if (isMixerOpen) isMapOpen = false;
                     updateWidgetVisibility();
                 });
-        // Map Button
-        mapButton = new TransparentButton(
-                buttonStartX + 86,
-                clusterY + 85,
-                20,
-                20,
-                Text.literal("\uD83D\uDDFA"),
-                button -> { // Map icon
-                    isMapOpen = !isMapOpen;
-                    if (isMapOpen) isMixerOpen = false;
-                    updateWidgetVisibility();
-                });
+        // Map Button (Radar Icon)
+        mapButton = new TransparentButton(buttonStartX + 84, clusterY + 85, 20, 20, Text.literal("\u25CE"), button -> {
+            isMapOpen = !isMapOpen;
+            if (isMapOpen) isMixerOpen = false;
+            updateWidgetVisibility();
+        });
         addDrawableChild(urlField);
         addDrawableChild(playButton);
         addDrawableChild(stopButton);
@@ -323,20 +317,25 @@ public class AmplifierScreen extends HandledScreen<AmplifierScreenHandler> {
         powerSlider.visible = showMain;
         playButton.visible = showMain;
         stopButton.visible = showMain;
-        if (isMixerOpen || isMapOpen) {
-            mixerButton.setX((width - 45) / 2);
+
+        mixerButton.visible = showMain || isMixerOpen;
+        mapButton.visible = showMain || isMapOpen;
+
+        if (isMixerOpen) {
+            mixerButton.setX((width - 20) / 2);
             mixerButton.setY((height + backgroundHeight) / 2 - 25);
-            mapButton.setX((width + 5) / 2);
+        } else if (isMapOpen) {
+            mapButton.setX((width - 20) / 2);
             mapButton.setY((height + backgroundHeight) / 2 - 25);
         } else {
             // Restore origin position
             int x = (width - backgroundWidth) / 2;
             int y = (height - backgroundHeight) / 2;
             int clusterY = y + (backgroundHeight - 165) / 2;
-            int buttonStartX = x + (backgroundWidth - 50) / 2;
-            mixerButton.setX(buttonStartX + 58);
+            int buttonStartX = x + (backgroundWidth - 104) / 2;
+            mixerButton.setX(buttonStartX + 56);
             mixerButton.setY(clusterY + 85);
-            mapButton.setX(buttonStartX + 86);
+            mapButton.setX(buttonStartX + 84);
             mapButton.setY(clusterY + 85);
         }
         for (MixerSliderWidget s : mixerSliders) {
@@ -892,7 +891,7 @@ public class AmplifierScreen extends HandledScreen<AmplifierScreenHandler> {
             int startX = (width - backgroundWidth) / 2 + 20;
             int startY = (height - backgroundHeight) / 2 + 45;
             int colWidth = (backgroundWidth - 40) / 3;
-            String[] labels = {"SUBWOOFER", "MID-RANGE", "LINE ARRAY"};
+            String[] labels = {"SUBWOOFER", "STUDIO MONITOR", "LINE ARRAY"};
 
             context.getMatrices().push();
             context.getMatrices().scale(1.2f, 1.2f, 1.0f);
@@ -1551,11 +1550,11 @@ public class AmplifierScreen extends HandledScreen<AmplifierScreenHandler> {
                 if (typeIndex == 4) return "90Hz: ";
                 if (typeIndex == 5) return "110Hz: ";
             } else if ("mid".equals(speakerType)) {
-                if (typeIndex == 1) return "250Hz: ";
-                if (typeIndex == 2) return "500Hz: ";
+                if (typeIndex == 1) return "100Hz: ";
+                if (typeIndex == 2) return "400Hz: ";
                 if (typeIndex == 3) return "1kHz: ";
-                if (typeIndex == 4) return "2kHz: ";
-                if (typeIndex == 5) return "4kHz: ";
+                if (typeIndex == 4) return "4kHz: ";
+                if (typeIndex == 5) return "10kHz: ";
             } else if ("line".equals(speakerType)) {
                 if (typeIndex == 1) return "250Hz: ";
                 if (typeIndex == 2) return "1kHz: ";
