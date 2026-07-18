@@ -23,9 +23,9 @@ public class OggDecoder {
     /**
      * Streaming OGG decoder — decodes in chunks instead of all at once.
      * Usage:
-     *   1. open() → get totalSamples, sampleRate
-     *   2. decodeChunk() repeatedly → fills output array incrementally
-     *   3. close() when done
+     * 1. open() → get totalSamples, sampleRate
+     * 2. decodeChunk() repeatedly → fills output array incrementally
+     * 3. close() when done
      */
     public static class StreamingDecoder {
         private long handle;
@@ -45,13 +45,15 @@ public class OggDecoder {
 
         /**
          * Decode the next chunk of audio into the output array.
-         * @param output   Target array (mono samples)
-         * @param offset   Start index in output
+         * 
+         * @param output     Target array (mono samples)
+         * @param offset     Start index in output
          * @param maxSamples Maximum samples to decode
          * @return Number of mono samples actually decoded (0 = EOF)
          */
         public int decodeChunk(short[] output, int offset, int maxSamples) {
-            if (finished || handle == 0) return 0;
+            if (finished || handle == 0)
+                return 0;
 
             // Use a temporary interleaved buffer for decoding
             ShortBuffer tempBuf = MemoryUtil.memAllocShort(maxSamples * channels);
@@ -69,8 +71,10 @@ public class OggDecoder {
                         short left = tempBuf.get(i * 2);
                         short right = tempBuf.get(i * 2 + 1);
                         int mono = Math.round(((int) left + (int) right) * 0.5f);
-                        if (mono > 32767) mono = 32767;
-                        if (mono < -32768) mono = -32768;
+                        if (mono > 32767)
+                            mono = 32767;
+                        if (mono < -32768)
+                            mono = -32768;
                         output[offset + i] = (short) mono;
                     }
                 } else {
@@ -126,7 +130,8 @@ public class OggDecoder {
             }
         } catch (Exception e) {
             e.printStackTrace();
-            if (vorbisData != null) MemoryUtil.memFree(vorbisData);
+            if (vorbisData != null)
+                MemoryUtil.memFree(vorbisData);
             return null;
         }
 

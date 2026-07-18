@@ -220,7 +220,7 @@ public class AudioEngine {
         efxInitialized = true;
 
         // Enable HRTF and expanded source pool for all users
-        enableHrtf();
+        // enableHrtf();
 
         // HRTF and source pool expansion are now handled via alsoft.ini
         // (placed in %AppData%/alsoft.ini). This avoids alcResetDeviceSOFT
