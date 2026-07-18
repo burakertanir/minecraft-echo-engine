@@ -4,31 +4,23 @@ import static org.lwjgl.openal.AL10.*;
 import static org.lwjgl.openal.AL11.*;
 import static org.lwjgl.openal.EXTEfx.*;
 
-import java.nio.ShortBuffer;
 import java.util.List;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
-import net.minecraft.block.BlockState;
 import net.minecraft.client.MinecraftClient;
-import net.minecraft.state.property.Properties;
 import net.minecraft.util.math.BlockPos;
-import net.minecraft.util.math.Direction;
 import net.minecraft.util.math.Vec3d;
-import net.minecraft.util.math.Vec3i;
 import net.minecraft.world.World;
 import org.lwjgl.openal.ALC10;
 import org.lwjgl.openal.ALCCapabilities;
 import org.lwjgl.openal.SOFTHRTF;
-import org.lwjgl.system.MemoryUtil;
 
 public class AudioEngine {
     private static AudioEngine INSTANCE;
 
     // Active playback session
     private final java.util.Map<java.util.UUID, PlaybackSession> sessions =
-            new java.util.concurrent.ConcurrentHashMap<>();
-    private final java.util.concurrent.ConcurrentHashMap<java.util.UUID, Long> activeUrlRequestIds =
             new java.util.concurrent.ConcurrentHashMap<>();
     private java.util.UUID activeSessionId = null;
 
@@ -42,17 +34,14 @@ public class AudioEngine {
     // Seek Atomicity Guard â€” prevents audio thread from feeding sources mid-seek
     // getActiveSession().isSeeking() in PlaybackSession
 
-    // Track Generation â€” increments on each playTrack(), used to discard stale
-    // venue scan callbacks
-    private volatile int trackGeneration = 0;
-
     private final AudioEffectsController effects = new AudioEffectsController();
+    private final AudioPlaybackController playback = new AudioPlaybackController(this, sessions, effects);
 
     // Streaming System
 
     // Time Tracking
     // read by audio thread
-    private static final double BUFFER_LOOKAHEAD = 0.5; // Low-latency pipeline: 6 initial + 3 precomputed buffers Ã—
+    static final double BUFFER_LOOKAHEAD = 0.5; // Shared by playback preparation and runtime feeding.
     // 1024 = 9216 samples (~0.19s) PLUS delay headroom
 
     // Background Audio Thread (pre-computes PCM buffers off main thread)
@@ -257,6 +246,12 @@ public class AudioEngine {
             }
         }
         listener.update(pos, yaw, pitch, openAlListenerY);
+    }
+
+    void syncListenerToCamera() {
+        if (MinecraftClient.getInstance().cameraEntity == null) return;
+        this.listenerPos = MinecraftClient.getInstance().cameraEntity.getPos();
+        this.smoothedListenerPos = this.listenerPos;
     }
 
     /** Returns the smoothed underwater HF gain (0.08 = submerged, 1.0 = normal) */
@@ -496,7 +491,7 @@ public class AudioEngine {
                 // This prevents stale sessions from blocking future play requests with ghost
                 // URL state.
                 if (session.getStreamSources().isEmpty()) {
-                    cancelUrlRequest(entry.getKey());
+                    playback.cancelUrlRequest(entry.getKey());
                     session.stopAll();
                     sessionIterator.remove();
                 }
@@ -580,7 +575,7 @@ public class AudioEngine {
      * Stops a specific session immediately.
      */
     public void stopSession(java.util.UUID sessionUUID) {
-        cancelUrlRequest(sessionUUID);
+        playback.cancelUrlRequest(sessionUUID);
         PlaybackSession session = sessions.remove(sessionUUID);
         if (session != null) {
             session.stopAll();
@@ -592,7 +587,7 @@ public class AudioEngine {
      * Stops all active audio sources across all sessions immediately.
      */
     public synchronized void stopAll() {
-        cancelAllUrlRequests();
+        playback.cancelAllUrlRequests();
         for (PlaybackSession session : sessions.values()) {
             session.stopAll();
         }
@@ -636,7 +631,7 @@ public class AudioEngine {
      * Start the background audio processing thread.
      * Runs every 5ms, pre-computing PCM buffers for all active StreamSources.
      */
-    private void startAudioThread() {
+    void startAudioThread() {
         if (audioThread != null && !audioThread.isShutdown()) {
             return; // Thread is already running and handling sessions
         }
@@ -761,10 +756,10 @@ public class AudioEngine {
         effects.cleanup();
     }
 
-    private static final String TYPE_NORMAL = "normal";
-    private static final String TYPE_SUB = "sub";
-    private static final String TYPE_MID = "mid";
-    private static final String TYPE_LINE = "line";
+    static final String TYPE_NORMAL = "normal";
+    static final String TYPE_SUB = "sub";
+    static final String TYPE_MID = "mid";
+    static final String TYPE_LINE = "line";
     private static final String[] EQ_SPEAKER_TYPES = {TYPE_NORMAL, TYPE_SUB, TYPE_MID, TYPE_LINE};
     private static final int EQ_BAND_COUNT = 5;
 
@@ -773,7 +768,7 @@ public class AudioEngine {
      * Called when a session is created/reused so settings survive disconnect/reconnect.
      * Only loads if the local player owns the session.
      */
-    private void loadPersistedEqIntoSession(PlaybackSession session, java.util.UUID sessionUUID) {
+    void loadPersistedEqIntoSession(PlaybackSession session, java.util.UUID sessionUUID) {
         net.minecraft.client.MinecraftClient client = net.minecraft.client.MinecraftClient.getInstance();
         if (client.player == null || !client.player.getUuid().equals(sessionUUID)) return;
         for (String type : EQ_SPEAKER_TYPES) {
@@ -796,67 +791,12 @@ public class AudioEngine {
         }
     }
 
-    // Stream Buffers Management
     public void prepareStreamBuffers(PlaybackSession session, String trackId) {
-        for (AudioStreamBuffer buffer : session.getStreamBuffers().values()) {
-            buffer.cleanup();
-        }
-        session.getStreamBuffers().clear();
-
-        // Load Raw Data once
-        OggDecoder.RawTrackData rawData = OggDecoder.loadOgg("sounds/" + trackId + ".ogg");
-        if (rawData == null) return;
-
-        try {
-            createStreamBufferForType(session, trackId, rawData, TYPE_SUB);
-            createStreamBufferForType(session, trackId, rawData, TYPE_MID);
-            createStreamBufferForType(session, trackId, rawData, TYPE_LINE);
-            createStreamBufferForType(session, trackId, rawData, TYPE_NORMAL);
-        } finally {
-            if (rawData.pcmData != null) MemoryUtil.memFree(rawData.pcmData);
-        }
-    }
-
-    private void createStreamBufferForType(
-            PlaybackSession session, String trackId, OggDecoder.RawTrackData rawData, String type) {
-        rawData.pcmData.rewind();
-        short[] audioData = new short[rawData.pcmData.remaining()];
-        rawData.pcmData.rewind();
-        rawData.pcmData.get(audioData);
-        applyDspForType(audioData, rawData.sampleRate, type);
-
-        AudioStreamBuffer buffer = new AudioStreamBuffer(trackId + "_" + type, rawData.sampleRate);
-        ShortBuffer pcm = MemoryUtil.memAllocShort(audioData.length);
-        pcm.put(audioData);
-        pcm.flip();
-        buffer.setSourceData(pcm);
-        session.getStreamBuffers().put(type, buffer);
+        playback.prepareStreamBuffers(session, trackId);
     }
 
     public void applyDspForType(short[] audioData, int sampleRate, String speakerType) {
-        // Pre-gain for headroom: fixed at 0.60 for all incoming tracks
-        AudioDSP.applyGain(audioData, 0.60f);
-        if (TYPE_SUB.equals(speakerType)) {
-            // 24dB/oct Butterworth LP at 120Hz — subwoofer only
-            AudioDSP.applyFilter(audioData, sampleRate, AudioDSP.FilterType.LOW_PASS, 120, 0.707f, 0);
-            AudioDSP.applyFilter(audioData, sampleRate, AudioDSP.FilterType.LOW_PASS, 120, 0.707f, 0);
-        } else if (TYPE_MID.equals(speakerType)) {
-            // Yamaha HS8 full-range monitor: 45Hz-24kHz.
-            // Gentle HP at 45Hz simulates the -3dB rolloff noktasi
-            AudioDSP.applyFilter(audioData, sampleRate, AudioDSP.FilterType.HIGH_PASS, 45, 0.577f, 0);
-        } else if (TYPE_LINE.equals(speakerType)) {
-            // 24dB/oct HP at 120Hz — sub ile eslesir, altini keser
-            AudioDSP.applyFilter(audioData, sampleRate, AudioDSP.FilterType.HIGH_PASS, 120, 0.707f, 0);
-            AudioDSP.applyFilter(audioData, sampleRate, AudioDSP.FilterType.HIGH_PASS, 120, 0.707f, 0);
-        }
-
-        // SAFETY LIMITER: Prevents hard digital clipping
-        AudioDSP.applyPeakLimiter(audioData, 0.98f);
-    }
-
-    private void resetGlobalVenueState(List<BlockPos> speakers) {
-        trackGeneration++;
-        effects.resetVenueState(speakers);
+        playback.applyDspForType(audioData, sampleRate, speakerType);
     }
 
     public void toggleManualPause(java.util.UUID sessionUUID) {
@@ -868,46 +808,9 @@ public class AudioEngine {
         }
     }
 
-    private void finalizePlaybackPipeline(
-            java.util.UUID sessionUUID,
-            List<BlockPos> speakers,
-            float power,
-            float inputGain,
-            boolean startImmediately) {
-        if (speakers == null || speakers.isEmpty()) return;
-
-        // syncToTime first so the buffer write cursor is at 0.5s before source creation
-        for (AudioStreamBuffer buffer :
-                sessions.get(sessionUUID).getStreamBuffers().values()) {
-            if (buffer.sampleRate > 0) buffer.syncToTime(BUFFER_LOOKAHEAD);
-        }
-
-        World world = MinecraftClient.getInstance().world;
-        int[] counts = SpeakerClusterer.countSpeakerTypes(speakers, world);
-        List<List<BlockPos>> clusters = SpeakerClusterer.clusterSpeakers(speakers);
-        createSourcesFromClusters(sessions.get(sessionUUID), clusters, counts, world, power, inputGain);
-
-        if (startImmediately) {
-            sessions.get(sessionUUID).setPlaying(true);
-            sessions.get(sessionUUID).setPaused(false);
-        }
-        startPlaybackWithVenueScan(sessions.get(sessionUUID), world, speakers, startImmediately);
-    }
-
     public void playTrack(
             java.util.UUID sessionUUID, String trackId, List<BlockPos> speakers, float power, float inputGain) {
-        PlaybackSession session = sessions.computeIfAbsent(sessionUUID, k -> new PlaybackSession(this));
-        session.stopAll();
-        loadPersistedEqIntoSession(session, sessionUUID);
-        session.setPlayUrl(""); // Empty URL for local SD card tracks
-        resetGlobalVenueState(speakers);
-
-        try {
-            prepareStreamBuffers(sessions.get(sessionUUID), trackId);
-            finalizePlaybackPipeline(sessionUUID, speakers, power, inputGain, true);
-        } catch (Exception e) {
-            e.printStackTrace();
-        }
+        playback.playTrack(sessionUUID, trackId, speakers, power, inputGain);
     }
 
     public void updateInputGain(float gain) {
@@ -929,43 +832,9 @@ public class AudioEngine {
         }
     }
 
-    private void cancelUrlRequest(java.util.UUID sessionUUID) {
-        Long requestId = activeUrlRequestIds.remove(sessionUUID);
-        if (requestId != null) {
-            InternetAudioLoader.getInstance().cancelStreamingRequest(requestId);
-        }
-    }
-
-    private void cancelAllUrlRequests() {
-        if (activeUrlRequestIds.isEmpty()) return;
-        InternetAudioLoader loader = InternetAudioLoader.getInstance();
-        for (java.util.Map.Entry<java.util.UUID, Long> entry : activeUrlRequestIds.entrySet()) {
-            java.util.UUID sessionUUID = entry.getKey();
-            Long requestId = entry.getValue();
-            if (activeUrlRequestIds.remove(sessionUUID, requestId)) {
-                loader.cancelStreamingRequest(requestId);
-            }
-        }
-    }
-
-    private boolean isActiveUrlRequest(java.util.UUID sessionUUID, long requestId) {
-        Long activeRequestId = activeUrlRequestIds.get(sessionUUID);
-        return activeRequestId != null && activeRequestId.longValue() == requestId;
-    }
-
-    /**
-     * Play audio from an internet URL (YouTube, SoundCloud, HTTP, etc.)
-     * Uses InternetAudioLoader (LavaPlayer) to resolve and decode the URL to PCM,
-     * then feeds into the existing DSP/StreamSource/OpenAL pipeline.
-     *
-     * @param url       The URL to play (e.g. YouTube link, HTTP audio file)
-     * @param speakers  Connected speaker positions
-     * @param power     Amplifier power
-     * @param inputGain Input gain multiplier
-     */
     public void playFromUrl(
             java.util.UUID sessionUUID, String url, List<BlockPos> speakers, float power, float inputGain) {
-        playFromUrl(sessionUUID, url, speakers, power, inputGain, true, null);
+        playback.playFromUrl(sessionUUID, url, speakers, power, inputGain);
     }
 
     public void playFromUrl(
@@ -976,94 +845,8 @@ public class AudioEngine {
             float inputGain,
             boolean startImmediately,
             java.util.function.Consumer<java.util.UUID> onReadyCallback) {
-
-        cancelUrlRequest(sessionUUID);
-        InternetAudioLoader loader = InternetAudioLoader.getInstance();
-        PlaybackSession existingSession = sessions.get(sessionUUID);
-        if (existingSession != null) {
-            existingSession.stopAll();
-        }
-
-        long startedRequestId = loader.loadTrackStreaming(url, new InternetAudioLoader.StreamingCallback() {
-            @Override
-            public void onReady(
-                    long requestId,
-                    short[] pcmInterleaved,
-                    int decodedFrames,
-                    int totalExpected,
-                    int sampleRate,
-                    String title) {
-                if (!isActiveUrlRequest(sessionUUID, requestId)) {
-                    System.out.println(
-                            "AudioEngine: Ignoring stale URL request #" + requestId + " for session " + sessionUUID);
-                    return;
-                }
-                AudioStreamBuffer sharedBuf = new AudioStreamBuffer("url_stream", sampleRate);
-                System.out.println("AudioEngine: URL request #" + requestId + " ready for session " + sessionUUID);
-                sharedBuf.initStreaming(pcmInterleaved, decodedFrames, totalExpected);
-
-                PlaybackSession session =
-                        sessions.computeIfAbsent(sessionUUID, k -> new PlaybackSession(AudioEngine.this));
-                session.stopAll();
-                loadPersistedEqIntoSession(session, sessionUUID);
-                session.setPlayUrl(url);
-                session.getStreamBuffers().clear();
-                session.getStreamBuffers().put(TYPE_SUB, sharedBuf);
-                session.getStreamBuffers().put(TYPE_MID, sharedBuf);
-                session.getStreamBuffers().put(TYPE_LINE, sharedBuf);
-                session.getStreamBuffers().put(TYPE_NORMAL, sharedBuf);
-
-                resetGlobalVenueState(speakers);
-                finalizePlaybackPipeline(sessionUUID, speakers, power, inputGain, startImmediately);
-                if (!startImmediately && onReadyCallback != null) {
-                    onReadyCallback.accept(sessionUUID);
-                }
-            }
-
-            @Override
-            public void onMoreData(long requestId, int totalDecoded) {
-                if (!isActiveUrlRequest(sessionUUID, requestId)) return;
-                PlaybackSession session = sessions.get(sessionUUID);
-                if (session != null) {
-                    AudioStreamBuffer buf = session.getStreamBuffers().get(TYPE_NORMAL);
-                    if (buf != null) buf.updateDecodedLength(totalDecoded);
-                }
-            }
-
-            @Override
-            public void onComplete(long requestId, int totalDecodedFrames) {
-                if (!activeUrlRequestIds.remove(sessionUUID, requestId)) return;
-                PlaybackSession session = sessions.get(sessionUUID);
-                if (session != null) {
-                    AudioStreamBuffer buffer = session.getStreamBuffers().get(TYPE_NORMAL);
-                    if (buffer != null) buffer.completeStreaming(totalDecodedFrames);
-                }
-                System.out.println("AudioEngine: URL request #" + requestId + " completed for session " + sessionUUID);
-            }
-
-            @Override
-            public void onFailed(long requestId, String reason) {
-                if (!activeUrlRequestIds.remove(sessionUUID, requestId)) return;
-                System.err.println("AudioEngine: URL request #" + requestId + " failed: " + reason);
-                net.minecraft.client.MinecraftClient.getInstance().execute(() -> {
-                    if (net.minecraft.client.MinecraftClient.getInstance().player != null) {
-                        net.minecraft.client.MinecraftClient.getInstance()
-                                .player
-                                .sendMessage(
-                                        net.minecraft.text.Text.literal("HATA (CRITICAL DECODE ERROR): " + reason)
-                                                .formatted(net.minecraft.util.Formatting.RED),
-                                        false);
-                    }
-                });
-            }
-        });
-        activeUrlRequestIds.put(sessionUUID, startedRequestId);
-        System.out.println("AudioEngine: URL request #" + startedRequestId + " started for session " + sessionUUID);
+        playback.playFromUrl(sessionUUID, url, speakers, power, inputGain, startImmediately, onReadyCallback);
     }
-
-    // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
-    // SHARED HELPERS â€” Used by both playTrack() and playFromPcmData()
-    // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
     public void createSourcesFromClusters(
             PlaybackSession session,
@@ -1072,238 +855,14 @@ public class AudioEngine {
             World world,
             float power,
             float inputGain) {
-        for (List<BlockPos> cluster : clusters) {
-            int[] clusterCounts = SpeakerClusterer.countSpeakerTypes(cluster, world);
-            StreamSource leaderSource = null;
-            for (BlockPos pos : cluster) {
-                String speakerType = TYPE_NORMAL;
-                float baseRefDist = 3.0f;
-                float baseMaxDist = 64.0f;
-                int sampleShiftMs = 0;
-                int channelMask = 0;
-                int speakerCount = 1;
-
-                if (world != null) {
-                    var blockState = world.getBlockState(pos);
-                    var block = blockState.getBlock();
-                    if (block instanceof com.audiophilecraft.block.SubwooferBlock) {
-                        speakerType = TYPE_SUB;
-                        baseRefDist = 10.0f;
-                        baseMaxDist = 85.0f;
-                        speakerCount = clusterCounts[0];
-                    } else if (block instanceof com.audiophilecraft.block.MidRangeBlock) {
-                        speakerType = TYPE_MID;
-                        baseRefDist = 5.0f;
-                        baseMaxDist = 60.0f;
-                        speakerCount = clusterCounts[1];
-                    } else if (block instanceof com.audiophilecraft.block.LineArrayBlock) {
-                        speakerType = TYPE_LINE;
-                        baseRefDist = 3.0f;
-                        baseMaxDist = 50.0f;
-                        speakerCount = clusterCounts[2];
-                    } else {
-                        speakerCount = clusterCounts[3];
-                    }
-                    net.minecraft.block.entity.BlockEntity be = world.getBlockEntity(pos);
-                    if (be instanceof com.audiophilecraft.block.entity.SpeakerBlockEntity speakerBe) {
-                        sampleShiftMs = speakerBe.getSampleShift();
-                        channelMask = speakerBe.getChannelMask();
-                    }
-                }
-
-                AudioStreamBuffer buffer = session.getStreamBuffers().get(speakerType);
-                if (buffer == null) buffer = session.getStreamBuffers().get(TYPE_NORMAL);
-                if (buffer == null) continue;
-
-                int sourceId = alGenSources();
-                int err = alGetError();
-                if (err != AL_NO_ERROR) {
-                    System.err.println("AudioEngine: OPENAL SOURCE LIMIT HIT! Failed at speaker #"
-                            + (session.getStreamSources().size() + 1) + " of "
-                            + clusters.stream().mapToInt(List::size).sum()
-                            + " (error=0x" + Integer.toHexString(err) + ")");
-                    // Clean up any sources created so far â€” partial playback is worse than
-                    // silence
-                    for (StreamSource s : session.getStreamSources()) {
-                        s.cleanup();
-                    }
-                    session.getStreamSources().clear();
-                    session.setPlaying(false);
-                    break;
-                }
-
-                alSource3f(sourceId, AL_POSITION, pos.getX() + 0.5f, pos.getY() + 0.5f, pos.getZ() + 0.5f);
-                alSourcef(sourceId, AL_ROLLOFF_FACTOR, 1.0f);
-                alSourcef(sourceId, AL_MAX_DISTANCE, Float.MAX_VALUE);
-                alSourcef(sourceId, AL_REFERENCE_DISTANCE, baseRefDist);
-                alSourcef(sourceId, AL_GAIN, 1.0f);
-                alSourcef(sourceId, AL_PITCH, 1.0f);
-
-                Direction facing = Direction.SOUTH;
-                int tiltDeg = 0;
-                if (world != null) {
-                    BlockState state = world.getBlockState(pos);
-                    if (state.contains(Properties.HORIZONTAL_FACING)) {
-                        facing = state.get(Properties.HORIZONTAL_FACING);
-                    }
-                    net.minecraft.block.entity.BlockEntity sbe = world.getBlockEntity(pos);
-                    if (sbe instanceof com.audiophilecraft.block.entity.SpeakerBlockEntity speaker) {
-                        tiltDeg = speaker.getVerticalTilt();
-                    }
-                }
-                Vec3i vec = facing.getVector();
-                float tiltRad = (float) Math.toRadians(tiltDeg);
-                float cosT = (float) Math.cos(tiltRad);
-                float sinT = (float) Math.sin(tiltRad);
-                float dirX = vec.getX() * cosT;
-                float dirY = sinT;
-                float dirZ = vec.getZ() * cosT;
-                alSource3f(sourceId, AL_DIRECTION, dirX, dirY, dirZ);
-
-                int filterId = 0, sendFilterId = 0, echoSendFilterId = 0;
-                try {
-                    filterId = alGenFilters();
-                    alFilteri(filterId, AL_FILTER_TYPE, AL_FILTER_LOWPASS);
-                    alFilterf(filterId, AL_LOWPASS_GAIN, 1.0f);
-                    alFilterf(filterId, AL_LOWPASS_GAINHF, 1.0f);
-                    alSourcei(sourceId, AL_DIRECT_FILTER, filterId);
-
-                    sendFilterId = alGenFilters();
-                    alFilteri(sendFilterId, AL_FILTER_TYPE, AL_FILTER_LOWPASS);
-                    alFilterf(sendFilterId, AL_LOWPASS_GAIN, 1.0f);
-                    alFilterf(sendFilterId, AL_LOWPASS_GAINHF, 1.0f);
-                    if (getAuxSlotId() != 0) {
-                        alSource3i(sourceId, AL_AUXILIARY_SEND_FILTER, getAuxSlotId(), 0, sendFilterId);
-                    }
-
-                    // Separate filter for echo send — prevents reverb filter
-                    // gain changes from bleeding into the echo path
-                    echoSendFilterId = alGenFilters();
-                    alFilteri(echoSendFilterId, AL_FILTER_TYPE, AL_FILTER_LOWPASS);
-                    alFilterf(echoSendFilterId, AL_LOWPASS_GAIN, 1.0f);
-                    alFilterf(echoSendFilterId, AL_LOWPASS_GAINHF, 1.0f);
-                    if (getSlapbackAuxSlotId() != 0) {
-                        alSource3i(sourceId, AL_AUXILIARY_SEND_FILTER, getSlapbackAuxSlotId(), 1, echoSendFilterId);
-                    }
-                } catch (Exception e) {
-                    System.err.println("AudioEngine: EFX filter/send setup failed: " + e.getMessage());
-                }
-
-                StreamSource ss = new StreamSource(
-                        session,
-                        sourceId,
-                        buffer,
-                        pos,
-                        power,
-                        baseMaxDist * power,
-                        baseRefDist * power,
-                        dirX,
-                        dirY,
-                        dirZ,
-                        speakerType,
-                        filterId,
-                        sendFilterId,
-                        echoSendFilterId,
-                        inputGain,
-                        sampleShiftMs,
-                        speakerCount,
-                        leaderSource,
-                        cluster.size(),
-                        channelMask);
-                session.getStreamSources().add(ss);
-
-                if (leaderSource == null) leaderSource = ss;
-            }
-        }
+        playback.createSourcesFromClusters(session, clusters, counts, world, power, inputGain);
     }
 
-    /**
-     * Performs venue acoustic scan and starts playback.
-     * If world is null or no sources exist, starts playback immediately.
-     *
-     * @param atomicStart If true, uses alSourcePlayv for simultaneous start (URL
-     *                    path).
-     *                    If false, uses source.start() individually (OGG path).
-     */
     public void startPlaybackWithVenueScan(
             PlaybackSession session, World world, List<BlockPos> speakers, boolean atomicStart) {
-        Runnable startPlayback = () -> {
-            // Start the master clock HERE — after venue scan completes,
-            // so the audio thread reads from the correct position immediately
-            session.setStreamStartTime(System.nanoTime());
-
-            if (MinecraftClient.getInstance().cameraEntity != null) {
-                this.listenerPos = MinecraftClient.getInstance().cameraEntity.getPos();
-                this.smoothedListenerPos = this.listenerPos;
-            }
-
-            // Atomic hardware start FIRST so all sources begin at the exact same cycle.
-            // Audio thread starts AFTER to avoid asymmetric buffer pre-fill between sources.
-            if (atomicStart) {
-                java.nio.IntBuffer sourceIds = org.lwjgl.BufferUtils.createIntBuffer(
-                        session.getStreamSources().size());
-                for (StreamSource source : session.getStreamSources()) {
-                    org.lwjgl.openal.AL10.alSourcei(
-                            source.sourceId, org.lwjgl.openal.AL10.AL_LOOPING, org.lwjgl.openal.AL10.AL_FALSE);
-                    sourceIds.put(source.sourceId);
-                }
-                sourceIds.flip();
-                org.lwjgl.openal.AL10.alSourcePlayv(sourceIds);
-            } else {
-                for (StreamSource source : session.getStreamSources()) {
-                    source.start();
-                }
-            }
-
-            // Start the audio thread last — sources are already playing silent buffers,
-            // the audio thread fills real PCM at the same rate for all speakers.
-            startAudioThread();
-        };
-
-        if (!session.getStreamSources().isEmpty() && world != null) {
-            List<List<BlockPos>> clusters = SpeakerClusterer.clusterSpeakers(speakers);
-            java.util.List<Vec3d> clusterCenters = new java.util.ArrayList<>();
-            for (List<BlockPos> cluster : clusters) {
-                double cx = 0, cy = 0, cz = 0;
-                for (BlockPos p : cluster) {
-                    cx += p.getX() + 0.5;
-                    cy += p.getY() + 0.5;
-                    cz += p.getZ() + 0.5;
-                }
-                clusterCenters.add(new Vec3d(cx / cluster.size(), cy / cluster.size(), cz / cluster.size()));
-            }
-
-            int gen = trackGeneration;
-            java.util.concurrent.CompletableFuture.supplyAsync(() -> {
-                        try {
-                            return effects.scanVenue(world, clusterCenters);
-                        } catch (Exception e) {
-                            System.err.println("Venue scan crash: " + e.getMessage());
-                            return null;
-                        }
-                    })
-                    .exceptionally(ex -> {
-                        System.err.println("Venue scan future failed: " + ex.getMessage());
-                        return null;
-                    })
-                    .thenAcceptAsync(
-                            preset -> {
-                                if (gen != trackGeneration) return; // stale callback
-                                if (preset != null) {
-                                    effects.applyScannedVenuePreset(preset);
-                                }
-                                startPlayback.run();
-                            },
-                            MinecraftClient.getInstance()::execute);
-        } else {
-            startPlayback.run();
-        }
+        playback.startPlaybackWithVenueScan(session, world, speakers, atomicStart);
     }
 
-    /**
-     * Play from raw mono PCM data (used by InternetAudioLoader callback).
-     * Creates DSP-processed stream buffers and spawns StreamSources.
-     */
     public void playFromPcmData(
             java.util.UUID sessionUUID,
             short[] pcmData,
@@ -1311,44 +870,7 @@ public class AudioEngine {
             List<BlockPos> speakers,
             float power,
             float inputGain) {
-        PlaybackSession session = sessions.computeIfAbsent(sessionUUID, k -> new PlaybackSession(this));
-        session.stopAll();
-        loadPersistedEqIntoSession(session, sessionUUID);
-        resetGlobalVenueState(speakers);
-
-        java.nio.ShortBuffer pcmBuffer = null;
-        try {
-            // Wrap PCM data into RawTrackData
-            pcmBuffer = org.lwjgl.system.MemoryUtil.memAllocShort(pcmData.length);
-            pcmBuffer.put(pcmData);
-            pcmBuffer.flip();
-
-            OggDecoder.RawTrackData rawData = new OggDecoder.RawTrackData();
-            rawData.pcmData = pcmBuffer;
-            rawData.sampleRate = sampleRate;
-            rawData.channels = 1;
-            rawData.format = org.lwjgl.openal.AL10.AL_FORMAT_MONO16;
-
-            // Prepare stream buffers
-            for (AudioStreamBuffer buffer :
-                    sessions.get(sessionUUID).getStreamBuffers().values()) {
-                buffer.cleanup();
-            }
-            sessions.get(sessionUUID).getStreamBuffers().clear();
-            createStreamBufferForType(sessions.get(sessionUUID), "url_track", rawData, TYPE_SUB);
-            createStreamBufferForType(sessions.get(sessionUUID), "url_track", rawData, TYPE_MID);
-            createStreamBufferForType(sessions.get(sessionUUID), "url_track", rawData, TYPE_LINE);
-            createStreamBufferForType(sessions.get(sessionUUID), "url_track", rawData, TYPE_NORMAL);
-
-            finalizePlaybackPipeline(sessionUUID, speakers, power, inputGain, true);
-
-        } catch (Exception e) {
-            e.printStackTrace();
-        } finally {
-            if (pcmBuffer != null) {
-                org.lwjgl.system.MemoryUtil.memFree(pcmBuffer);
-            }
-        }
+        playback.playFromPcmData(sessionUUID, pcmData, sampleRate, speakers, power, inputGain);
     }
 
     /**
