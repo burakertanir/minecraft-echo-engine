@@ -15,6 +15,7 @@ import dev.lavalink.youtube.YoutubeAudioSourceManager;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.atomic.AtomicLong;
 
 /**
  * Internet Audio Loader — LavaPlayer integration for URL-based music streaming.
@@ -26,6 +27,7 @@ public class InternetAudioLoader {
 
     private static InternetAudioLoader INSTANCE;
     private final AudioPlayerManager playerManager;
+    private final AtomicLong nextStreamingRequestId = new AtomicLong(1L);
 
     private InternetAudioLoader() {
         // Force IPv4 to prevent Java network hangs on Windows (IPv6 timeouts)
@@ -61,13 +63,19 @@ public class InternetAudioLoader {
     }
 
     public interface StreamingCallback {
-        void onReady(short[] pcmInterleaved, int decodedFrames, int totalExpectedFrames, int sampleRate, String title);
+        void onReady(
+                long requestId,
+                short[] pcmInterleaved,
+                int decodedFrames,
+                int totalExpectedFrames,
+                int sampleRate,
+                String title);
 
-        void onMoreData(int totalDecoded);
+        void onMoreData(long requestId, int totalDecoded);
 
-        void onComplete();
+        void onComplete(long requestId);
 
-        void onFailed(String reason);
+        void onFailed(long requestId, String reason);
     }
 
     /**
@@ -119,38 +127,40 @@ public class InternetAudioLoader {
         });
     }
 
-    public void loadTrackStreaming(String url, StreamingCallback callback) {
+    public long loadTrackStreaming(String url, StreamingCallback callback) {
+        long requestId = nextStreamingRequestId.getAndIncrement();
         playerManager.loadItem(url, new AudioLoadResultHandler() {
             @Override
             public void trackLoaded(AudioTrack track) {
-                CompletableFuture.runAsync(() -> decodeTrackStreaming(track, callback));
+                CompletableFuture.runAsync(() -> decodeTrackStreaming(requestId, track, callback));
             }
 
             @Override
             public void playlistLoaded(AudioPlaylist playlist) {
                 if (playlist.getTracks().isEmpty()) {
-                    callback.onFailed("Playlist empty");
+                    callback.onFailed(requestId, "Playlist empty");
                     return;
                 }
                 AudioTrack s = playlist.getSelectedTrack();
                 if (s == null) s = playlist.getTracks().get(0);
                 final AudioTrack t = s;
-                CompletableFuture.runAsync(() -> decodeTrackStreaming(t, callback));
+                CompletableFuture.runAsync(() -> decodeTrackStreaming(requestId, t, callback));
             }
 
             @Override
             public void noMatches() {
-                callback.onFailed("No matches: " + url);
+                callback.onFailed(requestId, "No matches: " + url);
             }
 
             @Override
             public void loadFailed(FriendlyException ex) {
-                callback.onFailed("Load failed: " + ex.getMessage());
+                callback.onFailed(requestId, "Load failed: " + ex.getMessage());
             }
         });
+        return requestId;
     }
 
-    private void decodeTrackStreaming(AudioTrack track, StreamingCallback callback) {
+    private void decodeTrackStreaming(long requestId, AudioTrack track, StreamingCallback callback) {
         int sampleRate = 48000;
         int channels = 2;
         int totalDecoded = 0;
@@ -195,7 +205,7 @@ public class InternetAudioLoader {
             final int finalSR = sampleRate;
             final short[] pcmFinal = pcmInterleaved;
             net.minecraft.client.MinecraftClient.getInstance()
-                    .execute(() -> callback.onReady(pcmFinal, prebuffered, totalExpected, finalSR, title));
+                    .execute(() -> callback.onReady(requestId, pcmFinal, prebuffered, totalExpected, finalSR, title));
             while (true) {
                 AudioFrame f = player.provide(5000, java.util.concurrent.TimeUnit.MILLISECONDS);
                 if (f == null) {
@@ -206,14 +216,15 @@ public class InternetAudioLoader {
                 if (f.getData() == null || f.getData().length == 0) continue;
                 totalDecoded += copyFrameToPcm(f, pcmInterleaved, totalDecoded, channels);
                 final int td = totalDecoded;
-                net.minecraft.client.MinecraftClient.getInstance().execute(() -> callback.onMoreData(td));
+                net.minecraft.client.MinecraftClient.getInstance().execute(() -> callback.onMoreData(requestId, td));
                 if (totalDecoded >= totalExpected) break;
             }
-            net.minecraft.client.MinecraftClient.getInstance().execute(() -> callback.onComplete());
+            net.minecraft.client.MinecraftClient.getInstance().execute(() -> callback.onComplete(requestId));
         } catch (Throwable e) {
             System.err.println("CRITICAL DECODE ERROR: " + e.toString());
             e.printStackTrace();
-            net.minecraft.client.MinecraftClient.getInstance().execute(() -> callback.onFailed(e.toString()));
+            net.minecraft.client.MinecraftClient.getInstance()
+                    .execute(() -> callback.onFailed(requestId, e.toString()));
         } finally {
             player.destroy();
         }
