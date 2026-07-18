@@ -8,6 +8,8 @@ import net.fabricmc.api.ClientModInitializer;
 import net.minecraft.client.gui.screen.ingame.HandledScreens;
 
 public class AudiophileCraftClient implements ClientModInitializer {
+    private net.minecraft.client.world.ClientWorld trackedWorld;
+
     @Override
     public void onInitializeClient() {
         HandledScreens.register(ModScreenHandlers.AMPLIFIER_SCREEN_HANDLER, AmplifierScreen::new);
@@ -25,6 +27,14 @@ public class AudiophileCraftClient implements ClientModInitializer {
         net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents.END_CLIENT_TICK.register(client -> {
             // Hot-reload tuning config (checks file every 20 ticks = 1 second)
             com.audiophilecraft.config.LiveTuningConfig.get().checkReload();
+
+            if (client.world != trackedWorld) {
+                if (trackedWorld != null) {
+                    System.out.println("AudiophileCraft: Client world changed. Cleaning up audio.");
+                    com.audiophilecraft.sound.AudioEngine.getInstance().stopAll();
+                }
+                trackedWorld = client.world;
+            }
 
             if (client.player != null && client.world != null) {
                 com.audiophilecraft.sound.AudioEngine.getInstance().updateSourcesTick(client.world);
@@ -51,6 +61,7 @@ public class AudiophileCraftClient implements ClientModInitializer {
         // Stop ALL audio on Disconnect (Main Menu) — prevents audio leaking after server crash/disconnect
         net.fabricmc.fabric.api.client.networking.v1.ClientPlayConnectionEvents.DISCONNECT.register(
                 (handler, client) -> {
+                    trackedWorld = null;
                     System.out.println("AudiophileCraft: Disconnected. Cleaning up audio.");
                     com.audiophilecraft.sound.AudioEngine.getInstance().stopAll();
                     com.audiophilecraft.sound.AudioEngine.getInstance().cleanupEfx();

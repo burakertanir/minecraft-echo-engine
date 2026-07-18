@@ -910,6 +910,7 @@ public class AudioEngine {
                 // This prevents stale sessions from blocking future play requests with ghost
                 // URL state.
                 if (session.getStreamSources().isEmpty()) {
+                    cancelUrlRequest(entry.getKey());
                     session.stopAll();
                     sessionIterator.remove();
                 }
@@ -1001,6 +1002,7 @@ public class AudioEngine {
      * Stops a specific session immediately.
      */
     public void stopSession(java.util.UUID sessionUUID) {
+        cancelUrlRequest(sessionUUID);
         PlaybackSession session = sessions.remove(sessionUUID);
         if (session != null) {
             session.stopAll();
@@ -1012,6 +1014,7 @@ public class AudioEngine {
      * Stops all active audio sources across all sessions immediately.
      */
     public synchronized void stopAll() {
+        cancelAllUrlRequests();
         for (PlaybackSession session : sessions.values()) {
             session.stopAll();
         }
@@ -1386,6 +1389,30 @@ public class AudioEngine {
         }
     }
 
+    private void cancelUrlRequest(java.util.UUID sessionUUID) {
+        Long requestId = activeUrlRequestIds.remove(sessionUUID);
+        if (requestId != null) {
+            InternetAudioLoader.getInstance().cancelStreamingRequest(requestId);
+        }
+    }
+
+    private void cancelAllUrlRequests() {
+        if (activeUrlRequestIds.isEmpty()) return;
+        InternetAudioLoader loader = InternetAudioLoader.getInstance();
+        for (java.util.Map.Entry<java.util.UUID, Long> entry : activeUrlRequestIds.entrySet()) {
+            java.util.UUID sessionUUID = entry.getKey();
+            Long requestId = entry.getValue();
+            if (activeUrlRequestIds.remove(sessionUUID, requestId)) {
+                loader.cancelStreamingRequest(requestId);
+            }
+        }
+    }
+
+    private boolean isActiveUrlRequest(java.util.UUID sessionUUID, long requestId) {
+        Long activeRequestId = activeUrlRequestIds.get(sessionUUID);
+        return activeRequestId != null && activeRequestId.longValue() == requestId;
+    }
+
     /**
      * Play audio from an internet URL (YouTube, SoundCloud, HTTP, etc.)
      * Uses InternetAudioLoader (LavaPlayer) to resolve and decode the URL to PCM,
@@ -1410,12 +1437,8 @@ public class AudioEngine {
             boolean startImmediately,
             java.util.function.Consumer<java.util.UUID> onReadyCallback) {
 
+        cancelUrlRequest(sessionUUID);
         InternetAudioLoader loader = InternetAudioLoader.getInstance();
-        Long previousRequestId = activeUrlRequestIds.remove(sessionUUID);
-        if (previousRequestId != null) {
-            loader.cancelStreamingRequest(previousRequestId);
-        }
-
         PlaybackSession existingSession = sessions.get(sessionUUID);
         if (existingSession != null) {
             existingSession.stopAll();
@@ -1430,6 +1453,11 @@ public class AudioEngine {
                     int totalExpected,
                     int sampleRate,
                     String title) {
+                if (!isActiveUrlRequest(sessionUUID, requestId)) {
+                    System.out.println(
+                            "AudioEngine: Ignoring stale URL request #" + requestId + " for session " + sessionUUID);
+                    return;
+                }
                 AudioStreamBuffer sharedBuf = new AudioStreamBuffer("url_stream", sampleRate);
                 System.out.println("AudioEngine: URL request #" + requestId + " ready for session " + sessionUUID);
                 sharedBuf.initStreaming(pcmInterleaved, decodedFrames, totalExpected);
@@ -1454,6 +1482,7 @@ public class AudioEngine {
 
             @Override
             public void onMoreData(long requestId, int totalDecoded) {
+                if (!isActiveUrlRequest(sessionUUID, requestId)) return;
                 PlaybackSession session = sessions.get(sessionUUID);
                 if (session != null) {
                     AudioStreamBuffer buf = session.getStreamBuffers().get(TYPE_NORMAL);
@@ -1463,13 +1492,13 @@ public class AudioEngine {
 
             @Override
             public void onComplete(long requestId) {
-                activeUrlRequestIds.remove(sessionUUID, requestId);
+                if (!activeUrlRequestIds.remove(sessionUUID, requestId)) return;
                 System.out.println("AudioEngine: URL request #" + requestId + " completed for session " + sessionUUID);
             }
 
             @Override
             public void onFailed(long requestId, String reason) {
-                activeUrlRequestIds.remove(sessionUUID, requestId);
+                if (!activeUrlRequestIds.remove(sessionUUID, requestId)) return;
                 System.err.println("AudioEngine: URL request #" + requestId + " failed: " + reason);
                 net.minecraft.client.MinecraftClient.getInstance().execute(() -> {
                     if (net.minecraft.client.MinecraftClient.getInstance().player != null) {

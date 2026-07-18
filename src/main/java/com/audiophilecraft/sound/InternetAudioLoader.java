@@ -187,7 +187,7 @@ public class InternetAudioLoader {
     private void failStreamingRequest(StreamingRequestState state, StreamingCallback callback, String reason) {
         if (state.isCancelled()) return;
         if (streamingRequests.remove(state.id, state)) {
-            callback.onFailed(state.id, reason);
+            dispatchIfActive(state, () -> callback.onFailed(state.id, reason));
         }
     }
 
