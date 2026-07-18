@@ -16,6 +16,10 @@ import net.minecraft.util.Identifier;
 import net.minecraft.util.math.BlockPos;
 
 public class ModMessages {
+    private static final int MAX_SPEAKERS_PER_PACKET = 4096;
+    private static final int EQ_BAND_COUNT = 5;
+    private static final java.util.Set<String> VALID_SPEAKER_TYPES = java.util.Set.of("normal", "sub", "mid", "line");
+
     public static final Identifier C2S_REQUEST_PLAY = new Identifier(AudiophileCraft.MOD_ID, "c2s_request_play");
     public static final Identifier C2S_UPDATE_POWER = new Identifier(AudiophileCraft.MOD_ID, "c2s_update_power");
     public static final Identifier S2C_SYNC_POWER = new Identifier(AudiophileCraft.MOD_ID, "s2c_sync_power");
@@ -60,6 +64,49 @@ public class ModMessages {
                     java.util.UUID, java.util.AbstractMap.SimpleEntry<java.util.Set<java.util.UUID>, Long>>
             pendingSeekReady = new java.util.concurrent.ConcurrentHashMap<>();
 
+    private static boolean isValidHandOrdinal(int handOrdinal) {
+        return handOrdinal >= 0 && handOrdinal < Hand.values().length;
+    }
+
+    private static boolean isFiniteInRange(float value, float min, float max) {
+        return Float.isFinite(value) && value >= min && value <= max;
+    }
+
+    private static float clamp(float value, float min, float max) {
+        return Math.max(min, Math.min(max, value));
+    }
+
+    private static boolean isValidSpeakerType(String speakerType) {
+        return VALID_SPEAKER_TYPES.contains(speakerType);
+    }
+
+    private static boolean isValidEqBand(int band) {
+        return band >= 0 && band < EQ_BAND_COUNT;
+    }
+
+    private static boolean isValidAudioUrl(String value) {
+        if (value == null || value.isBlank() || value.length() > 2048) return false;
+        try {
+            java.net.URI uri = java.net.URI.create(value);
+            String scheme = uri.getScheme();
+            return uri.getHost() != null
+                    && uri.getUserInfo() == null
+                    && ("http".equalsIgnoreCase(scheme) || "https".equalsIgnoreCase(scheme));
+        } catch (IllegalArgumentException ignored) {
+            return false;
+        }
+    }
+
+    private static List<BlockPos> readSpeakerPositions(PacketByteBuf buf) {
+        int count = buf.readInt();
+        if (count < 0 || count > MAX_SPEAKERS_PER_PACKET) return null;
+
+        List<BlockPos> speakers = new ArrayList<>(count);
+        for (int i = 0; i < count; i++) {
+            speakers.add(buf.readBlockPos());
+        }
+        return speakers;
+    }
     /** Check if timeout has passed for a pending sync (30s) */
     private static boolean isSyncTimedOut(
             java.util.AbstractMap.SimpleEntry<java.util.Set<java.util.UUID>, Long> entry) {
@@ -103,8 +150,8 @@ public class ModMessages {
 
     /** Helper: get the tablet ItemStack from the player's hand ordinal */
     private static ItemStack getTabletStack(net.minecraft.server.network.ServerPlayerEntity player, int handOrdinal) {
-        Hand hand = Hand.values()[handOrdinal];
-        return player.getStackInHand(hand);
+        if (!isValidHandOrdinal(handOrdinal)) return ItemStack.EMPTY;
+        return player.getStackInHand(Hand.values()[handOrdinal]);
     }
 
     /** Helper: get the tablet ItemStack from either hand (for packets without hand ordinal) */
@@ -164,6 +211,7 @@ public class ModMessages {
         ServerPlayNetworking.registerGlobalReceiver(C2S_PLAY_URL, (server, player, handler, buf, responseSender) -> {
             int handOrdinal = buf.readInt();
             String url = buf.readString(2048);
+            if (!isValidHandOrdinal(handOrdinal) || !isValidAudioUrl(url)) return;
             server.execute(() -> {
                 ItemStack stack = getTabletStack(player, handOrdinal);
                 if (stack.getItem() instanceof AmplifierTabletItem) {
@@ -208,15 +256,17 @@ public class ModMessages {
                 C2S_UPDATE_POWER, (server, player, handler, buf, responseSender) -> {
                     int handOrdinal = buf.readInt();
                     float power = buf.readFloat();
+                    if (!Float.isFinite(power)) return;
+                    float sanitizedPower = clamp(power, 0.1f, 10.0f);
                     server.execute(() -> {
                         ItemStack stack = getTabletStack(player, handOrdinal);
                         if (stack.getItem() instanceof AmplifierTabletItem) {
-                            AmplifierTabletItem.setSpeakerPower(stack, power);
+                            AmplifierTabletItem.setSpeakerPower(stack, sanitizedPower);
                             UUID senderUUID = player.getUuid();
                             broadcastToAll(server, S2C_SYNC_POWER, syncBuf -> {
                                 syncBuf.writeUuid(senderUUID);
                                 syncBuf.writeInt(handOrdinal);
-                                syncBuf.writeFloat(power);
+                                syncBuf.writeFloat(sanitizedPower);
                             });
                         }
                     });
@@ -227,15 +277,17 @@ public class ModMessages {
                 C2S_UPDATE_INPUT_GAIN, (server, player, handler, buf, responseSender) -> {
                     int handOrdinal = buf.readInt();
                     float gain = buf.readFloat();
+                    if (!Float.isFinite(gain)) return;
+                    float sanitizedGain = clamp(gain, 0.0f, 3.0f);
                     server.execute(() -> {
                         ItemStack stack = getTabletStack(player, handOrdinal);
                         if (stack.getItem() instanceof AmplifierTabletItem) {
-                            AmplifierTabletItem.setInputGain(stack, gain);
+                            AmplifierTabletItem.setInputGain(stack, sanitizedGain);
                             UUID senderUUID = player.getUuid();
                             broadcastToAll(server, S2C_SYNC_INPUT_GAIN, syncBuf -> {
                                 syncBuf.writeUuid(senderUUID);
                                 syncBuf.writeInt(handOrdinal);
-                                syncBuf.writeFloat(gain);
+                                syncBuf.writeFloat(sanitizedGain);
                             });
                         }
                     });
@@ -243,42 +295,46 @@ public class ModMessages {
 
         // EQ update — synced to all players AND persisted to tablet NBT
         ServerPlayNetworking.registerGlobalReceiver(C2S_UPDATE_EQ, (server, player, handler, buf, responseSender) -> {
-            String speakerType = buf.readString();
+            String speakerType = buf.readString(16);
             int band = buf.readInt();
             float db = buf.readFloat();
+            if (!isValidSpeakerType(speakerType) || !isValidEqBand(band) || !Float.isFinite(db)) return;
+            float sanitizedDb = clamp(db, -12.0f, 12.0f);
             server.execute(() -> {
                 // Persist to tablet NBT
                 ItemStack stack = getTabletStack(player);
                 if (stack.getItem() instanceof AmplifierTabletItem) {
-                    AmplifierTabletItem.setEqDb(stack, speakerType, band, db);
+                    AmplifierTabletItem.setEqDb(stack, speakerType, band, sanitizedDb);
                 }
                 UUID ownerUUID = player.getUuid();
                 broadcastToAll(server, S2C_SYNC_EQ, syncBuf -> {
                     syncBuf.writeUuid(ownerUUID);
                     syncBuf.writeString(speakerType);
                     syncBuf.writeInt(band);
-                    syncBuf.writeFloat(db);
+                    syncBuf.writeFloat(sanitizedDb);
                 });
             });
         });
 
         // EQ Q (bandwidth) update — synced to all players AND persisted to tablet NBT
         ServerPlayNetworking.registerGlobalReceiver(C2S_UPDATE_EQ_Q, (server, player, handler, buf, responseSender) -> {
-            String speakerType = buf.readString();
+            String speakerType = buf.readString(16);
             int band = buf.readInt();
             float q = buf.readFloat();
+            if (!isValidSpeakerType(speakerType) || !isValidEqBand(band) || !Float.isFinite(q)) return;
+            float sanitizedQ = clamp(q, 0.1f, 10.0f);
             server.execute(() -> {
                 // Persist to tablet NBT
                 ItemStack stack = getTabletStack(player);
                 if (stack.getItem() instanceof AmplifierTabletItem) {
-                    AmplifierTabletItem.setEqQ(stack, speakerType, band, q);
+                    AmplifierTabletItem.setEqQ(stack, speakerType, band, sanitizedQ);
                 }
                 UUID ownerUUID = player.getUuid();
                 broadcastToAll(server, S2C_SYNC_EQ_Q, syncBuf -> {
                     syncBuf.writeUuid(ownerUUID);
                     syncBuf.writeString(speakerType);
                     syncBuf.writeInt(band);
-                    syncBuf.writeFloat(q);
+                    syncBuf.writeFloat(sanitizedQ);
                 });
             });
         });
@@ -286,19 +342,21 @@ public class ModMessages {
         // Mixer Gain (volume fader per speaker type) — synced to all players AND persisted to tablet NBT
         ServerPlayNetworking.registerGlobalReceiver(
                 C2S_UPDATE_MIXER_GAIN, (server, player, handler, buf, responseSender) -> {
-                    String speakerType = buf.readString();
+                    String speakerType = buf.readString(16);
                     float gain = buf.readFloat();
+                    if (!isValidSpeakerType(speakerType) || !Float.isFinite(gain)) return;
+                    float sanitizedGain = clamp(gain, 0.0f, 1.0f);
                     server.execute(() -> {
                         // Persist to tablet NBT
                         ItemStack stack = getTabletStack(player);
                         if (stack.getItem() instanceof AmplifierTabletItem) {
-                            AmplifierTabletItem.setMixerGain(stack, speakerType, gain);
+                            AmplifierTabletItem.setMixerGain(stack, speakerType, sanitizedGain);
                         }
                         UUID ownerUUID = player.getUuid();
                         broadcastToAll(server, S2C_SYNC_MIXER_GAIN, syncBuf -> {
                             syncBuf.writeUuid(ownerUUID);
                             syncBuf.writeString(speakerType);
-                            syncBuf.writeFloat(gain);
+                            syncBuf.writeFloat(sanitizedGain);
                         });
                     });
                 });
@@ -308,9 +366,11 @@ public class ModMessages {
                 C2S_UPDATE_SPEAKER_SHIFT, (server, player, handler, buf, responseSender) -> {
                     BlockPos pos = buf.readBlockPos();
                     int shift = buf.readInt();
+                    if (shift < 0 || shift > 30) return;
                     server.execute(() -> {
                         // Ownership check: only the speaker owner can modify it
-                        UUID speakerOwner = SpeakerRegistry.getOwner(pos);
+                        UUID speakerOwner =
+                                SpeakerRegistry.getOwner(player.getWorld().getRegistryKey(), pos);
                         if (speakerOwner != null && !speakerOwner.equals(player.getUuid())) {
                             return; // Not the owner — reject silently
                         }
@@ -326,9 +386,10 @@ public class ModMessages {
         ServerPlayNetworking.registerGlobalReceiver(C2S_UPDATE_TILT, (server, player, handler, buf, responseSender) -> {
             BlockPos pos = buf.readBlockPos();
             int tilt = buf.readInt();
+            if (tilt < -70 || tilt > 70) return;
             server.execute(() -> {
                 // Ownership check: only the speaker owner can modify it
-                UUID speakerOwner = SpeakerRegistry.getOwner(pos);
+                UUID speakerOwner = SpeakerRegistry.getOwner(player.getWorld().getRegistryKey(), pos);
                 if (speakerOwner != null && !speakerOwner.equals(player.getUuid())) {
                     return; // Not the owner — reject silently
                 }
@@ -342,6 +403,7 @@ public class ModMessages {
         // Seek Track — broadcast prep-seek to all, init sync tracking
         ServerPlayNetworking.registerGlobalReceiver(C2S_SEEK_TRACK, (server, player, handler, buf, responseSender) -> {
             float targetTime = buf.readFloat();
+            if (!Float.isFinite(targetTime) || targetTime < 0.0f) return;
             server.execute(() -> {
                 ItemStack mainStack = player.getMainHandStack();
                 ItemStack offStack = player.getOffHandStack();
@@ -397,8 +459,10 @@ public class ModMessages {
                 C2S_CHANNEL_MASK, (server, player, handler, buf, responseSender) -> {
                     BlockPos pos = buf.readBlockPos();
                     int mask = buf.readInt();
+                    if (mask < 0 || mask > 2) return;
                     server.execute(() -> {
-                        UUID speakerOwner = SpeakerRegistry.getOwner(pos);
+                        UUID speakerOwner =
+                                SpeakerRegistry.getOwner(player.getWorld().getRegistryKey(), pos);
                         if (speakerOwner != null && !speakerOwner.equals(player.getUuid())) return;
                         // Find all speakers owned by this player in this dimension
                         java.util.List<BlockPos> allOwned = SpeakerRegistry.findSpeakersByOwner(
@@ -460,14 +524,14 @@ public class ModMessages {
     public static void registerS2CPackets() {
         ClientPlayNetworking.registerGlobalReceiver(S2C_PLAY_TRACK, (client, handler, buf, responseSender) -> {
             UUID sessionUUID = buf.readUuid();
-            String trackId = buf.readString();
+            String trackId = buf.readString(256);
             float power = buf.readFloat();
             float inputGain = buf.readFloat();
-            int count = buf.readInt();
-            List<BlockPos> speakers = new ArrayList<>();
-            for (int i = 0; i < count; i++) {
-                speakers.add(buf.readBlockPos());
-            }
+            List<BlockPos> speakers = readSpeakerPositions(buf);
+            if (speakers == null
+                    || trackId.isBlank()
+                    || !isFiniteInRange(power, 0.1f, 10.0f)
+                    || !isFiniteInRange(inputGain, 0.0f, 3.0f)) return;
             client.execute(() -> {
                 com.audiophilecraft.sound.AudioEngine engine = com.audiophilecraft.sound.AudioEngine.getInstance();
                 engine.playTrack(sessionUUID, trackId, speakers, power, inputGain);
@@ -479,11 +543,11 @@ public class ModMessages {
             String url = buf.readString(2048);
             float power = buf.readFloat();
             float inputGain = buf.readFloat();
-            int count = buf.readInt();
-            List<BlockPos> speakers = new ArrayList<>();
-            for (int i = 0; i < count; i++) {
-                speakers.add(buf.readBlockPos());
-            }
+            List<BlockPos> speakers = readSpeakerPositions(buf);
+            if (speakers == null
+                    || !isValidAudioUrl(url)
+                    || !isFiniteInRange(power, 0.1f, 10.0f)
+                    || !isFiniteInRange(inputGain, 0.0f, 3.0f)) return;
             client.execute(() -> {
                 com.audiophilecraft.sound.AudioEngine engine = com.audiophilecraft.sound.AudioEngine.getInstance();
                 // Preload with sync: don't start playing yet, send ready when buffer complete
@@ -509,6 +573,7 @@ public class ModMessages {
         ClientPlayNetworking.registerGlobalReceiver(S2C_PREP_SEEK, (client, handler, buf, responseSender) -> {
             UUID sessionUUID = buf.readUuid();
             float targetTime = buf.readFloat();
+            if (!Float.isFinite(targetTime) || targetTime < 0.0f) return;
             client.execute(() -> {
                 com.audiophilecraft.sound.AudioEngine engine = com.audiophilecraft.sound.AudioEngine.getInstance();
                 engine.seekForSession(sessionUUID, targetTime);
@@ -530,6 +595,7 @@ public class ModMessages {
             UUID sessionUUID = buf.readUuid();
             int handOrdinal = buf.readInt();
             float gain = buf.readFloat();
+            if (!isValidHandOrdinal(handOrdinal) || !isFiniteInRange(gain, 0.0f, 3.0f)) return;
             client.execute(() -> {
                 boolean isSelf = client.player != null && sessionUUID.equals(client.player.getUuid());
                 if (isSelf) {
@@ -546,6 +612,7 @@ public class ModMessages {
             UUID sessionUUID = buf.readUuid();
             int handOrdinal = buf.readInt();
             float power = buf.readFloat();
+            if (!isValidHandOrdinal(handOrdinal) || !isFiniteInRange(power, 0.1f, 10.0f)) return;
             client.execute(() -> {
                 boolean isSelf = client.player != null && sessionUUID.equals(client.player.getUuid());
                 if (isSelf) {
@@ -562,6 +629,7 @@ public class ModMessages {
         ClientPlayNetworking.registerGlobalReceiver(S2C_SEEK_TRACK, (client, handler, buf, responseSender) -> {
             UUID sessionUUID = buf.readUuid();
             float targetTime = buf.readFloat();
+            if (!Float.isFinite(targetTime) || targetTime < 0.0f) return;
             client.execute(() -> {
                 com.audiophilecraft.sound.AudioEngine engine = com.audiophilecraft.sound.AudioEngine.getInstance();
                 engine.seekForSession(sessionUUID, targetTime);
@@ -571,9 +639,10 @@ public class ModMessages {
         // EQ Sync — scoped to session UUID
         ClientPlayNetworking.registerGlobalReceiver(S2C_SYNC_EQ, (client, handler, buf, responseSender) -> {
             UUID sessionUUID = buf.readUuid();
-            String speakerType = buf.readString();
+            String speakerType = buf.readString(16);
             int band = buf.readInt();
             float db = buf.readFloat();
+            if (!isValidSpeakerType(speakerType) || !isValidEqBand(band) || !isFiniteInRange(db, -12.0f, 12.0f)) return;
             client.execute(() -> {
                 com.audiophilecraft.sound.AudioEngine engine = com.audiophilecraft.sound.AudioEngine.getInstance();
                 engine.setEqDbForSession(sessionUUID, speakerType, band, db);
@@ -583,9 +652,10 @@ public class ModMessages {
         // EQ Q Sync — scoped to session UUID
         ClientPlayNetworking.registerGlobalReceiver(S2C_SYNC_EQ_Q, (client, handler, buf, responseSender) -> {
             UUID sessionUUID = buf.readUuid();
-            String speakerType = buf.readString();
+            String speakerType = buf.readString(16);
             int band = buf.readInt();
             float q = buf.readFloat();
+            if (!isValidSpeakerType(speakerType) || !isValidEqBand(band) || !isFiniteInRange(q, 0.1f, 10.0f)) return;
             client.execute(() -> {
                 com.audiophilecraft.sound.AudioEngine engine = com.audiophilecraft.sound.AudioEngine.getInstance();
                 engine.setEqQForSession(sessionUUID, speakerType, band, q);
@@ -595,8 +665,9 @@ public class ModMessages {
         // Mixer Gain Sync — scoped to session UUID
         ClientPlayNetworking.registerGlobalReceiver(S2C_SYNC_MIXER_GAIN, (client, handler, buf, responseSender) -> {
             UUID sessionUUID = buf.readUuid();
-            String speakerType = buf.readString();
+            String speakerType = buf.readString(16);
             float gain = buf.readFloat();
+            if (!isValidSpeakerType(speakerType) || !isFiniteInRange(gain, 0.0f, 1.0f)) return;
             client.execute(() -> {
                 com.audiophilecraft.sound.AudioEngine engine = com.audiophilecraft.sound.AudioEngine.getInstance();
                 engine.setMixerGainForSession(sessionUUID, speakerType, gain);
@@ -625,11 +696,8 @@ public class ModMessages {
         ClientPlayNetworking.registerGlobalReceiver(S2C_SYNC_CHANNEL_MASK, (client, handler, buf, responseSender) -> {
             UUID senderUUID = buf.readUuid();
             int mask = buf.readInt();
-            int count = buf.readInt();
-            java.util.List<BlockPos> cluster = new ArrayList<>();
-            for (int i = 0; i < count; i++) {
-                cluster.add(buf.readBlockPos());
-            }
+            java.util.List<BlockPos> cluster = readSpeakerPositions(buf);
+            if (cluster == null || mask < 0 || mask > 2) return;
             client.execute(() -> {
                 // Skip if sender is self (already applied locally via SpeakerScreen)
                 if (client.player != null && senderUUID.equals(client.player.getUuid())) return;

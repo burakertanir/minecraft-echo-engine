@@ -68,7 +68,7 @@ public class SpeakerBlock extends Block implements BlockEntityProvider {
     public void onStateReplaced(BlockState state, World world, BlockPos pos, BlockState newState, boolean moved) {
         if (!state.isOf(newState.getBlock())) {
             if (!world.isClient) {
-                SpeakerRegistry.unregisterSpeaker(pos);
+                SpeakerRegistry.unregisterSpeaker(world, pos);
             }
             super.onStateReplaced(state, world, pos, newState, moved);
         }

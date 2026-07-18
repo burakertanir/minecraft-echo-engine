@@ -24,13 +24,13 @@ import net.fabricmc.loader.api.FabricLoader;
  * Check interval: every 20 ticks (1 second)
  */
 public class LiveTuningConfig {
-    private static LiveTuningConfig INSTANCE;
+    private static volatile LiveTuningConfig INSTANCE;
     private static final Gson GSON = new GsonBuilder().setPrettyPrinting().create();
     private static Path configPath;
     private static long lastModifiedTime = 0;
     private static long lastFileSize = 0;
     private static int tickCounter = 0;
-    private static long reloadGeneration = 0;
+    private static volatile long reloadGeneration = 0;
 
     /**
      * Returns a counter that increments every time the config is reloaded from
@@ -384,6 +384,7 @@ public class LiveTuningConfig {
                 INSTANCE = new LiveTuningConfig();
             }
             lastModifiedTime = configPath.toFile().lastModified();
+            lastFileSize = Files.size(configPath);
             reloadGeneration++;
         } catch (Exception e) {
             System.err.println("[LiveTuning] Failed to load config: " + e.getMessage());
@@ -1004,6 +1005,7 @@ public class LiveTuningConfig {
                 w.println("}");
             }
             lastModifiedTime = configPath.toFile().lastModified();
+            lastFileSize = Files.size(configPath);
         } catch (Exception e) {
             System.err.println("[LiveTuning] Failed to save config: " + e.getMessage());
         }

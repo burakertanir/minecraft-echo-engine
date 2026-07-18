@@ -41,7 +41,7 @@ public class SpeakerBlockEntity extends BlockEntity implements ExtendedScreenHan
 
     public void setSampleShift(int sampleShift) {
 
-        this.sampleShift = sampleShift;
+        this.sampleShift = Math.max(0, Math.min(30, sampleShift));
 
         markDirty();
 
@@ -123,9 +123,9 @@ public class SpeakerBlockEntity extends BlockEntity implements ExtendedScreenHan
     @Override
     public void readNbt(NbtCompound nbt) {
         super.readNbt(nbt);
-        sampleShift = nbt.getInt("SampleShift");
-        verticalTiltDeg = nbt.getInt("VerticalTilt");
-        channelMask = nbt.contains("ChannelMask") ? nbt.getInt("ChannelMask") : 0;
+        sampleShift = Math.max(0, Math.min(30, nbt.getInt("SampleShift")));
+        verticalTiltDeg = Math.max(-70, Math.min(70, nbt.getInt("VerticalTilt")));
+        channelMask = Math.max(0, Math.min(2, nbt.contains("ChannelMask") ? nbt.getInt("ChannelMask") : 0));
         if (nbt.containsUuid("OwnerUUID")) {
             ownerUUID = nbt.getUuid("OwnerUUID");
         }

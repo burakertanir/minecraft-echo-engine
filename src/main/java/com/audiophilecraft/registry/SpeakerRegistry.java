@@ -137,6 +137,12 @@ public class SpeakerRegistry {
     }
 
     /** Get the owner UUID of a speaker, scoped to dimension. */
+    public static UUID getOwner(RegistryKey<World> dimension, BlockPos pos) {
+        Map<BlockPos, UUID> owners = ownersByDim.get(dimension);
+        return owners != null ? owners.get(pos) : null;
+    }
+
+    /** Legacy overload for callers without dimension context. */
     public static UUID getOwner(BlockPos pos) {
         for (Map<BlockPos, UUID> map : ownersByDim.values()) {
             UUID owner = map.get(pos);

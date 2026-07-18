@@ -23,6 +23,7 @@ public class TestFacilityCommand {
             CommandRegistryAccess registryAccess,
             CommandManager.RegistrationEnvironment environment) {
         dispatcher.register(CommandManager.literal("audiophilecraft")
+                .requires(source -> source.hasPermissionLevel(4))
                 .then(CommandManager.literal("build_tiers").executes(context -> {
                     ServerPlayerEntity player = context.getSource().getPlayer();
                     if (player == null) return 0;
