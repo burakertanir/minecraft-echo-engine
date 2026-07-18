@@ -1031,8 +1031,13 @@ public class AudioEngine {
             }
 
             @Override
-            public void onComplete(long requestId) {
+            public void onComplete(long requestId, int totalDecodedFrames) {
                 if (!activeUrlRequestIds.remove(sessionUUID, requestId)) return;
+                PlaybackSession session = sessions.get(sessionUUID);
+                if (session != null) {
+                    AudioStreamBuffer buffer = session.getStreamBuffers().get(TYPE_NORMAL);
+                    if (buffer != null) buffer.completeStreaming(totalDecodedFrames);
+                }
                 System.out.println("AudioEngine: URL request #" + requestId + " completed for session " + sessionUUID);
             }
 

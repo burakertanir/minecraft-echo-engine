@@ -27,7 +27,7 @@ public class AudioStreamBuffer {
     // Number of frames = pcmInterleaved.length / 2
     private short[] pcmInterleaved;
     private volatile int decodedLength = 0;
-    private int totalExpectedSamples = 0;
+    private volatile int totalExpectedSamples = 0;
     private volatile int readCursor = 0;
 
     // ── LEGACY MODE ──
@@ -50,6 +50,14 @@ public class AudioStreamBuffer {
 
     public void updateDecodedLength(int newLength) {
         this.decodedLength = newLength;
+    }
+
+    /** Replace the metadata estimate with the real frame count once decoding reaches EOF. */
+    public void completeStreaming(int actualDecodedFrames) {
+        if (pcmInterleaved == null) return;
+        int boundedLength = Math.max(0, Math.min(actualDecodedFrames, pcmInterleaved.length / 2));
+        this.decodedLength = boundedLength;
+        this.totalExpectedSamples = boundedLength;
     }
 
     public void setSourceData(ShortBuffer pcm) {

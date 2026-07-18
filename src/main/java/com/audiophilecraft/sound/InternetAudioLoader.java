@@ -15,23 +15,36 @@ import com.sedmelluq.discord.lavaplayer.track.playback.AudioFrame;
 import dev.lavalink.youtube.YoutubeAudioSourceManager;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
-import java.util.concurrent.CompletableFuture;
+import java.nio.ShortBuffer;
+import java.util.concurrent.ArrayBlockingQueue;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Future;
+import java.util.concurrent.RejectedExecutionException;
+import java.util.concurrent.ThreadPoolExecutor;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 
 /**
  * Internet Audio Loader — LavaPlayer integration for URL-based music streaming.
  * Supports: YouTube (via youtube-source plugin), SoundCloud, HTTP direct links.
- * Decodes audio to mono PCM 16-bit at native sample rate for our OpenAL
- * pipeline.
+ * Normalizes decoded audio to interleaved stereo PCM 16-bit at native sample
+ * rate for the OpenAL pipeline.
  */
 public class InternetAudioLoader {
 
+    private static final int DECODER_THREAD_COUNT =
+            Math.max(2, Math.min(4, Runtime.getRuntime().availableProcessors() / 2));
+    private static final int DECODER_QUEUE_CAPACITY = 32;
+
     private static InternetAudioLoader INSTANCE;
+
     private final AudioPlayerManager playerManager;
     private final ConcurrentHashMap<Long, StreamingRequestState> streamingRequests = new ConcurrentHashMap<>();
+    private final AtomicInteger nextDecoderThreadId = new AtomicInteger(1);
+    private final ExecutorService decoderExecutor;
 
     private static final class StreamingRequestState {
         private final long id;
@@ -67,6 +80,19 @@ public class InternetAudioLoader {
     private InternetAudioLoader() {
         // Force IPv4 to prevent Java network hangs on Windows (IPv6 timeouts)
         System.setProperty("java.net.preferIPv4Stack", "true");
+        decoderExecutor = new ThreadPoolExecutor(
+                DECODER_THREAD_COUNT,
+                DECODER_THREAD_COUNT,
+                0L,
+                TimeUnit.MILLISECONDS,
+                new ArrayBlockingQueue<>(DECODER_QUEUE_CAPACITY),
+                task -> {
+                    Thread thread =
+                            new Thread(task, "AudiophileCraft-Decoder-" + nextDecoderThreadId.getAndIncrement());
+                    thread.setDaemon(true);
+                    return thread;
+                },
+                new ThreadPoolExecutor.AbortPolicy());
 
         playerManager = new DefaultAudioPlayerManager();
         // CRITICAL: Set output format to raw PCM (not Opus!)
@@ -89,7 +115,7 @@ public class InternetAudioLoader {
 
     /**
      * Callback interface for async track loading.
-     * pcmInterleaved is [L,R,L,R,...] for stereo sources, or [M,M,M,...] for mono.
+     * pcmInterleaved is always normalized to [L,R,L,R,...]; mono becomes [M,M,M,M,...].
      */
     public interface TrackLoadCallback {
         void onTrackLoaded(short[] pcmInterleaved, int sampleRate, String trackTitle);
@@ -108,16 +134,24 @@ public class InternetAudioLoader {
 
         void onMoreData(long requestId, int totalDecoded);
 
-        void onComplete(long requestId);
+        void onComplete(long requestId, int totalDecodedFrames);
 
         void onFailed(long requestId, String reason);
+    }
+
+    private void startLegacyDecode(AudioTrack track, TrackLoadCallback callback) {
+        try {
+            decoderExecutor.execute(() -> decodeTrack(track, callback));
+        } catch (RejectedExecutionException e) {
+            callback.onFailed("Decoder queue is full or shutting down");
+        }
     }
 
     /**
      * Load and decode audio from a URL asynchronously.
      * The entire track is downloaded & decoded to PCM, then passed to the callback.
-     * This runs on LavaPlayer's internal thread pool, NOT on the main/render
-     * thread.
+     * Resolution runs on LavaPlayer's loader threads; PCM decoding runs on the
+     * bounded AudiophileCraft decoder executor.
      *
      * @param url      URL or search query (e.g. "ytsearch:song name")
      * @param callback Called on completion or failure
@@ -128,7 +162,7 @@ public class InternetAudioLoader {
             @Override
             public void trackLoaded(AudioTrack track) {
                 // Decode on a separate thread to avoid blocking
-                CompletableFuture.runAsync(() -> decodeTrack(track, callback));
+                startLegacyDecode(track, callback);
             }
 
             @Override
@@ -145,7 +179,7 @@ public class InternetAudioLoader {
                 }
 
                 final AudioTrack finalTrack = selected;
-                CompletableFuture.runAsync(() -> decodeTrack(finalTrack, callback));
+                startLegacyDecode(finalTrack, callback);
             }
 
             @Override
@@ -178,10 +212,13 @@ public class InternetAudioLoader {
             streamingRequests.remove(state.id, state);
             return;
         }
-        CompletableFuture<Void> decodeTask =
-                CompletableFuture.runAsync(() -> decodeTrackStreaming(state, track, callback));
-        state.decodeTask = decodeTask;
-        if (state.isCancelled()) decodeTask.cancel(true);
+        try {
+            Future<?> decodeTask = decoderExecutor.submit(() -> decodeTrackStreaming(state, track, callback));
+            state.decodeTask = decodeTask;
+            if (state.isCancelled()) decodeTask.cancel(true);
+        } catch (RejectedExecutionException e) {
+            failStreamingRequest(state, callback, "Decoder queue is full or shutting down");
+        }
     }
 
     private void failStreamingRequest(StreamingRequestState state, StreamingCallback callback, String reason) {
@@ -238,7 +275,6 @@ public class InternetAudioLoader {
         long requestId = state.id;
         if (state.isCancelled()) return;
         int sampleRate = 48000;
-        int channels = 2;
         int totalDecoded = 0;
         short[] pcmInterleaved = null;
         int prebufferTarget;
@@ -251,7 +287,7 @@ public class InternetAudioLoader {
             AudioFrame first = player.provide(5000, java.util.concurrent.TimeUnit.MILLISECONDS);
             if (first != null && first.getFormat() != null) {
                 sampleRate = first.getFormat().sampleRate;
-                channels = first.getFormat().channelCount;
+                getValidatedChannelCount(first);
             }
             prebufferTarget = 10 * sampleRate;
             long durMs = track.getDuration();
@@ -260,7 +296,7 @@ public class InternetAudioLoader {
             // Interleaved stereo: [L0,R0, L1,R1, L2,R2, ...], length = frames * 2
             pcmInterleaved = new short[totalExpected * 2];
             if (first != null && first.getData() != null && first.getData().length > 0) {
-                totalDecoded += copyFrameToPcm(first, pcmInterleaved, totalDecoded, channels);
+                totalDecoded += copyFrameToPcm(first, pcmInterleaved, totalDecoded);
             }
             int timeouts = 0;
             while (!state.isCancelled() && totalDecoded < prebufferTarget) {
@@ -275,7 +311,7 @@ public class InternetAudioLoader {
                     continue;
                 }
                 timeouts = 0;
-                totalDecoded += copyFrameToPcm(f, pcmInterleaved, totalDecoded, channels);
+                totalDecoded += copyFrameToPcm(f, pcmInterleaved, totalDecoded);
             }
             if (state.isCancelled()) return;
             if (totalDecoded == 0) {
@@ -295,12 +331,13 @@ public class InternetAudioLoader {
                     if (f == null) break;
                 }
                 if (f.getData() == null || f.getData().length == 0) continue;
-                totalDecoded += copyFrameToPcm(f, pcmInterleaved, totalDecoded, channels);
+                totalDecoded += copyFrameToPcm(f, pcmInterleaved, totalDecoded);
                 final int td = totalDecoded;
                 dispatchIfActive(state, () -> callback.onMoreData(requestId, td));
                 if (totalDecoded >= totalExpected) break;
             }
-            dispatchIfActive(state, () -> callback.onComplete(requestId));
+            int completedFrames = totalDecoded;
+            dispatchIfActive(state, () -> callback.onComplete(requestId, completedFrames));
         } catch (Throwable e) {
             if (!state.isCancelled()) {
                 System.err.println("CRITICAL DECODE ERROR: " + e.toString());
@@ -317,22 +354,62 @@ public class InternetAudioLoader {
         }
     }
     /**
-     * Copy a decoded audio frame into the interleaved PCM array.
+     * Copy a decoded frame into the always-stereo destination.
+     * Mono frames are duplicated as [M,M]; stereo frames remain [L,R].
+     *
      * @return number of frames (not shorts) written
      */
-    private int copyFrameToPcm(AudioFrame frame, short[] dest, int offset, int channels) {
+    private int copyFrameToPcm(AudioFrame frame, short[] destination, int frameOffset) {
         byte[] data = frame.getData();
-        if (data == null) return 0;
-        int frames = data.length / (2 * channels);
-        // Clamp to destination capacity to avoid ArrayIndexOutOfBounds
-        int maxFrames = dest.length / channels - offset;
-        if (maxFrames <= 0) return 0;
-        if (frames > maxFrames) frames = maxFrames;
-        java.nio.ByteBuffer.wrap(data)
-                .order(java.nio.ByteOrder.BIG_ENDIAN)
-                .asShortBuffer()
-                .get(dest, offset * channels, frames * channels);
-        return frames;
+        if (data == null || data.length == 0) return 0;
+
+        int channels = getValidatedChannelCount(frame);
+        int sourceFrames = getFrameCount(data, channels);
+        int writableFrames = Math.min(sourceFrames, destination.length / 2 - frameOffset);
+        if (writableFrames <= 0) return 0;
+
+        ShortBuffer source = ByteBuffer.wrap(data).order(ByteOrder.BIG_ENDIAN).asShortBuffer();
+        int destinationOffset = frameOffset * 2;
+        if (channels == 1) {
+            for (int frameIndex = 0; frameIndex < writableFrames; frameIndex++) {
+                short sample = source.get();
+                destination[destinationOffset + frameIndex * 2] = sample;
+                destination[destinationOffset + frameIndex * 2 + 1] = sample;
+            }
+        } else {
+            source.get(destination, destinationOffset, writableFrames * 2);
+        }
+        return writableFrames;
+    }
+
+    private int getValidatedChannelCount(AudioFrame frame) {
+        if (frame.getFormat() == null) {
+            throw new IllegalArgumentException("Internet audio frame is missing its PCM format");
+        }
+        int channels = frame.getFormat().channelCount;
+        if (channels != 1 && channels != 2) {
+            throw new IllegalArgumentException(
+                    "Unsupported internet audio channel count: " + channels + " (only mono and stereo are supported)");
+        }
+        return channels;
+    }
+
+    private int getFrameCount(byte[] data, int channels) {
+        int bytesPerFrame = Short.BYTES * channels;
+        if (data.length % bytesPerFrame != 0) {
+            throw new IllegalArgumentException(
+                    "Malformed internet PCM frame: " + data.length + " bytes for " + channels + " channels");
+        }
+        return data.length / bytesPerFrame;
+    }
+
+    private short[] convertFrameToStereoPcm(AudioFrame frame) {
+        byte[] data = frame.getData();
+        if (data == null || data.length == 0) return new short[0];
+        int channels = getValidatedChannelCount(frame);
+        short[] stereo = new short[getFrameCount(data, channels) * 2];
+        copyFrameToPcm(frame, stereo, 0);
+        return stereo;
     }
 
     /**
@@ -345,32 +422,18 @@ public class InternetAudioLoader {
             String title = info.title;
 
             int sampleRate = 48000;
-            int channels = 2;
-
-            long durationMs = track.getDuration();
-            if (durationMs <= 0 || durationMs > 20 * 60 * 1000) {
-                durationMs = 20 * 60 * 1000;
-            }
-
-            int estimatedSamples = (int) ((durationMs / 1000.0) * sampleRate * channels);
             java.util.List<short[]> chunks = new java.util.ArrayList<>();
             int totalSamples = 0;
 
-            var player = playerManager.createPlayer();
+            AudioPlayer player = playerManager.createPlayer();
             try {
                 player.playTrack(track);
 
-                AudioFrame firstFrame = player.provide(5000, java.util.concurrent.TimeUnit.MILLISECONDS);
-                if (firstFrame != null && firstFrame.getFormat() != null) {
-                    sampleRate = firstFrame.getFormat().sampleRate;
-                    channels = firstFrame.getFormat().channelCount;
-                    byte[] data = firstFrame.getData();
-                    if (data != null && data.length > 0) {
-                        short[] samples = new short[data.length / 2];
-                        ByteBuffer.wrap(data)
-                                .order(ByteOrder.BIG_ENDIAN)
-                                .asShortBuffer()
-                                .get(samples);
+                AudioFrame firstFrame = player.provide(5000, TimeUnit.MILLISECONDS);
+                if (firstFrame != null) {
+                    if (firstFrame.getFormat() != null) sampleRate = firstFrame.getFormat().sampleRate;
+                    short[] samples = convertFrameToStereoPcm(firstFrame);
+                    if (samples.length > 0) {
                         chunks.add(samples);
                         totalSamples += samples.length;
                     }
@@ -388,16 +451,8 @@ public class InternetAudioLoader {
                         }
                     }
 
-                    byte[] data = frame.getData();
-                    if (data == null || data.length == 0) continue;
-
-                    // Convert bytes to shorts (BIG-ENDIAN — LavaPlayer PCM_S16_BE format)
-                    short[] samples = new short[data.length / 2];
-                    ByteBuffer.wrap(data)
-                            .order(ByteOrder.BIG_ENDIAN)
-                            .asShortBuffer()
-                            .get(samples);
-
+                    short[] samples = convertFrameToStereoPcm(frame);
+                    if (samples.length == 0) continue;
                     chunks.add(samples);
                     totalSamples += samples.length;
                 }
@@ -432,8 +487,18 @@ public class InternetAudioLoader {
      * Cleanup resources.
      */
     public void shutdown() {
-        if (playerManager != null) {
-            playerManager.shutdown();
+        for (StreamingRequestState state : streamingRequests.values()) {
+            state.cancel();
+        }
+        streamingRequests.clear();
+        decoderExecutor.shutdownNow();
+        playerManager.shutdown();
+        try {
+            if (!decoderExecutor.awaitTermination(2, TimeUnit.SECONDS)) {
+                System.err.println("InternetAudioLoader: Decoder executor did not terminate cleanly");
+            }
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
         }
     }
 }
