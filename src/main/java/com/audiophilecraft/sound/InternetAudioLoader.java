@@ -2,6 +2,7 @@ package com.audiophilecraft.sound;
 
 import com.sedmelluq.discord.lavaplayer.format.StandardAudioDataFormats;
 import com.sedmelluq.discord.lavaplayer.player.AudioLoadResultHandler;
+import com.sedmelluq.discord.lavaplayer.player.AudioPlayer;
 import com.sedmelluq.discord.lavaplayer.player.AudioPlayerManager;
 import com.sedmelluq.discord.lavaplayer.player.DefaultAudioPlayerManager;
 import com.sedmelluq.discord.lavaplayer.source.http.HttpAudioSourceManager;
@@ -15,6 +16,9 @@ import dev.lavalink.youtube.YoutubeAudioSourceManager;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.Future;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
 
 /**
@@ -27,6 +31,37 @@ public class InternetAudioLoader {
 
     private static InternetAudioLoader INSTANCE;
     private final AudioPlayerManager playerManager;
+    private final ConcurrentHashMap<Long, StreamingRequestState> streamingRequests = new ConcurrentHashMap<>();
+
+    private static final class StreamingRequestState {
+        private final long id;
+        private final AtomicBoolean cancelled = new AtomicBoolean(false);
+        private volatile Future<?> loadTask;
+        private volatile Future<?> decodeTask;
+        private volatile AudioPlayer player;
+
+        private StreamingRequestState(long id) {
+            this.id = id;
+        }
+
+        private boolean isCancelled() {
+            return cancelled.get();
+        }
+
+        private boolean cancel() {
+            if (!cancelled.compareAndSet(false, true)) return false;
+            Future<?> currentLoadTask = loadTask;
+            if (currentLoadTask != null) currentLoadTask.cancel(true);
+            Future<?> currentDecodeTask = decodeTask;
+            if (currentDecodeTask != null) currentDecodeTask.cancel(true);
+            AudioPlayer currentPlayer = player;
+            if (currentPlayer != null) {
+                currentPlayer.stopTrack();
+            }
+            return true;
+        }
+    }
+
     private final AtomicLong nextStreamingRequestId = new AtomicLong(1L);
 
     private InternetAudioLoader() {
@@ -127,49 +162,92 @@ public class InternetAudioLoader {
         });
     }
 
+    public boolean cancelStreamingRequest(long requestId) {
+        StreamingRequestState state = streamingRequests.get(requestId);
+        if (state == null) return false;
+        boolean cancelled = state.cancel();
+        if (cancelled) {
+            streamingRequests.remove(requestId, state);
+            System.out.println("InternetAudioLoader: URL request #" + requestId + " cancelled");
+        }
+        return cancelled;
+    }
+
+    private void startStreamingDecode(StreamingRequestState state, AudioTrack track, StreamingCallback callback) {
+        if (state.isCancelled()) {
+            streamingRequests.remove(state.id, state);
+            return;
+        }
+        CompletableFuture<Void> decodeTask =
+                CompletableFuture.runAsync(() -> decodeTrackStreaming(state, track, callback));
+        state.decodeTask = decodeTask;
+        if (state.isCancelled()) decodeTask.cancel(true);
+    }
+
+    private void failStreamingRequest(StreamingRequestState state, StreamingCallback callback, String reason) {
+        if (state.isCancelled()) return;
+        if (streamingRequests.remove(state.id, state)) {
+            callback.onFailed(state.id, reason);
+        }
+    }
+
+    private void dispatchIfActive(StreamingRequestState state, Runnable callback) {
+        net.minecraft.client.MinecraftClient.getInstance().execute(() -> {
+            if (!state.isCancelled()) callback.run();
+        });
+    }
+
     public long loadTrackStreaming(String url, StreamingCallback callback) {
         long requestId = nextStreamingRequestId.getAndIncrement();
-        playerManager.loadItem(url, new AudioLoadResultHandler() {
+        StreamingRequestState state = new StreamingRequestState(requestId);
+        streamingRequests.put(requestId, state);
+        Future<Void> loadTask = playerManager.loadItem(url, new AudioLoadResultHandler() {
             @Override
             public void trackLoaded(AudioTrack track) {
-                CompletableFuture.runAsync(() -> decodeTrackStreaming(requestId, track, callback));
+                startStreamingDecode(state, track, callback);
             }
 
             @Override
             public void playlistLoaded(AudioPlaylist playlist) {
                 if (playlist.getTracks().isEmpty()) {
-                    callback.onFailed(requestId, "Playlist empty");
+                    failStreamingRequest(state, callback, "Playlist empty");
                     return;
                 }
                 AudioTrack s = playlist.getSelectedTrack();
                 if (s == null) s = playlist.getTracks().get(0);
                 final AudioTrack t = s;
-                CompletableFuture.runAsync(() -> decodeTrackStreaming(requestId, t, callback));
+                startStreamingDecode(state, t, callback);
             }
 
             @Override
             public void noMatches() {
-                callback.onFailed(requestId, "No matches: " + url);
+                failStreamingRequest(state, callback, "No matches: " + url);
             }
 
             @Override
             public void loadFailed(FriendlyException ex) {
-                callback.onFailed(requestId, "Load failed: " + ex.getMessage());
+                failStreamingRequest(state, callback, "Load failed: " + ex.getMessage());
             }
         });
+        state.loadTask = loadTask;
+        if (state.isCancelled()) loadTask.cancel(true);
         return requestId;
     }
 
-    private void decodeTrackStreaming(long requestId, AudioTrack track, StreamingCallback callback) {
+    private void decodeTrackStreaming(StreamingRequestState state, AudioTrack track, StreamingCallback callback) {
+        long requestId = state.id;
+        if (state.isCancelled()) return;
         int sampleRate = 48000;
         int channels = 2;
         int totalDecoded = 0;
         short[] pcmInterleaved = null;
         int prebufferTarget;
         String title = track.getInfo().title;
-        var player = playerManager.createPlayer();
+        AudioPlayer player = playerManager.createPlayer();
+        state.player = player;
         try {
             player.playTrack(track.makeClone());
+            if (state.isCancelled()) return;
             AudioFrame first = player.provide(5000, java.util.concurrent.TimeUnit.MILLISECONDS);
             if (first != null && first.getFormat() != null) {
                 sampleRate = first.getFormat().sampleRate;
@@ -185,8 +263,9 @@ public class InternetAudioLoader {
                 totalDecoded += copyFrameToPcm(first, pcmInterleaved, totalDecoded, channels);
             }
             int timeouts = 0;
-            while (totalDecoded < prebufferTarget) {
+            while (!state.isCancelled() && totalDecoded < prebufferTarget) {
                 AudioFrame f = player.provide(5000, java.util.concurrent.TimeUnit.MILLISECONDS);
+                if (state.isCancelled()) return;
                 if (f == null || f.getData() == null || f.getData().length == 0) {
                     if (player.getPlayingTrack() == null) break;
                     timeouts++;
@@ -198,17 +277,19 @@ public class InternetAudioLoader {
                 timeouts = 0;
                 totalDecoded += copyFrameToPcm(f, pcmInterleaved, totalDecoded, channels);
             }
+            if (state.isCancelled()) return;
             if (totalDecoded == 0) {
                 throw new RuntimeException("0 samples decoded. Stream failed to start.");
             }
             final int prebuffered = totalDecoded;
             final int finalSR = sampleRate;
             final short[] pcmFinal = pcmInterleaved;
-            net.minecraft.client.MinecraftClient.getInstance()
-                    .execute(() -> callback.onReady(requestId, pcmFinal, prebuffered, totalExpected, finalSR, title));
-            while (true) {
+            dispatchIfActive(
+                    state, () -> callback.onReady(requestId, pcmFinal, prebuffered, totalExpected, finalSR, title));
+            while (!state.isCancelled()) {
                 AudioFrame f = player.provide(5000, java.util.concurrent.TimeUnit.MILLISECONDS);
                 if (f == null) {
+                    if (state.isCancelled()) return;
                     if (player.getPlayingTrack() == null) break;
                     f = player.provide(10000, java.util.concurrent.TimeUnit.MILLISECONDS);
                     if (f == null) break;
@@ -216,20 +297,25 @@ public class InternetAudioLoader {
                 if (f.getData() == null || f.getData().length == 0) continue;
                 totalDecoded += copyFrameToPcm(f, pcmInterleaved, totalDecoded, channels);
                 final int td = totalDecoded;
-                net.minecraft.client.MinecraftClient.getInstance().execute(() -> callback.onMoreData(requestId, td));
+                dispatchIfActive(state, () -> callback.onMoreData(requestId, td));
                 if (totalDecoded >= totalExpected) break;
             }
-            net.minecraft.client.MinecraftClient.getInstance().execute(() -> callback.onComplete(requestId));
+            dispatchIfActive(state, () -> callback.onComplete(requestId));
         } catch (Throwable e) {
-            System.err.println("CRITICAL DECODE ERROR: " + e.toString());
-            e.printStackTrace();
-            net.minecraft.client.MinecraftClient.getInstance()
-                    .execute(() -> callback.onFailed(requestId, e.toString()));
+            if (!state.isCancelled()) {
+                System.err.println("CRITICAL DECODE ERROR: " + e.toString());
+                e.printStackTrace();
+                dispatchIfActive(state, () -> callback.onFailed(requestId, e.toString()));
+            }
         } finally {
-            player.destroy();
+            state.player = null;
+            try {
+                player.destroy();
+            } finally {
+                streamingRequests.remove(requestId, state);
+            }
         }
     }
-
     /**
      * Copy a decoded audio frame into the interleaved PCM array.
      * @return number of frames (not shorts) written

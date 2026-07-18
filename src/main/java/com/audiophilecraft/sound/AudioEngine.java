@@ -28,6 +28,8 @@ public class AudioEngine {
     // Active playback session
     private final java.util.Map<java.util.UUID, PlaybackSession> sessions =
             new java.util.concurrent.ConcurrentHashMap<>();
+    private final java.util.concurrent.ConcurrentHashMap<java.util.UUID, Long> activeUrlRequestIds =
+            new java.util.concurrent.ConcurrentHashMap<>();
     private java.util.UUID activeSessionId = null;
 
     // Listener state (delegated to ListenerController)
@@ -1408,75 +1410,80 @@ public class AudioEngine {
             boolean startImmediately,
             java.util.function.Consumer<java.util.UUID> onReadyCallback) {
 
+        InternetAudioLoader loader = InternetAudioLoader.getInstance();
+        Long previousRequestId = activeUrlRequestIds.remove(sessionUUID);
+        if (previousRequestId != null) {
+            loader.cancelStreamingRequest(previousRequestId);
+        }
+
         PlaybackSession existingSession = sessions.get(sessionUUID);
         if (existingSession != null) {
             existingSession.stopAll();
         }
 
-        long startedRequestId = InternetAudioLoader.getInstance()
-                .loadTrackStreaming(url, new InternetAudioLoader.StreamingCallback() {
-                    @Override
-                    public void onReady(
-                            long requestId,
-                            short[] pcmInterleaved,
-                            int decodedFrames,
-                            int totalExpected,
-                            int sampleRate,
-                            String title) {
-                        AudioStreamBuffer sharedBuf = new AudioStreamBuffer("url_stream", sampleRate);
-                        System.out.println(
-                                "AudioEngine: URL request #" + requestId + " ready for session " + sessionUUID);
-                        sharedBuf.initStreaming(pcmInterleaved, decodedFrames, totalExpected);
+        long startedRequestId = loader.loadTrackStreaming(url, new InternetAudioLoader.StreamingCallback() {
+            @Override
+            public void onReady(
+                    long requestId,
+                    short[] pcmInterleaved,
+                    int decodedFrames,
+                    int totalExpected,
+                    int sampleRate,
+                    String title) {
+                AudioStreamBuffer sharedBuf = new AudioStreamBuffer("url_stream", sampleRate);
+                System.out.println("AudioEngine: URL request #" + requestId + " ready for session " + sessionUUID);
+                sharedBuf.initStreaming(pcmInterleaved, decodedFrames, totalExpected);
 
-                        PlaybackSession session =
-                                sessions.computeIfAbsent(sessionUUID, k -> new PlaybackSession(AudioEngine.this));
-                        session.stopAll();
-                        loadPersistedEqIntoSession(session, sessionUUID);
-                        session.setPlayUrl(url);
-                        session.getStreamBuffers().clear();
-                        session.getStreamBuffers().put(TYPE_SUB, sharedBuf);
-                        session.getStreamBuffers().put(TYPE_MID, sharedBuf);
-                        session.getStreamBuffers().put(TYPE_LINE, sharedBuf);
-                        session.getStreamBuffers().put(TYPE_NORMAL, sharedBuf);
+                PlaybackSession session =
+                        sessions.computeIfAbsent(sessionUUID, k -> new PlaybackSession(AudioEngine.this));
+                session.stopAll();
+                loadPersistedEqIntoSession(session, sessionUUID);
+                session.setPlayUrl(url);
+                session.getStreamBuffers().clear();
+                session.getStreamBuffers().put(TYPE_SUB, sharedBuf);
+                session.getStreamBuffers().put(TYPE_MID, sharedBuf);
+                session.getStreamBuffers().put(TYPE_LINE, sharedBuf);
+                session.getStreamBuffers().put(TYPE_NORMAL, sharedBuf);
 
-                        resetGlobalVenueState(speakers);
-                        finalizePlaybackPipeline(sessionUUID, speakers, power, inputGain, startImmediately);
-                        if (!startImmediately && onReadyCallback != null) {
-                            onReadyCallback.accept(sessionUUID);
-                        }
-                    }
+                resetGlobalVenueState(speakers);
+                finalizePlaybackPipeline(sessionUUID, speakers, power, inputGain, startImmediately);
+                if (!startImmediately && onReadyCallback != null) {
+                    onReadyCallback.accept(sessionUUID);
+                }
+            }
 
-                    @Override
-                    public void onMoreData(long requestId, int totalDecoded) {
-                        PlaybackSession session = sessions.get(sessionUUID);
-                        if (session != null) {
-                            AudioStreamBuffer buf = session.getStreamBuffers().get(TYPE_NORMAL);
-                            if (buf != null) buf.updateDecodedLength(totalDecoded);
-                        }
-                    }
+            @Override
+            public void onMoreData(long requestId, int totalDecoded) {
+                PlaybackSession session = sessions.get(sessionUUID);
+                if (session != null) {
+                    AudioStreamBuffer buf = session.getStreamBuffers().get(TYPE_NORMAL);
+                    if (buf != null) buf.updateDecodedLength(totalDecoded);
+                }
+            }
 
-                    @Override
-                    public void onComplete(long requestId) {
-                        System.out.println(
-                                "AudioEngine: URL request #" + requestId + " completed for session " + sessionUUID);
-                    }
+            @Override
+            public void onComplete(long requestId) {
+                activeUrlRequestIds.remove(sessionUUID, requestId);
+                System.out.println("AudioEngine: URL request #" + requestId + " completed for session " + sessionUUID);
+            }
 
-                    @Override
-                    public void onFailed(long requestId, String reason) {
-                        System.err.println("AudioEngine: URL request #" + requestId + " failed: " + reason);
-                        net.minecraft.client.MinecraftClient.getInstance().execute(() -> {
-                            if (net.minecraft.client.MinecraftClient.getInstance().player != null) {
-                                net.minecraft.client.MinecraftClient.getInstance()
-                                        .player
-                                        .sendMessage(
-                                                net.minecraft.text.Text.literal(
-                                                                "HATA (CRITICAL DECODE ERROR): " + reason)
-                                                        .formatted(net.minecraft.util.Formatting.RED),
-                                                false);
-                            }
-                        });
+            @Override
+            public void onFailed(long requestId, String reason) {
+                activeUrlRequestIds.remove(sessionUUID, requestId);
+                System.err.println("AudioEngine: URL request #" + requestId + " failed: " + reason);
+                net.minecraft.client.MinecraftClient.getInstance().execute(() -> {
+                    if (net.minecraft.client.MinecraftClient.getInstance().player != null) {
+                        net.minecraft.client.MinecraftClient.getInstance()
+                                .player
+                                .sendMessage(
+                                        net.minecraft.text.Text.literal("HATA (CRITICAL DECODE ERROR): " + reason)
+                                                .formatted(net.minecraft.util.Formatting.RED),
+                                        false);
                     }
                 });
+            }
+        });
+        activeUrlRequestIds.put(sessionUUID, startedRequestId);
         System.out.println("AudioEngine: URL request #" + startedRequestId + " started for session " + sessionUUID);
     }
 
