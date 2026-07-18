@@ -46,17 +46,7 @@ public class AudioEngine {
     // venue scan callbacks
     private volatile int trackGeneration = 0;
 
-    // --- Master Reverb Occlusion ---
-    private float smoothedMasterOcclusion = 1.0f;
-
-    // EFX EAX Reverb System
-    private int reverbEffectId = 0;
-    private int auxSlotId = 0;
-
-    private boolean efxInitialized = false;
-
-    // Acoustic Scanner (used only for venue probe scans at playback start)
-    private final AdvancedAcousticScanner acousticScanner = new AdvancedAcousticScanner();
+    private final AudioEffectsController effects = new AudioEffectsController();
 
     // Streaming System
 
@@ -67,18 +57,6 @@ public class AudioEngine {
 
     // Background Audio Thread (pre-computes PCM buffers off main thread)
     private ScheduledExecutorService audioThread;
-
-    // Venue-Locked Reverb System
-    private AdvancedAcousticScanner.VenuePreset venuePreset = null;
-    private boolean venuePresetApplied = false;
-
-    // --- Dynamic Early Reflections ---
-    private volatile float currentReflGain = -1.0f;
-    private volatile float currentReflDelay = -1.0f;
-    // Live Tuning: stored descriptor for regenerating preset when config changes
-    private AdvancedAcousticScanner.VenueDescriptor storedVenueDescriptor = null;
-    private net.minecraft.util.math.Vec3d storedVenueProbePos = null;
-    private long lastConfigGeneration = 0;
 
     // Direct buffer allocation caching (Prevents native memory JVM GC thrashing in
     // hot loop)
@@ -192,421 +170,49 @@ public class AudioEngine {
         }
     }
 
-    private int slapbackEffectId = 0;
-    private int slapbackAuxSlotId = 0;
-    // Dynamic echo gain based on listener distance to nearest wall.
-    // Computed in updateListenerSlapback() (20Hz), consumed by StreamSource
-    // per-source filter.
-    // NEVER written to AL_EFFECTSLOT_GAIN — that stays 1.0 to avoid buffer resets.
-    private volatile float currentSlapbackGain = 0.0f;
-
     public int getSlapbackAuxSlotId() {
-        return slapbackAuxSlotId;
+        return effects.getSlapbackAuxSlotId();
     }
 
     /** Per-source echo filter reads this to scale its send gain. */
     public float getSlapbackGain() {
-        return currentSlapbackGain;
+        return effects.getSlapbackGain();
     }
 
     public int getAuxSlotId() {
-        return auxSlotId;
+        return effects.getAuxSlotId();
     }
 
-    /**
-     * Initialize OpenAL EFX with EAX Reverb for physics-based room simulation.
-     * Called lazily on first playTrack().
-     */
     public void initEfx() {
-        if (efxInitialized) return;
-        efxInitialized = true;
-
-        // Enable HRTF and expanded source pool for all users
-        // enableHrtf();
-
-        // HRTF and source pool expansion are now handled via alsoft.ini
-        // (placed in %AppData%/alsoft.ini). This avoids alcResetDeviceSOFT
-        // which was disrupting Minecraft's sound engine.
-
-        try {
-            // Create EAX Reverb Effect (superior to basic AL_EFFECT_REVERB)
-            reverbEffectId = alGenEffects();
-
-            if (alGetError() != AL_NO_ERROR) {
-                System.err.println("AudioEngine: Failed to create EFX effect");
-                reverbEffectId = 0;
-                return;
-            }
-
-            // Try EAX Reverb first, fall back to basic reverb
-            alEffecti(reverbEffectId, AL_EFFECT_TYPE, AL_EFFECT_EAXREVERB);
-
-            if (alGetError() != AL_NO_ERROR) {
-                alEffecti(reverbEffectId, AL_EFFECT_TYPE, AL_EFFECT_REVERB);
-                if (alGetError() != AL_NO_ERROR) {
-                    System.err.println("AudioEngine: No reverb support available");
-                    alDeleteEffects(reverbEffectId);
-                    reverbEffectId = 0;
-                    return;
-                }
-            }
-
-            // --- CRITICAL DISTANCE MODEL SETTINGS ---
-            // Current Issue: Sound stops attenuating at MaxDist due to CLAMPED model.
-            // Fix: Use AL_INVERSE_DISTANCE (Standard) so sound fades naturally forever.
-            alDistanceModel(AL_NONE);
-
-            // Rolloff Factor Default
-            // alListenerf(AL_ROLLOFF_FACTOR, 1.0f); // Per-source is better
-
-            // 1. Primary Reverb (Dynamic - Updated by Scanner)
-            alEffectf(reverbEffectId, AL_EAXREVERB_DECAY_TIME, 0.3f);
-            alEffectf(reverbEffectId, AL_EAXREVERB_REFLECTIONS_GAIN, 0.3f);
-            alEffectf(reverbEffectId, AL_EAXREVERB_REFLECTIONS_DELAY, 0.02f);
-            alEffectf(reverbEffectId, AL_EAXREVERB_LATE_REVERB_GAIN, 0.1f);
-            alEffectf(reverbEffectId, AL_EAXREVERB_LATE_REVERB_DELAY, 0.04f);
-            alEffectf(reverbEffectId, AL_EAXREVERB_DIFFUSION, 0.7f);
-            alEffectf(reverbEffectId, AL_EAXREVERB_DENSITY, 0.5f);
-            alEffectf(reverbEffectId, AL_EAXREVERB_GAIN, 0.3f);
-            alEffectf(reverbEffectId, AL_EAXREVERB_GAINHF, 0.6f);
-            alEffectf(reverbEffectId, AL_EAXREVERB_GAINLF, 0.8f);
-            alEffectf(reverbEffectId, AL_EAXREVERB_DECAY_HFRATIO, 0.5f);
-            alEffectf(reverbEffectId, AL_EAXREVERB_DECAY_LFRATIO, 1.1f);
-            alEffectf(reverbEffectId, AL_EAXREVERB_AIR_ABSORPTION_GAINHF, 0.994f);
-            alEffecti(reverbEffectId, AL_EAXREVERB_DECAY_HFLIMIT, 1);
-
-            // Create Auxiliary Effect Slots
-            auxSlotId = alGenAuxiliaryEffectSlots();
-
-            if (alGetError() != AL_NO_ERROR) {
-                System.err.println("AudioEngine: Failed to create aux slot");
-                alDeleteEffects(reverbEffectId);
-                reverbEffectId = 0;
-                return;
-            }
-
-            // Attach effect to slot
-            alAuxiliaryEffectSloti(auxSlotId, AL_EFFECTSLOT_EFFECT, reverbEffectId);
-
-            // 2. Pure Echo (Dynamic - Unpanned)
-            slapbackEffectId = alGenEffects();
-            if (alGetError() == AL_NO_ERROR) {
-                alEffecti(slapbackEffectId, AL_EFFECT_TYPE, org.lwjgl.openal.EXTEfx.AL_EFFECT_ECHO);
-                alEffectf(slapbackEffectId, org.lwjgl.openal.EXTEfx.AL_ECHO_DELAY, 0.1f);
-                alEffectf(slapbackEffectId, org.lwjgl.openal.EXTEfx.AL_ECHO_LRDELAY, 0.1f);
-                alEffectf(slapbackEffectId, org.lwjgl.openal.EXTEfx.AL_ECHO_DAMPING, 0.7f);
-                alEffectf(slapbackEffectId, org.lwjgl.openal.EXTEfx.AL_ECHO_FEEDBACK, 0.3f);
-                alEffectf(slapbackEffectId, org.lwjgl.openal.EXTEfx.AL_ECHO_SPREAD, -0.5f);
-                slapbackAuxSlotId = alGenAuxiliaryEffectSlots();
-                if (alGetError() == AL_NO_ERROR) {
-                    alAuxiliaryEffectSloti(slapbackAuxSlotId, AL_EFFECTSLOT_EFFECT, slapbackEffectId);
-                }
-            }
-
-        } catch (Exception e) {
-            System.err.println("AudioEngine: EFX init failed: " + e.getMessage());
-            reverbEffectId = 0;
-            auxSlotId = 0;
-        }
+        // HRTF and source-pool settings stay in alsoft.ini; EFX init must not reset the device.
+        // Resetting the device here disrupts Minecraft's own sound engine.
+        effects.initialize();
     }
 
     public AdvancedAcousticScanner.VenuePreset getVenuePreset() {
-        return this.venuePreset;
+        return effects.getVenuePreset();
     }
 
     public AdvancedAcousticScanner.VenueDescriptor getStoredVenueDescriptor() {
-        return storedVenueDescriptor;
-    }
-
-    /**
-     * Apply venue reverb to EFX every tick.
-     * Re-applies each tick so LiveTuningConfig multipliers take effect in
-     * real-time.
-     * Also regenerates VenuePreset from stored descriptor when config changes.
-     */
-    private void ensureVenueReverb() {
-        if (venuePreset == null) return;
-        if (auxSlotId == 0 || reverbEffectId == 0) return;
-
-        // If config was reloaded, regenerate the VenuePreset from stored descriptor
-        long currentGen = com.audiophilecraft.config.LiveTuningConfig.getReloadGeneration();
-        if (currentGen != lastConfigGeneration && storedVenueDescriptor != null && storedVenueProbePos != null) {
-            this.venuePreset = acousticScanner.descriptorToPreset(storedVenueDescriptor, storedVenueProbePos);
-            lastConfigGeneration = currentGen;
-            // Echo params only update on config change — NOT every frame.
-            // Re-attaching the effect every frame resets OpenAL's echo delay
-            // buffer, which causes momentary volume peaks.
-            applySlapbackConfig();
-        }
-
-        applyVenueReverbToEfx();
-        venuePresetApplied = true;
-    }
-
-    /**
-     * Apply the locked venue reverb preset to the EFX effect.
-     * Parameters come from the one-time probe scan and never change.
-     */
-    private void applyVenueReverbToEfx() {
-        com.audiophilecraft.config.LiveTuningConfig cfg = com.audiophilecraft.config.LiveTuningConfig.get();
-
-        float decayTime = venuePreset.decayTime * cfg.reverb_decayMultiplier;
-        float gain = venuePreset.gain * cfg.reverb_gainMultiplier;
-        float gainHF = venuePreset.gainHF * cfg.reverb_gainHFMultiplier;
-        float reflGain = venuePreset.reflectionsGain * cfg.reverb_reflGainMultiplier;
-        float lateGain = venuePreset.lateReverbGain * cfg.reverb_lateGainMultiplier;
-        float density = cfg.reverb_densityOverride >= 0 ? cfg.reverb_densityOverride : venuePreset.density;
-        float diffusion = cfg.reverb_diffusionOverride >= 0 ? cfg.reverb_diffusionOverride : venuePreset.diffusion;
-
-        // Clamp to OpenAL EAX Reverb limits
-        decayTime = Math.max(0.1f, Math.min(20.0f, decayTime));
-        gain = Math.max(0.0f, Math.min(1.0f, gain));
-        gainHF = Math.max(0.0f, Math.min(1.0f, gainHF));
-        reflGain = Math.max(0.0f, Math.min(3.16f, reflGain));
-        lateGain = Math.max(0.0f, Math.min(10.0f, lateGain));
-        density = Math.max(0.0f, Math.min(1.0f, density));
-        diffusion = Math.max(0.0f, Math.min(1.0f, diffusion));
-
-        alEffectf(reverbEffectId, AL_EAXREVERB_DECAY_TIME, decayTime);
-        alEffectf(reverbEffectId, AL_EAXREVERB_DECAY_HFRATIO, venuePreset.decayHFRatio);
-        alEffectf(reverbEffectId, AL_EAXREVERB_DECAY_LFRATIO, venuePreset.decayLFRatio);
-        alEffecti(reverbEffectId, AL_EAXREVERB_DECAY_HFLIMIT, venuePreset.decayHFLimit ? 1 : 0);
-
-        // TEMPORARILY DISABLED EARLY REFLECTIONS for Echo Tuning
-        if (currentReflGain >= 0.0f && currentReflDelay >= 0.0f) {
-            alEffectf(reverbEffectId, AL_EAXREVERB_REFLECTIONS_GAIN, currentReflGain);
-            alEffectf(reverbEffectId, AL_EAXREVERB_REFLECTIONS_DELAY, currentReflDelay);
-        }
-
-        alEffectfv(reverbEffectId, AL_EAXREVERB_REFLECTIONS_PAN, ZERO_PAN);
-        alEffectf(reverbEffectId, AL_EAXREVERB_LATE_REVERB_GAIN, lateGain);
-        alEffectf(reverbEffectId, AL_EAXREVERB_LATE_REVERB_DELAY, venuePreset.lateReverbDelay);
-        alEffectfv(reverbEffectId, AL_EAXREVERB_LATE_REVERB_PAN, ZERO_PAN);
-        alEffectf(reverbEffectId, AL_EAXREVERB_DENSITY, density);
-        alEffectf(reverbEffectId, AL_EAXREVERB_DIFFUSION, diffusion);
-        alEffectf(reverbEffectId, AL_EAXREVERB_GAIN, gain);
-        alEffectf(reverbEffectId, AL_EAXREVERB_GAINHF, gainHF);
-        alEffectf(reverbEffectId, AL_EAXREVERB_GAINLF, venuePreset.gainLF);
-        alEffectf(reverbEffectId, AL_EAXREVERB_AIR_ABSORPTION_GAINHF, venuePreset.airAbsorptionGainHF);
-        alAuxiliaryEffectSloti(auxSlotId, AL_EFFECTSLOT_EFFECT, reverbEffectId);
-    }
-
-    /**
-     * Apply slapback echo configuration to the EFX effect.
-     * ONLY called on config reload or initial setup — NOT every frame.
-     * Re-attaching AL_EFFECTSLOT_EFFECT resets OpenAL's internal echo delay
-     * buffer, so it must never happen per-frame.
-     * Dynamic gain is handled per-source via echoSendFilterId in StreamSource.
-     * Slot gain is ALWAYS 1.0 — the per-source filter does all volume control.
-     */
-    private void applySlapbackConfig() {
-        if (slapbackEffectId == 0 || slapbackAuxSlotId == 0) return;
-        com.audiophilecraft.config.LiveTuningConfig config = com.audiophilecraft.config.LiveTuningConfig.get();
-        alEffectf(slapbackEffectId, org.lwjgl.openal.EXTEfx.AL_ECHO_DELAY, config.echo_delay);
-        alEffectf(slapbackEffectId, org.lwjgl.openal.EXTEfx.AL_ECHO_LRDELAY, config.echo_delay);
-        alEffectf(slapbackEffectId, org.lwjgl.openal.EXTEfx.AL_ECHO_DAMPING, config.echo_damping);
-        alEffectf(slapbackEffectId, org.lwjgl.openal.EXTEfx.AL_ECHO_FEEDBACK, config.echo_feedback);
-        alEffectf(slapbackEffectId, org.lwjgl.openal.EXTEfx.AL_ECHO_SPREAD, config.echo_spread);
-        alAuxiliaryEffectSloti(slapbackAuxSlotId, AL_EFFECTSLOT_EFFECT, slapbackEffectId);
-        // Slot gain FIXED at 1.0 — never changes. All dynamic echo volume
-        // is controlled per-source through echoSendFilterId.
-        org.lwjgl.openal.EXTEfx.alAuxiliaryEffectSlotf(
-                slapbackAuxSlotId, org.lwjgl.openal.EXTEfx.AL_EFFECTSLOT_GAIN, 1.0f);
-    }
-
-    /**
-     * Listener-centric Early Reflections scanner.
-     * Fires 6 rays from the listener position to find immediate wall proximity.
-     * Updates AL_EAXREVERB_REFLECTIONS_GAIN and AL_EAXREVERB_REFLECTIONS_DELAY
-     * live.
-     */
-    private void updateListenerReflections(World world) {
-        if (this.venuePreset == null || reverbEffectId == 0 || auxSlotId == 0) return;
-
-        com.audiophilecraft.config.LiveTuningConfig cfg = com.audiophilecraft.config.LiveTuningConfig.get();
-
-        float[][] DIRS = {
-            {1, 0, 0}, {-1, 0, 0},
-            {0, 1, 0}, {0, -1, 0},
-            {0, 0, 1}, {0, 0, -1}
-        };
-
-        int maxDist = 10; // 10 blocks max for early reflections radius
-        float minDist = maxDist;
-
-        for (int i = 0; i < 6; i++) {
-            float dirX = DIRS[i][0];
-            float dirY = DIRS[i][1];
-            float dirZ = DIRS[i][2];
-            float hitDist = maxDist;
-
-            net.minecraft.util.math.BlockPos.Mutable checkPos = new net.minecraft.util.math.BlockPos.Mutable();
-            for (int step = 1; step <= maxDist; step++) {
-                checkPos.set(
-                        (int) Math.floor(listenerPos.x + dirX * step),
-                        (int) Math.floor(listenerPos.y + dirY * step),
-                        (int) Math.floor(listenerPos.z + dirZ * step));
-
-                net.minecraft.block.BlockState state = world.getBlockState(checkPos);
-                if (state.isSolidBlock(world, checkPos)) {
-                    hitDist = step;
-                    break;
-                }
-            }
-            if (hitDist < minDist) {
-                minDist = hitDist;
-            }
-        }
-
-        // 1. Dynamic Delay based on NEAREST wall
-        // delay = minDist * 2.0 / 2000.0 -> round-trip time from wall to listener
-        // (speed of sound ~343m/s, block =
-        // meter)
-        // 2000.0 = 2x half-distance + ms conversion factor. max 0.3s = ~30ms hard limit
-        // for fusion
-        float dynamicReflDelay = Math.max(0.001f, Math.min(minDist * 2.0f / 2000.0f, 0.3f));
-
-        // 2. Dynamic Gain based on distance to the NEAREST wall.
-        float distanceFactor = Math.max(0.0f, Math.min(1.0f, 1.0f - (minDist / (float) maxDist)));
-
-        // Retrieve base reflection gain calculated from venue material (vReflGain)
-        float baseReflGain = venuePreset.reflectionsGain * cfg.reverb_reflGainMultiplier;
-
-        // Scale baseReflGain dynamically.
-        // The venue preset already sets a baseline (1.0x) for the room's average
-        // reflectivity.
-        // When you walk close to a wall, we BOOST the early reflections up to 2.5x.
-        float dynamicReflGain = baseReflGain * (1.0f + (distanceFactor * 0.5f));
-        dynamicReflGain = Math.max(0.0f, Math.min(3.16f, dynamicReflGain));
-
-        // Safely pass to the render thread instead of calling OpenAL directly
-        this.currentReflGain = dynamicReflGain;
-        this.currentReflDelay = dynamicReflDelay;
-    }
-
-    private void updateListenerSlapback(World world) {
-        if (slapbackEffectId == 0 || slapbackAuxSlotId == 0) return;
-
-        float[][] DIRS = {{1, 0, 0}, {-1, 0, 0}, {0, 1, 0}, {0, -1, 0}, {0, 0, 1}, {0, 0, -1}};
-
-        int maxDist = 40;
-        float minDist = maxDist;
-        float bestDirX = 0, bestDirY = 0, bestDirZ = 0;
-        float bestAbsorption = 0.0f;
-
-        for (int i = 0; i < DIRS.length; i++) {
-            float dirX = DIRS[i][0];
-            float dirY = DIRS[i][1];
-            float dirZ = DIRS[i][2];
-            float hitDist = maxDist;
-            float currentAbsorption = 0.0f;
-
-            net.minecraft.util.math.BlockPos.Mutable checkPos = new net.minecraft.util.math.BlockPos.Mutable();
-            for (int step = 1; step <= maxDist; step++) {
-                checkPos.set(
-                        (int) Math.floor(listenerPos.x + dirX * step),
-                        (int) Math.floor(listenerPos.y + dirY * step),
-                        (int) Math.floor(listenerPos.z + dirZ * step));
-
-                net.minecraft.block.BlockState state = world.getBlockState(checkPos);
-                if (state.isSolidBlock(world, checkPos)) {
-                    hitDist = step;
-                    currentAbsorption = com.audiophilecraft.sound.AdvancedAcousticScanner.getAbsorptionForReflection(
-                            state.getBlock());
-                    break;
-                }
-            }
-            if (hitDist < minDist) {
-                minDist = hitDist;
-                bestDirX = dirX;
-                bestDirY = dirY;
-                bestDirZ = dirZ;
-                bestAbsorption = currentAbsorption;
-            }
-        }
-
-        // Dynamic Live Tuning Parameters
-        com.audiophilecraft.config.LiveTuningConfig config = com.audiophilecraft.config.LiveTuningConfig.get();
-
-        // The echo never fully mutes; it stays at a subtle 15% volume when far away (40
-        // blocks or more).
-        // As you get closer to a wall (minDist -> 0), the echo bounces harder and
-        // increases up to 100% volume.
-        float baseGain = config.echo_baseGain;
-        float maxGain = config.echo_maxGain;
-        // Mapping: 40 blocks = baseGain, 0 blocks = maxGain
-        float gain = baseGain + ((maxDist - minDist) / (float) maxDist) * (maxGain - baseGain);
-
-        // --- NEW: Cotton/Wool Absorption Penalty ---
-        // Only penalize if the wall is highly absorptive (e.g., > 30% absorption).
-        // Ignore stone/wood so we don't ruin the finely tuned echo gain for normal
-        // rooms.
-        if (bestAbsorption > 0.30f) {
-            gain *= (1.0f - bestAbsorption);
-        }
-
-        if (this.currentSlapbackGain < 0.0f) {
-            this.currentSlapbackGain = gain;
-        } else {
-            // Smooth transitions to prevent audio artifacts (crackles/pops) when moving
-            float lerpFactor = 0.05f; // ~1 second smoothing at 20 ticks/sec
-            this.currentSlapbackGain += (gain - this.currentSlapbackGain) * lerpFactor;
-        }
-
-        // The volume is NOT applied to AL_EFFECTSLOT_GAIN here because doing
-        // so can cause OpenAL to hiccup. Instead, we store currentSlapbackGain
-        // and let each StreamSource read it to update its individual echoSendFilter.
+        return effects.getStoredVenueDescriptor();
     }
 
     /**
      * Calculate stage-front direction from speaker facing vectors.
-     * This is the average direction speakers are pointing at (towards the
-     * audience).
+     * This remains in AudioEngine because it belongs to source layout, not shared effects.
      */
     private Vec3d calculateStageDirection(List<StreamSource> sources) {
         double totalDirX = 0, totalDirY = 0, totalDirZ = 0;
-        for (StreamSource s : sources) {
-            totalDirX += s.dirX;
-            totalDirY += s.dirY;
-            totalDirZ += s.dirZ;
+        for (StreamSource source : sources) {
+            totalDirX += source.dirX;
+            totalDirY += source.dirY;
+            totalDirZ += source.dirZ;
         }
-        double len = Math.sqrt(totalDirX * totalDirX + totalDirY * totalDirY + totalDirZ * totalDirZ);
-        if (len < 0.001) {
-            return new Vec3d(1, 0, 0); // Fallback: face +X
+        double length = Math.sqrt(totalDirX * totalDirX + totalDirY * totalDirY + totalDirZ * totalDirZ);
+        if (length < 0.001) {
+            return new Vec3d(1, 0, 0);
         }
-        return new Vec3d(totalDirX / len, totalDirY / len, totalDirZ / len);
-    }
-
-    /**
-     * Applies global occlusion to the main EFX Reverb effect.
-     * Called by updateSourcesTick to prevent lingering reverb tails from passing
-     * through solid walls at full volume.
-     */
-    private void updateMasterReverbOcclusion(float targetMasterOcclusion) {
-        if (reverbEffectId == 0 || venuePreset == null) return;
-
-        com.audiophilecraft.config.LiveTuningConfig cfg = com.audiophilecraft.config.LiveTuningConfig.get();
-        // Smooth the master occlusion
-        float lerpRate =
-                (targetMasterOcclusion < this.smoothedMasterOcclusion) ? cfg.masterOcc_lerpIn : cfg.masterOcc_lerpOut;
-        this.smoothedMasterOcclusion += (targetMasterOcclusion - this.smoothedMasterOcclusion) * lerpRate;
-
-        float masterGain = venuePreset.gain
-                * (cfg.masterOcc_gainFloor + (1.0f - cfg.masterOcc_gainFloor) * this.smoothedMasterOcclusion);
-
-        // HF (Treble) gets completely smothered by walls
-        float masterGainHF =
-                venuePreset.gainHF * (float) Math.pow(this.smoothedMasterOcclusion, cfg.masterOcc_hfExponent);
-
-        // Ensure values stay within the absolute limits OpenAL allows
-        masterGain = Math.max(0.0f, Math.min(1.0f, masterGain));
-        masterGainHF = Math.max(0.01f, Math.min(1.0f, masterGainHF));
-
-        alEffectf(reverbEffectId, AL_EAXREVERB_GAIN, masterGain);
-        alEffectf(reverbEffectId, AL_EAXREVERB_GAINHF, masterGainHF);
-
-        // Slot needs to be "re-attached" to instantly update some drivers
-        alAuxiliaryEffectSloti(auxSlotId, AL_EFFECTSLOT_EFFECT, reverbEffectId);
+        return new Vec3d(totalDirX / length, totalDirY / length, totalDirZ / length);
     }
 
     /**
@@ -782,7 +388,7 @@ public class AudioEngine {
         if (getActiveSession() == null || this.listenerPos == null) return;
 
         // Ensure venue reverb is applied if a preset exists
-        ensureVenueReverb();
+        effects.ensureVenueReverb();
 
         // Note: Per-source physics (gain, occlusion, etc.) is now handled
         // in StreamSource.update() which runs every tick.
@@ -853,27 +459,7 @@ public class AudioEngine {
 
         // Handle global reverb mute ONLY if the entire game is paused (ESC menu).
         // If manually paused via tablet, let the reverb tail ring out naturally.
-        if (auxSlotId != 0) {
-            if (gamePaused) {
-                org.lwjgl.openal.EXTEfx.alAuxiliaryEffectSloti(
-                        auxSlotId,
-                        org.lwjgl.openal.EXTEfx.AL_EFFECTSLOT_EFFECT,
-                        org.lwjgl.openal.EXTEfx.AL_EFFECT_NULL);
-                if (slapbackAuxSlotId != 0) {
-                    org.lwjgl.openal.EXTEfx.alAuxiliaryEffectSloti(
-                            slapbackAuxSlotId,
-                            org.lwjgl.openal.EXTEfx.AL_EFFECTSLOT_EFFECT,
-                            org.lwjgl.openal.EXTEfx.AL_EFFECT_NULL);
-                }
-            } else {
-                org.lwjgl.openal.EXTEfx.alAuxiliaryEffectSloti(
-                        auxSlotId, org.lwjgl.openal.EXTEfx.AL_EFFECTSLOT_EFFECT, reverbEffectId);
-                if (slapbackAuxSlotId != 0) {
-                    org.lwjgl.openal.EXTEfx.alAuxiliaryEffectSloti(
-                            slapbackAuxSlotId, org.lwjgl.openal.EXTEfx.AL_EFFECTSLOT_EFFECT, slapbackEffectId);
-                }
-            }
-        }
+        effects.setGamePaused(gamePaused);
 
         // Don't update heavy logic if the game itself is paused
         if (gamePaused) {
@@ -926,22 +512,19 @@ public class AudioEngine {
             }
         }
         if (anyPlaying) {
-            updateListenerReflections(world);
-            updateListenerSlapback(world);
+            effects.updateListenerAcoustics(world, listenerPos);
         }
 
         // --- VENUE-LOCKED REVERB STATE FIX ---
         // If all sources finished naturally during ACTIVE playback, clear the venue
         // preset.
         // Otherwise, the player will be stuck with the stadium reverb forever.
-        // Guard: only clear if we were actually playing (not during device recovery)
         PlaybackSession activeSession = getActiveSession();
         if (activeSession != null
                 && activeSession.isPlaying()
                 && activeSession.getStreamSources().isEmpty()
-                && this.venuePreset != null) {
-            this.venuePreset = null;
-            this.venuePresetApplied = false;
+                && effects.getVenuePreset() != null) {
+            effects.clearVenuePreset();
         }
 
         // --- OCCLUSION CLUSTERING (REMOVED) ---
@@ -975,10 +558,10 @@ public class AudioEngine {
             maxOcclusion = 1.0f;
         }
 
-        updateMasterReverbOcclusion(maxOcclusion);
+        effects.updateMasterReverbOcclusion(maxOcclusion);
 
         // Ensure venue reverb is applied if preset exists
-        ensureVenueReverb();
+        effects.ensureVenueReverb();
 
         lastTickTime = System.nanoTime();
     }
@@ -990,12 +573,7 @@ public class AudioEngine {
             }
         }
         // Mute aux effect slots to kill reverb tails during pause
-        if (auxSlotId != 0) {
-            alAuxiliaryEffectSlotf(auxSlotId, AL_EFFECTSLOT_GAIN, 0.0f);
-        }
-        if (slapbackAuxSlotId != 0) {
-            alAuxiliaryEffectSlotf(slapbackAuxSlotId, AL_EFFECTSLOT_GAIN, 0.0f);
-        }
+        effects.muteEffectSlots();
     }
 
     /**
@@ -1024,10 +602,7 @@ public class AudioEngine {
 
     private void checkAndShutdownThread() {
         // Clear venue preset so reverb falls back to listener-based scanner
-        this.venuePreset = null;
-        this.venuePresetApplied = false;
-        this.storedVenueDescriptor = null;
-        this.storedVenueProbePos = null;
+        effects.clearVenueState();
 
         boolean anyPlaying = false;
         for (PlaybackSession s : sessions.values()) {
@@ -1054,9 +629,7 @@ public class AudioEngine {
             }
         }
         // Restore aux effect slot gain before resuming sources
-        if (auxSlotId != 0) {
-            alAuxiliaryEffectSlotf(auxSlotId, AL_EFFECTSLOT_GAIN, 1.0f);
-        }
+        effects.resumeEffectSlots();
     }
 
     /**
@@ -1185,30 +758,9 @@ public class AudioEngine {
      * Does NOT stop sessions — those are managed per-player.
      */
     public void cleanupEfx() {
-        if (slapbackAuxSlotId != 0) {
-            alAuxiliaryEffectSloti(slapbackAuxSlotId, AL_EFFECTSLOT_EFFECT, AL_EFFECT_NULL);
-            alDeleteAuxiliaryEffectSlots(slapbackAuxSlotId);
-            slapbackAuxSlotId = 0;
-        }
-        if (slapbackEffectId != 0) {
-            alDeleteEffects(slapbackEffectId);
-            slapbackEffectId = 0;
-        }
-        if (auxSlotId != 0) {
-            alAuxiliaryEffectSloti(auxSlotId, AL_EFFECTSLOT_EFFECT, AL_EFFECT_NULL);
-            alDeleteAuxiliaryEffectSlots(auxSlotId);
-            auxSlotId = 0;
-        }
-        if (reverbEffectId != 0) {
-            alDeleteEffects(reverbEffectId);
-            reverbEffectId = 0;
-        }
-        currentSlapbackGain = 0.0f;
-        efxInitialized = false;
+        effects.cleanup();
     }
 
-    // Pan constant for reverb calls — reused to avoid per-frame allocation
-    private static final float[] ZERO_PAN = {0f, 0f, 0f};
     private static final String TYPE_NORMAL = "normal";
     private static final String TYPE_SUB = "sub";
     private static final String TYPE_MID = "mid";
@@ -1304,19 +856,7 @@ public class AudioEngine {
 
     private void resetGlobalVenueState(List<BlockPos> speakers) {
         trackGeneration++;
-        AdvancedAcousticScanner.lastPointCloud.clear();
-        AdvancedAcousticScanner.lastVenueBlocks.clear();
-        AdvancedAcousticScanner.lastSpeakers =
-                speakers != null ? new java.util.ArrayList<>(speakers) : new java.util.ArrayList<>();
-        venuePreset = null;
-        venuePresetApplied = false;
-        storedVenueDescriptor = null;
-        storedVenueProbePos = null;
-        com.audiophilecraft.client.screen.PointCloudRenderer.invalidateCache();
-        while (alGetError() != AL_NO_ERROR) {
-            /* drain */
-        }
-        initEfx();
+        effects.resetVenueState(speakers);
     }
 
     public void toggleManualPause(java.util.UUID sessionUUID) {
@@ -1627,8 +1167,8 @@ public class AudioEngine {
                     alFilteri(sendFilterId, AL_FILTER_TYPE, AL_FILTER_LOWPASS);
                     alFilterf(sendFilterId, AL_LOWPASS_GAIN, 1.0f);
                     alFilterf(sendFilterId, AL_LOWPASS_GAINHF, 1.0f);
-                    if (auxSlotId != 0) {
-                        alSource3i(sourceId, AL_AUXILIARY_SEND_FILTER, auxSlotId, 0, sendFilterId);
+                    if (getAuxSlotId() != 0) {
+                        alSource3i(sourceId, AL_AUXILIARY_SEND_FILTER, getAuxSlotId(), 0, sendFilterId);
                     }
 
                     // Separate filter for echo send — prevents reverb filter
@@ -1637,8 +1177,8 @@ public class AudioEngine {
                     alFilteri(echoSendFilterId, AL_FILTER_TYPE, AL_FILTER_LOWPASS);
                     alFilterf(echoSendFilterId, AL_LOWPASS_GAIN, 1.0f);
                     alFilterf(echoSendFilterId, AL_LOWPASS_GAINHF, 1.0f);
-                    if (slapbackAuxSlotId != 0) {
-                        alSource3i(sourceId, AL_AUXILIARY_SEND_FILTER, slapbackAuxSlotId, 1, echoSendFilterId);
+                    if (getSlapbackAuxSlotId() != 0) {
+                        alSource3i(sourceId, AL_AUXILIARY_SEND_FILTER, getSlapbackAuxSlotId(), 1, echoSendFilterId);
                     }
                 } catch (Exception e) {
                     System.err.println("AudioEngine: EFX filter/send setup failed: " + e.getMessage());
@@ -1731,7 +1271,7 @@ public class AudioEngine {
             int gen = trackGeneration;
             java.util.concurrent.CompletableFuture.supplyAsync(() -> {
                         try {
-                            return acousticScanner.scanVenue(world, clusterCenters);
+                            return effects.scanVenue(world, clusterCenters);
                         } catch (Exception e) {
                             System.err.println("Venue scan crash: " + e.getMessage());
                             return null;
@@ -1745,13 +1285,7 @@ public class AudioEngine {
                             preset -> {
                                 if (gen != trackGeneration) return; // stale callback
                                 if (preset != null) {
-                                    this.venuePreset = preset;
-                                    this.storedVenueDescriptor = acousticScanner.getLastDescriptor();
-                                    this.storedVenueProbePos = acousticScanner.getLastProbePos();
-                                    this.lastConfigGeneration =
-                                            com.audiophilecraft.config.LiveTuningConfig.getReloadGeneration();
-                                    applyVenueReverbToEfx();
-                                    applySlapbackConfig();
+                                    effects.applyScannedVenuePreset(preset);
                                 }
                                 startPlayback.run();
                             },
