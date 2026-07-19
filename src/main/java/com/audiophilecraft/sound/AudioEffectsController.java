@@ -25,7 +25,7 @@ final class AudioEffectsController {
     private boolean initialized;
     private AdvancedAcousticScanner.VenuePreset venuePreset;
     private boolean venuePresetApplied;
-    private volatile float currentReflectionGain = -1.0f;
+    private volatile float currentReflectionGainMultiplier = 1.0f;
     private volatile float currentReflectionDelay = -1.0f;
     private volatile float currentSlapbackGain;
     private AdvancedAcousticScanner.VenueDescriptor storedVenueDescriptor;
@@ -174,6 +174,7 @@ final class AudioEffectsController {
         float gain = preset.gain * config.reverb_gainMultiplier;
         float gainHF = preset.gainHF * config.reverb_gainHFMultiplier;
         float reflectionGain = preset.reflectionsGain * config.reverb_reflGainMultiplier;
+        reflectionGain *= currentReflectionGainMultiplier;
         float lateGain = preset.lateReverbGain * config.reverb_lateGainMultiplier;
         float density = config.reverb_densityOverride >= 0 ? config.reverb_densityOverride : preset.density;
         float diffusion = config.reverb_diffusionOverride >= 0 ? config.reverb_diffusionOverride : preset.diffusion;
@@ -190,10 +191,9 @@ final class AudioEffectsController {
         roomBus.setFloat(AL_EAXREVERB_DECAY_HFRATIO, AL_REVERB_DECAY_HFRATIO, preset.decayHFRatio);
         roomBus.setFloat(AL_EAXREVERB_DECAY_LFRATIO, -1, preset.decayLFRatio);
         roomBus.setInt(AL_EAXREVERB_DECAY_HFLIMIT, AL_REVERB_DECAY_HFLIMIT, preset.decayHFLimit ? 1 : 0);
-        if (currentReflectionGain >= 0.0f && currentReflectionDelay >= 0.0f) {
-            roomBus.setFloat(AL_EAXREVERB_REFLECTIONS_GAIN, AL_REVERB_REFLECTIONS_GAIN, currentReflectionGain);
-            roomBus.setFloat(AL_EAXREVERB_REFLECTIONS_DELAY, AL_REVERB_REFLECTIONS_DELAY, currentReflectionDelay);
-        }
+        float reflectionDelay = currentReflectionDelay >= 0.0f ? currentReflectionDelay : preset.reflectionsDelay;
+        roomBus.setFloat(AL_EAXREVERB_REFLECTIONS_GAIN, AL_REVERB_REFLECTIONS_GAIN, reflectionGain);
+        roomBus.setFloat(AL_EAXREVERB_REFLECTIONS_DELAY, AL_REVERB_REFLECTIONS_DELAY, reflectionDelay);
         roomBus.setPan(AL_EAXREVERB_REFLECTIONS_PAN, ZERO_PAN);
         roomBus.setFloat(AL_EAXREVERB_LATE_REVERB_GAIN, AL_REVERB_LATE_REVERB_GAIN, lateGain);
         roomBus.setFloat(AL_EAXREVERB_LATE_REVERB_DELAY, AL_REVERB_LATE_REVERB_DELAY, preset.lateReverbDelay);
@@ -228,7 +228,6 @@ final class AudioEffectsController {
 
     private void updateListenerReflections(World world, Vec3d listenerPosition) {
         if (venuePreset == null || !roomBuses[PRIMARY_ROOM_BUS].isAvailable()) return;
-        com.audiophilecraft.config.LiveTuningConfig config = com.audiophilecraft.config.LiveTuningConfig.get();
         float[][] directions = {
             {1, 0, 0}, {-1, 0, 0},
             {0, 1, 0}, {0, -1, 0},
@@ -256,9 +255,7 @@ final class AudioEffectsController {
 
         float reflectionDelay = Math.max(0.001f, Math.min(minimumDistance * 2.0f / 2000.0f, 0.3f));
         float distanceFactor = Math.max(0.0f, Math.min(1.0f, 1.0f - minimumDistance / maxDistance));
-        float baseReflectionGain = venuePreset.reflectionsGain * config.reverb_reflGainMultiplier;
-        float reflectionGain = baseReflectionGain * (1.0f + distanceFactor * 0.5f);
-        currentReflectionGain = Math.max(0.0f, Math.min(3.16f, reflectionGain));
+        currentReflectionGainMultiplier = 1.0f + distanceFactor * 0.5f;
         currentReflectionDelay = reflectionDelay;
     }
 
@@ -352,6 +349,8 @@ final class AudioEffectsController {
         venuePresetApplied = false;
         storedVenueDescriptor = null;
         storedVenueProbePos = null;
+        currentReflectionGainMultiplier = 1.0f;
+        currentReflectionDelay = -1.0f;
         java.util.Arrays.fill(roomBusProfiles, null);
     }
 

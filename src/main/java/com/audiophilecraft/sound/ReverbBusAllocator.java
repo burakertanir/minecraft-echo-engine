@@ -13,6 +13,8 @@ import net.minecraft.util.math.Vec3d;
 final class ReverbBusAllocator {
     private static final double SIMILAR_PROFILE_THRESHOLD = 0.30;
     private static final double REPLACEMENT_SCORE_ADVANTAGE = 1.25;
+    private static final double OPEN_AIR_THRESHOLD = 0.25;
+    private static final double ENCLOSED_OPENNESS_THRESHOLD = 0.12;
     private static final long EVALUATION_INTERVAL_NANOS = 250_000_000L;
     private static final long CANDIDATE_STABILITY_NANOS = 750_000_000L;
     private static final long MINIMUM_BUS_HOLD_NANOS = 2_500_000_000L;
@@ -272,7 +274,9 @@ final class ReverbBusAllocator {
             if (profile == null) continue;
 
             double distance = Math.sqrt(group.center().squaredDistanceTo(listener));
-            double score = Math.sqrt(entry.getValue()) / (1.0 + distance / 16.0);
+            double sourceWeight = 1.0 + 0.35 * Math.min(1.0, Math.log(Math.max(1, entry.getValue())) / Math.log(16.0));
+            double normalizedDistance = distance / 16.0;
+            double score = sourceWeight / (1.0 + normalizedDistance * normalizedDistance);
             candidates.add(new Candidate(group, profile, score));
         }
         candidates.sort(candidateComparator());
@@ -344,7 +348,15 @@ final class ReverbBusAllocator {
     }
 
     static boolean areSimilar(AcousticProfile first, AcousticProfile second) {
-        return first != null && second != null && profileDistance(first, second) <= SIMILAR_PROFILE_THRESHOLD;
+        if (first == null || second == null) return false;
+        AdvancedAcousticScanner.VenueDescriptor a = first.descriptor();
+        AdvancedAcousticScanner.VenueDescriptor b = second.descriptor();
+        boolean firstOpenAndSecondEnclosed =
+                a.openness >= OPEN_AIR_THRESHOLD && b.openness <= ENCLOSED_OPENNESS_THRESHOLD;
+        boolean secondOpenAndFirstEnclosed =
+                b.openness >= OPEN_AIR_THRESHOLD && a.openness <= ENCLOSED_OPENNESS_THRESHOLD;
+        if (firstOpenAndSecondEnclosed || secondOpenAndFirstEnclosed) return false;
+        return profileDistance(first, second) <= SIMILAR_PROFILE_THRESHOLD;
     }
 
     static double profileDistance(AcousticProfile first, AcousticProfile second) {
