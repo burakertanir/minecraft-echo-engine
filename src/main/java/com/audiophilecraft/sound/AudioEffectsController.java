@@ -17,6 +17,7 @@ final class AudioEffectsController {
     private final AdvancedAcousticScanner acousticScanner = new AdvancedAcousticScanner();
     private final RoomReverbBus[] roomBuses = {new RoomReverbBus(), new RoomReverbBus()};
     private final AcousticProfile[] roomBusProfiles = new AcousticProfile[2];
+    private final float[] roomBusMixGains = {1.0f, 1.0f};
 
     private float smoothedMasterOcclusion = 1.0f;
     private int slapbackEffectId;
@@ -30,6 +31,7 @@ final class AudioEffectsController {
     private AdvancedAcousticScanner.VenueDescriptor storedVenueDescriptor;
     private Vec3d storedVenueProbePos;
     private long lastConfigGeneration;
+    private boolean effectSlotsMuted;
 
     int getAuxSlotId() {
         return getRoomAuxSlotId(PRIMARY_ROOM_BUS);
@@ -44,11 +46,20 @@ final class AudioEffectsController {
         return busIndex >= 0 && busIndex < roomBuses.length && roomBuses[busIndex].isAvailable();
     }
 
+    void setRoomBusMixGain(int busIndex, float gain) {
+        if (busIndex < 0 || busIndex >= roomBuses.length) return;
+        roomBusMixGains[busIndex] = Math.max(0.0f, Math.min(1.0f, gain));
+        roomBuses[busIndex].setSlotGain(effectSlotsMuted ? 0.0f : roomBusMixGains[busIndex]);
+    }
+
     void assignRoomBusProfile(int busIndex, AcousticProfile profile) {
         if (busIndex < 0 || busIndex >= roomBuses.length || profile == null) return;
-        roomBusProfiles[busIndex] = profile;
+        AcousticProfile currentProfile = new AcousticProfile(
+                profile.descriptor(),
+                acousticScanner.descriptorToPreset(profile.descriptor(), profile.probePosition()));
+        roomBusProfiles[busIndex] = currentProfile;
         if (roomBuses[busIndex].isAvailable()) {
-            applyVenueReverb(roomBuses[busIndex], profile.preset());
+            applyVenueReverb(roomBuses[busIndex], currentProfile.preset());
         }
     }
 
@@ -321,15 +332,17 @@ final class AudioEffectsController {
     }
 
     void muteEffectSlots() {
-        for (RoomReverbBus roomBus : roomBuses) {
-            roomBus.setSlotGain(0.0f);
+        effectSlotsMuted = true;
+        for (int busIndex = 0; busIndex < roomBuses.length; busIndex++) {
+            roomBuses[busIndex].setSlotGain(0.0f);
         }
         if (slapbackAuxSlotId != 0) alAuxiliaryEffectSlotf(slapbackAuxSlotId, AL_EFFECTSLOT_GAIN, 0.0f);
     }
 
     void resumeEffectSlots() {
-        for (RoomReverbBus roomBus : roomBuses) {
-            roomBus.setSlotGain(1.0f);
+        effectSlotsMuted = false;
+        for (int busIndex = 0; busIndex < roomBuses.length; busIndex++) {
+            roomBuses[busIndex].setSlotGain(roomBusMixGains[busIndex]);
         }
         if (slapbackAuxSlotId != 0) alAuxiliaryEffectSlotf(slapbackAuxSlotId, AL_EFFECTSLOT_GAIN, 1.0f);
     }
@@ -378,6 +391,7 @@ final class AudioEffectsController {
         cleanupNativeEffects();
         currentSlapbackGain = 0.0f;
         initialized = false;
+        effectSlotsMuted = false;
     }
 
     private void cleanupNativeEffects() {

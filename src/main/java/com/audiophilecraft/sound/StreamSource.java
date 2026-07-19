@@ -1017,10 +1017,14 @@ public class StreamSource {
             // the energy in the effect's input buffer, causing clipping and a massive WET/DRY imbalance.
             // We divide by sqrt(clusterSize) to normalize the acoustic power for Reverb.
             sendGain /= (float) Math.max(1.0, Math.sqrt(this.clusterSize));
+            float roomSendGain = sendGain;
+            if (emitterGroup != null) {
+                roomSendGain *= emitterGroup.roomSendGain();
+            }
 
             // Apply filter for Room Send
             synchronized (this) {
-                org.lwjgl.openal.EXTEfx.alFilterf(sendFilterId, org.lwjgl.openal.EXTEfx.AL_LOWPASS_GAIN, sendGain);
+                org.lwjgl.openal.EXTEfx.alFilterf(sendFilterId, org.lwjgl.openal.EXTEfx.AL_LOWPASS_GAIN, roomSendGain);
                 org.lwjgl.openal.EXTEfx.alFilterf(
                         sendFilterId, org.lwjgl.openal.EXTEfx.AL_LOWPASS_GAINHF, reverbSendHF);
 

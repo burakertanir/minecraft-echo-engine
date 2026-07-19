@@ -180,7 +180,15 @@ public class AudioEngine {
     }
 
     void refreshReverbBusAssignments() {
-        reverbBusAllocator.allocate(sessions.values(), listenerPos);
+        boolean hasSources = false;
+        for (PlaybackSession session : sessions.values()) {
+            if (!session.getStreamSources().isEmpty()) {
+                hasSources = true;
+                break;
+            }
+        }
+        if (hasSources) reverbBusAllocator.allocate(sessions.values(), listenerPos);
+        else reverbBusAllocator.reset();
     }
 
     public void initEfx() {
@@ -478,6 +486,8 @@ public class AudioEngine {
         // scanAtPosition() later.
         // analyzeEnvironment(world);
 
+        reverbBusAllocator.update(sessions.values(), listenerPos);
+
         // Update sources for ALL playing sessions
         boolean removedSession = false;
         java.util.Iterator<java.util.Map.Entry<java.util.UUID, PlaybackSession>> sessionIterator =
@@ -591,7 +601,10 @@ public class AudioEngine {
     }
 
     synchronized void stopSessionContents(PlaybackSession session) {
-        if (session != null) session.stopAll();
+        if (session != null) {
+            session.stopAll();
+            refreshReverbBusAssignments();
+        }
     }
 
     /**
@@ -616,6 +629,7 @@ public class AudioEngine {
             session.stopAll();
         }
         sessions.clear();
+        reverbBusAllocator.reset();
         checkAndShutdownThread();
     }
 
@@ -777,6 +791,7 @@ public class AudioEngine {
      * Does NOT stop sessions — those are managed per-player.
      */
     public void cleanupEfx() {
+        reverbBusAllocator.reset();
         effects.cleanup();
     }
 

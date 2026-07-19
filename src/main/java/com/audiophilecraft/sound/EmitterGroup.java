@@ -10,6 +10,8 @@ public final class EmitterGroup {
     private final Vec3d center;
     private volatile AcousticProfile acousticProfile;
     private volatile int roomBusIndex;
+    private volatile float roomSendGain = 1.0f;
+    private volatile float targetRoomSendGain = 1.0f;
 
     EmitterGroup(List<BlockPos> speakerPositions) {
         if (speakerPositions == null || speakerPositions.isEmpty()) {
@@ -41,6 +43,34 @@ public final class EmitterGroup {
 
     void assignRoomBus(int busIndex) {
         roomBusIndex = Math.max(0, Math.min(1, busIndex));
+    }
+
+    public float roomSendGain() {
+        return roomSendGain;
+    }
+
+    void setRoomSendTarget(float targetGain) {
+        targetRoomSendGain = clamp01(targetGain);
+    }
+
+    void updateRoomSendGain(float deltaSeconds, float fadeOutSeconds, float fadeInSeconds) {
+        float target = targetRoomSendGain;
+        float duration = target < roomSendGain ? fadeOutSeconds : fadeInSeconds;
+        if (duration <= 0.0f) {
+            roomSendGain = target;
+            return;
+        }
+
+        float maximumStep = Math.max(0.0f, deltaSeconds) / duration;
+        if (roomSendGain < target) {
+            roomSendGain = Math.min(target, roomSendGain + maximumStep);
+        } else if (roomSendGain > target) {
+            roomSendGain = Math.max(target, roomSendGain - maximumStep);
+        }
+    }
+
+    private static float clamp01(float value) {
+        return Math.max(0.0f, Math.min(1.0f, value));
     }
 
     private static Vec3d calculateCenter(List<BlockPos> positions) {
