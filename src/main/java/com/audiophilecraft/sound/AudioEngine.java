@@ -468,6 +468,7 @@ public class AudioEngine {
         // analyzeEnvironment(world);
 
         // Update sources for ALL playing sessions
+        boolean removedSession = false;
         java.util.Iterator<java.util.Map.Entry<java.util.UUID, PlaybackSession>> sessionIterator =
                 sessions.entrySet().iterator();
         while (sessionIterator.hasNext()) {
@@ -492,11 +493,15 @@ public class AudioEngine {
                 // URL state.
                 if (session.getStreamSources().isEmpty()) {
                     playback.cancelUrlRequest(entry.getKey());
-                    session.stopAll();
-                    sessionIterator.remove();
+                    synchronized (this) {
+                        session.stopAll();
+                        sessionIterator.remove();
+                    }
+                    removedSession = true;
                 }
             }
         }
+        if (removedSession) checkAndShutdownThread();
 
         // Apply Listener-based Early Reflections dynamically every tick
         boolean anyPlaying = false;
@@ -571,10 +576,14 @@ public class AudioEngine {
         effects.muteEffectSlots();
     }
 
+    synchronized void stopSessionContents(PlaybackSession session) {
+        if (session != null) session.stopAll();
+    }
+
     /**
      * Stops a specific session immediately.
      */
-    public void stopSession(java.util.UUID sessionUUID) {
+    public synchronized void stopSession(java.util.UUID sessionUUID) {
         playback.cancelUrlRequest(sessionUUID);
         PlaybackSession session = sessions.remove(sessionUUID);
         if (session != null) {
@@ -595,10 +604,7 @@ public class AudioEngine {
         checkAndShutdownThread();
     }
 
-    private void checkAndShutdownThread() {
-        // Clear venue preset so reverb falls back to listener-based scanner
-        effects.clearVenueState();
-
+    private synchronized void checkAndShutdownThread() {
         boolean anyPlaying = false;
         for (PlaybackSession s : sessions.values()) {
             if (s.isPlaying()) {
@@ -606,14 +612,17 @@ public class AudioEngine {
                 break;
             }
         }
-        if (!anyPlaying && audioThread != null) {
-            audioThread.shutdownNow();
-            try {
-                audioThread.awaitTermination(50, java.util.concurrent.TimeUnit.MILLISECONDS);
-            } catch (InterruptedException ie) {
-                Thread.currentThread().interrupt();
+        if (!anyPlaying) {
+            effects.clearVenueState();
+            if (audioThread != null) {
+                audioThread.shutdownNow();
+                try {
+                    audioThread.awaitTermination(50, java.util.concurrent.TimeUnit.MILLISECONDS);
+                } catch (InterruptedException ie) {
+                    Thread.currentThread().interrupt();
+                }
+                audioThread = null;
             }
-            audioThread = null;
         }
     }
 
@@ -859,8 +868,8 @@ public class AudioEngine {
     }
 
     public void startPlaybackWithVenueScan(
-            PlaybackSession session, World world, List<BlockPos> speakers, boolean atomicStart) {
-        playback.startPlaybackWithVenueScan(session, world, speakers, atomicStart);
+            PlaybackSession session, World world, List<BlockPos> speakers, boolean startAfterScan) {
+        playback.startPlaybackWithVenueScan(session, world, speakers, startAfterScan);
     }
 
     public void playFromPcmData(
@@ -1027,11 +1036,7 @@ public class AudioEngine {
     public void startSessionPlayback(java.util.UUID sessionUUID) {
         PlaybackSession session = sessions.get(sessionUUID);
         if (session != null) {
-            session.setPlaying(true);
-            session.setPaused(false);
-            for (AudioStreamBuffer buffer : session.getStreamBuffers().values()) {
-                if (buffer.sampleRate > 0) buffer.syncToTime(BUFFER_LOOKAHEAD);
-            }
+            playback.startPreparedSession(session);
         }
     }
 

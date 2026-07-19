@@ -298,6 +298,12 @@ public class PlaybackSession {
     // --- Cleanup ---
 
     public void stopAll() {
+        isPlaying = false;
+        isPaused = false;
+        isManuallyPaused = false;
+        streamStartTime = 0;
+        playUrl = ""; // Clear stale URL so the UI won't confuse "same URL stopped" with "still active"
+
         for (StreamSource source : streamSources) {
             if (source.isValid) {
                 alSourceStop(source.sourceId);
@@ -309,11 +315,6 @@ public class PlaybackSession {
             buffer.cleanup();
         }
         streamBuffers.clear();
-        isPlaying = false;
-        isPaused = false;
-        isManuallyPaused = false;
-        playUrl = ""; // Clear stale URL so the UI won't confuse "same URL stopped" with "still active"
-        streamStartTime = 0;
         venuePreset = null;
         venuePresetApplied = false;
     }
@@ -345,8 +346,6 @@ public class PlaybackSession {
 
         try {
             engine.prepareStreamBuffers(this, trackId);
-            setPlaying(true);
-            setPaused(false);
             for (AudioStreamBuffer buffer : streamBuffers.values()) {
                 if (buffer.sampleRate > 0) buffer.syncToTime(BUFFER_LOOKAHEAD);
             }
@@ -355,7 +354,7 @@ public class PlaybackSession {
             int[] counts = SpeakerClusterer.countSpeakerTypes(speakers, world);
             List<List<BlockPos>> clusters = SpeakerClusterer.clusterSpeakers(speakers);
             engine.createSourcesFromClusters(this, clusters, counts, world, power, inputGain);
-            engine.startPlaybackWithVenueScan(this, world, speakers, false);
+            engine.startPlaybackWithVenueScan(this, world, speakers, true);
         } catch (Exception e) {
             e.printStackTrace();
         }

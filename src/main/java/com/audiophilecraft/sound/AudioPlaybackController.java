@@ -95,8 +95,9 @@ final class AudioPlaybackController {
     }
 
     void playTrack(UUID sessionUUID, String trackId, List<BlockPos> speakers, float power, float inputGain) {
+        cancelUrlRequest(sessionUUID);
         PlaybackSession session = sessions.computeIfAbsent(sessionUUID, key -> new PlaybackSession(engine));
-        session.stopAll();
+        engine.stopSessionContents(session);
         engine.loadPersistedEqIntoSession(session, sessionUUID);
         session.setPlayUrl("");
         resetGlobalVenueState(speakers);
@@ -149,7 +150,7 @@ final class AudioPlaybackController {
         InternetAudioLoader loader = InternetAudioLoader.getInstance();
         PlaybackSession existingSession = sessions.get(sessionUUID);
         if (existingSession != null) {
-            existingSession.stopAll();
+            engine.stopSessionContents(existingSession);
         }
 
         long startedRequestId = loader.loadTrackStreaming(url, new InternetAudioLoader.StreamingCallback() {
@@ -172,7 +173,7 @@ final class AudioPlaybackController {
                 sharedBuffer.initStreaming(pcmInterleaved, decodedFrames, totalExpected);
 
                 PlaybackSession session = sessions.computeIfAbsent(sessionUUID, key -> new PlaybackSession(engine));
-                session.stopAll();
+                engine.stopSessionContents(session);
                 engine.loadPersistedEqIntoSession(session, sessionUUID);
                 session.setPlayUrl(url);
                 session.getStreamBuffers().clear();
@@ -387,27 +388,9 @@ final class AudioPlaybackController {
     }
 
     void startPlaybackWithVenueScan(
-            PlaybackSession session, World world, List<BlockPos> speakers, boolean atomicStart) {
+            PlaybackSession session, World world, List<BlockPos> speakers, boolean startAfterScan) {
         Runnable startPlayback = () -> {
-            session.setStreamStartTime(System.nanoTime());
-            engine.syncListenerToCamera();
-
-            if (atomicStart) {
-                java.nio.IntBuffer sourceIds =
-                        BufferUtils.createIntBuffer(session.getStreamSources().size());
-                for (StreamSource source : session.getStreamSources()) {
-                    alSourcei(source.sourceId, AL_LOOPING, AL_FALSE);
-                    sourceIds.put(source.sourceId);
-                }
-                sourceIds.flip();
-                alSourcePlayv(sourceIds);
-            } else {
-                for (StreamSource source : session.getStreamSources()) {
-                    source.start();
-                }
-            }
-
-            engine.startAudioThread();
+            if (startAfterScan) startPreparedSession(session);
         };
 
         if (!session.getStreamSources().isEmpty() && world != null) {
@@ -453,10 +436,39 @@ final class AudioPlaybackController {
         }
     }
 
+    void startPreparedSession(PlaybackSession session) {
+        if (session == null) return;
+
+        synchronized (engine) {
+            if (session.isPlaying() || session.getStreamSources().isEmpty()) return;
+
+            for (AudioStreamBuffer buffer : session.getStreamBuffers().values()) {
+                if (buffer.sampleRate > 0) buffer.syncToTime(AudioEngine.BUFFER_LOOKAHEAD);
+            }
+
+            session.setStreamStartTime(System.nanoTime());
+            engine.syncListenerToCamera();
+
+            java.nio.IntBuffer sourceIds =
+                    BufferUtils.createIntBuffer(session.getStreamSources().size());
+            for (StreamSource source : session.getStreamSources()) {
+                alSourcei(source.sourceId, AL_LOOPING, AL_FALSE);
+                sourceIds.put(source.sourceId);
+            }
+            sourceIds.flip();
+            alSourcePlayv(sourceIds);
+
+            session.setPlaying(true);
+            session.setPaused(false);
+            engine.startAudioThread();
+        }
+    }
+
     void playFromPcmData(
             UUID sessionUUID, short[] pcmData, int sampleRate, List<BlockPos> speakers, float power, float inputGain) {
+        cancelUrlRequest(sessionUUID);
         PlaybackSession session = sessions.computeIfAbsent(sessionUUID, key -> new PlaybackSession(engine));
-        session.stopAll();
+        engine.stopSessionContents(session);
         engine.loadPersistedEqIntoSession(session, sessionUUID);
         resetGlobalVenueState(speakers);
 
@@ -510,10 +522,6 @@ final class AudioPlaybackController {
         List<List<BlockPos>> clusters = SpeakerClusterer.clusterSpeakers(speakers);
         createSourcesFromClusters(session, clusters, counts, world, power, inputGain);
 
-        if (startImmediately) {
-            session.setPlaying(true);
-            session.setPaused(false);
-        }
         startPlaybackWithVenueScan(session, world, speakers, startImmediately);
     }
 }
