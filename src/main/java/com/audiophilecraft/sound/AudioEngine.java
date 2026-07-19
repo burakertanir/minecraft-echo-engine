@@ -35,6 +35,7 @@ public class AudioEngine {
     // getActiveSession().isSeeking() in PlaybackSession
 
     private final AudioEffectsController effects = new AudioEffectsController();
+    private final ReverbBusAllocator reverbBusAllocator = new ReverbBusAllocator(effects);
     private final AudioPlaybackController playback = new AudioPlaybackController(this, sessions, effects);
 
     // Streaming System
@@ -170,6 +171,16 @@ public class AudioEngine {
 
     public int getAuxSlotId() {
         return effects.getAuxSlotId();
+    }
+
+    public int getAuxSlotId(EmitterGroup emitterGroup) {
+        int busIndex = emitterGroup != null ? emitterGroup.roomBusIndex() : 0;
+        int slotId = effects.getRoomAuxSlotId(busIndex);
+        return slotId != 0 ? slotId : effects.getAuxSlotId();
+    }
+
+    void refreshReverbBusAssignments() {
+        reverbBusAllocator.allocate(sessions.values(), listenerPos);
     }
 
     public void initEfx() {
@@ -501,7 +512,10 @@ public class AudioEngine {
                 }
             }
         }
-        if (removedSession) checkAndShutdownThread();
+        if (removedSession) {
+            refreshReverbBusAssignments();
+            checkAndShutdownThread();
+        }
 
         // Apply Listener-based Early Reflections dynamically every tick
         boolean anyPlaying = false;
@@ -589,6 +603,7 @@ public class AudioEngine {
         if (session != null) {
             session.stopAll();
         }
+        refreshReverbBusAssignments();
         checkAndShutdownThread();
     }
 

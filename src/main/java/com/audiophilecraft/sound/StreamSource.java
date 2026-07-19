@@ -1028,7 +1028,7 @@ public class StreamSource {
                 org.lwjgl.openal.AL11.alSource3i(
                         sourceId,
                         org.lwjgl.openal.EXTEfx.AL_AUXILIARY_SEND_FILTER,
-                        AudioEngine.getInstance().getAuxSlotId(),
+                        AudioEngine.getInstance().getAuxSlotId(emitterGroup),
                         0,
                         sendFilterId);
 

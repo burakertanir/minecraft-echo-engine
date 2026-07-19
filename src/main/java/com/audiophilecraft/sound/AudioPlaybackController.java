@@ -423,6 +423,7 @@ final class AudioPlaybackController {
                                 if (sceneResult != null) {
                                     applyGroupProfiles(emitterGroups, sceneResult);
                                     effects.applyScannedVenuePreset(sceneResult.combinedResult());
+                                    engine.refreshReverbBusAssignments();
                                 }
                                 startPlayback.run();
                             },

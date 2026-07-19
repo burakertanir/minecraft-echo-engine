@@ -16,6 +16,7 @@ final class AudioEffectsController {
 
     private final AdvancedAcousticScanner acousticScanner = new AdvancedAcousticScanner();
     private final RoomReverbBus[] roomBuses = {new RoomReverbBus(), new RoomReverbBus()};
+    private final AcousticProfile[] roomBusProfiles = new AcousticProfile[2];
 
     private float smoothedMasterOcclusion = 1.0f;
     private int slapbackEffectId;
@@ -37,6 +38,18 @@ final class AudioEffectsController {
     int getRoomAuxSlotId(int busIndex) {
         if (busIndex < 0 || busIndex >= roomBuses.length) return 0;
         return roomBuses[busIndex].auxSlotId();
+    }
+
+    boolean isRoomBusAvailable(int busIndex) {
+        return busIndex >= 0 && busIndex < roomBuses.length && roomBuses[busIndex].isAvailable();
+    }
+
+    void assignRoomBusProfile(int busIndex, AcousticProfile profile) {
+        if (busIndex < 0 || busIndex >= roomBuses.length || profile == null) return;
+        roomBusProfiles[busIndex] = profile;
+        if (roomBuses[busIndex].isAvailable()) {
+            applyVenueReverb(roomBuses[busIndex], profile.preset());
+        }
     }
 
     int getSlapbackAuxSlotId() {
@@ -123,25 +136,36 @@ final class AudioEffectsController {
         long currentGeneration = com.audiophilecraft.config.LiveTuningConfig.getReloadGeneration();
         if (currentGeneration != lastConfigGeneration && storedVenueDescriptor != null && storedVenueProbePos != null) {
             venuePreset = acousticScanner.descriptorToPreset(storedVenueDescriptor, storedVenueProbePos);
+            for (int busIndex = 0; busIndex < roomBusProfiles.length; busIndex++) {
+                AcousticProfile profile = roomBusProfiles[busIndex];
+                if (profile == null) continue;
+                AdvancedAcousticScanner.VenuePreset refreshedPreset =
+                        acousticScanner.descriptorToPreset(profile.descriptor(), profile.probePosition());
+                roomBusProfiles[busIndex] = new AcousticProfile(profile.descriptor(), refreshedPreset);
+            }
             lastConfigGeneration = currentGeneration;
             // Reattaching the echo effect resets its delay buffer, so update it only on reload.
             applySlapbackConfig();
         }
 
-        applyVenueReverb();
+        for (int busIndex = 0; busIndex < roomBuses.length; busIndex++) {
+            AcousticProfile profile = roomBusProfiles[busIndex];
+            if (profile != null && roomBuses[busIndex].isAvailable()) {
+                applyVenueReverb(roomBuses[busIndex], profile.preset());
+            }
+        }
         venuePresetApplied = true;
     }
 
-    private void applyVenueReverb() {
+    private void applyVenueReverb(RoomReverbBus roomBus, AdvancedAcousticScanner.VenuePreset preset) {
         com.audiophilecraft.config.LiveTuningConfig config = com.audiophilecraft.config.LiveTuningConfig.get();
-        float decayTime = venuePreset.decayTime * config.reverb_decayMultiplier;
-        float gain = venuePreset.gain * config.reverb_gainMultiplier;
-        float gainHF = venuePreset.gainHF * config.reverb_gainHFMultiplier;
-        float reflectionGain = venuePreset.reflectionsGain * config.reverb_reflGainMultiplier;
-        float lateGain = venuePreset.lateReverbGain * config.reverb_lateGainMultiplier;
-        float density = config.reverb_densityOverride >= 0 ? config.reverb_densityOverride : venuePreset.density;
-        float diffusion =
-                config.reverb_diffusionOverride >= 0 ? config.reverb_diffusionOverride : venuePreset.diffusion;
+        float decayTime = preset.decayTime * config.reverb_decayMultiplier;
+        float gain = preset.gain * config.reverb_gainMultiplier;
+        float gainHF = preset.gainHF * config.reverb_gainHFMultiplier;
+        float reflectionGain = preset.reflectionsGain * config.reverb_reflGainMultiplier;
+        float lateGain = preset.lateReverbGain * config.reverb_lateGainMultiplier;
+        float density = config.reverb_densityOverride >= 0 ? config.reverb_densityOverride : preset.density;
+        float diffusion = config.reverb_diffusionOverride >= 0 ? config.reverb_diffusionOverride : preset.diffusion;
 
         decayTime = Math.max(0.1f, Math.min(20.0f, decayTime));
         gain = Math.max(0.0f, Math.min(1.0f, gain));
@@ -151,31 +175,26 @@ final class AudioEffectsController {
         density = Math.max(0.0f, Math.min(1.0f, density));
         diffusion = Math.max(0.0f, Math.min(1.0f, diffusion));
 
-        for (RoomReverbBus roomBus : roomBuses) {
-            if (!roomBus.isAvailable()) continue;
-            roomBus.setFloat(AL_EAXREVERB_DECAY_TIME, AL_REVERB_DECAY_TIME, decayTime);
-            roomBus.setFloat(AL_EAXREVERB_DECAY_HFRATIO, AL_REVERB_DECAY_HFRATIO, venuePreset.decayHFRatio);
-            roomBus.setFloat(AL_EAXREVERB_DECAY_LFRATIO, -1, venuePreset.decayLFRatio);
-            roomBus.setInt(AL_EAXREVERB_DECAY_HFLIMIT, AL_REVERB_DECAY_HFLIMIT, venuePreset.decayHFLimit ? 1 : 0);
-            if (currentReflectionGain >= 0.0f && currentReflectionDelay >= 0.0f) {
-                roomBus.setFloat(AL_EAXREVERB_REFLECTIONS_GAIN, AL_REVERB_REFLECTIONS_GAIN, currentReflectionGain);
-                roomBus.setFloat(AL_EAXREVERB_REFLECTIONS_DELAY, AL_REVERB_REFLECTIONS_DELAY, currentReflectionDelay);
-            }
-            roomBus.setPan(AL_EAXREVERB_REFLECTIONS_PAN, ZERO_PAN);
-            roomBus.setFloat(AL_EAXREVERB_LATE_REVERB_GAIN, AL_REVERB_LATE_REVERB_GAIN, lateGain);
-            roomBus.setFloat(AL_EAXREVERB_LATE_REVERB_DELAY, AL_REVERB_LATE_REVERB_DELAY, venuePreset.lateReverbDelay);
-            roomBus.setPan(AL_EAXREVERB_LATE_REVERB_PAN, ZERO_PAN);
-            roomBus.setFloat(AL_EAXREVERB_DENSITY, AL_REVERB_DENSITY, density);
-            roomBus.setFloat(AL_EAXREVERB_DIFFUSION, AL_REVERB_DIFFUSION, diffusion);
-            roomBus.setFloat(AL_EAXREVERB_GAIN, AL_REVERB_GAIN, gain);
-            roomBus.setFloat(AL_EAXREVERB_GAINHF, AL_REVERB_GAINHF, gainHF);
-            roomBus.setFloat(AL_EAXREVERB_GAINLF, -1, venuePreset.gainLF);
-            roomBus.setFloat(
-                    AL_EAXREVERB_AIR_ABSORPTION_GAINHF,
-                    AL_REVERB_AIR_ABSORPTION_GAINHF,
-                    venuePreset.airAbsorptionGainHF);
-            roomBus.attachEffect();
+        roomBus.setFloat(AL_EAXREVERB_DECAY_TIME, AL_REVERB_DECAY_TIME, decayTime);
+        roomBus.setFloat(AL_EAXREVERB_DECAY_HFRATIO, AL_REVERB_DECAY_HFRATIO, preset.decayHFRatio);
+        roomBus.setFloat(AL_EAXREVERB_DECAY_LFRATIO, -1, preset.decayLFRatio);
+        roomBus.setInt(AL_EAXREVERB_DECAY_HFLIMIT, AL_REVERB_DECAY_HFLIMIT, preset.decayHFLimit ? 1 : 0);
+        if (currentReflectionGain >= 0.0f && currentReflectionDelay >= 0.0f) {
+            roomBus.setFloat(AL_EAXREVERB_REFLECTIONS_GAIN, AL_REVERB_REFLECTIONS_GAIN, currentReflectionGain);
+            roomBus.setFloat(AL_EAXREVERB_REFLECTIONS_DELAY, AL_REVERB_REFLECTIONS_DELAY, currentReflectionDelay);
         }
+        roomBus.setPan(AL_EAXREVERB_REFLECTIONS_PAN, ZERO_PAN);
+        roomBus.setFloat(AL_EAXREVERB_LATE_REVERB_GAIN, AL_REVERB_LATE_REVERB_GAIN, lateGain);
+        roomBus.setFloat(AL_EAXREVERB_LATE_REVERB_DELAY, AL_REVERB_LATE_REVERB_DELAY, preset.lateReverbDelay);
+        roomBus.setPan(AL_EAXREVERB_LATE_REVERB_PAN, ZERO_PAN);
+        roomBus.setFloat(AL_EAXREVERB_DENSITY, AL_REVERB_DENSITY, density);
+        roomBus.setFloat(AL_EAXREVERB_DIFFUSION, AL_REVERB_DIFFUSION, diffusion);
+        roomBus.setFloat(AL_EAXREVERB_GAIN, AL_REVERB_GAIN, gain);
+        roomBus.setFloat(AL_EAXREVERB_GAINHF, AL_REVERB_GAINHF, gainHF);
+        roomBus.setFloat(AL_EAXREVERB_GAINLF, -1, preset.gainLF);
+        roomBus.setFloat(
+                AL_EAXREVERB_AIR_ABSORPTION_GAINHF, AL_REVERB_AIR_ABSORPTION_GAINHF, preset.airAbsorptionGainHF);
+        roomBus.attachEffect();
     }
 
     private void applySlapbackConfig() {
@@ -320,6 +339,7 @@ final class AudioEffectsController {
         venuePresetApplied = false;
         storedVenueDescriptor = null;
         storedVenueProbePos = null;
+        java.util.Arrays.fill(roomBusProfiles, null);
     }
 
     void resetVenueState(List<BlockPos> speakers) {
@@ -348,7 +368,9 @@ final class AudioEffectsController {
         storedVenueProbePos = profile.probePosition();
         AdvancedAcousticScanner.publishDebugResult(result);
         lastConfigGeneration = com.audiophilecraft.config.LiveTuningConfig.getReloadGeneration();
-        applyVenueReverb();
+        for (int busIndex = 0; busIndex < roomBuses.length; busIndex++) {
+            assignRoomBusProfile(busIndex, profile);
+        }
         applySlapbackConfig();
     }
 

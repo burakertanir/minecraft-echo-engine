@@ -9,6 +9,7 @@ public final class EmitterGroup {
     private final List<BlockPos> speakerPositions;
     private final Vec3d center;
     private volatile AcousticProfile acousticProfile;
+    private volatile int roomBusIndex;
 
     EmitterGroup(List<BlockPos> speakerPositions) {
         if (speakerPositions == null || speakerPositions.isEmpty()) {
@@ -32,6 +33,14 @@ public final class EmitterGroup {
 
     void applyAcousticProfile(AcousticProfile profile) {
         this.acousticProfile = profile;
+    }
+
+    public int roomBusIndex() {
+        return roomBusIndex;
+    }
+
+    void assignRoomBus(int busIndex) {
+        roomBusIndex = Math.max(0, Math.min(1, busIndex));
     }
 
     private static Vec3d calculateCenter(List<BlockPos> positions) {
