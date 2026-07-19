@@ -233,38 +233,9 @@ public class AudioEngine {
         // listenerPos stores the REAL position for physics/distance calculations
         this.listenerPos = pos;
 
-        // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
-        // HRTF Y-AXIS FLATTENING (Listener-Side)
-        // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
-        // HRTF uses the elevation angle between listener and source positions.
-        // Adjusting source Y doesn't work well because HRTF is angle-based:
-        // if source is directly above, scaling Y doesn't change the 90Â° angle.
-        //
-        // Instead, we shift the LISTENER Y that OpenAL sees toward the
-        // weighted average Y of active sources. This directly changes the
-        // elevation angle for ALL sources simultaneously.
-        //
-        // Factor 0.4 = listener Y moves 40% toward the average source Y.
-        // Result: HRTF perceives sources as being much closer to ear level.
-        // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
-        float openAlListenerY = (float) pos.y;
-        PlaybackSession session = getActiveSession();
-        if (session != null && !session.getStreamSources().isEmpty()) {
-            double avgSourceY = 0;
-            int count = 0;
-            for (StreamSource s : session.getStreamSources()) {
-                if (s.isValid && !s.isFinished) {
-                    avgSourceY += s.getPos().getY() + 0.5;
-                    count++;
-                }
-            }
-            if (count > 0) {
-                avgSourceY /= count;
-                openAlListenerY = (float) (avgSourceY
-                        - (avgSourceY - pos.y) * com.audiophilecraft.config.LiveTuningConfig.get().hrtf_yFlatten);
-            }
-        }
-        listener.update(pos, yaw, pitch, openAlListenerY);
+        // Keep the listener at the real camera position. Each source compresses its
+        // own elevation independently so distant clusters cannot influence HRTF.
+        listener.update(pos, yaw, pitch);
     }
 
     void syncListenerToCamera() {
@@ -551,38 +522,24 @@ public class AudioEngine {
             effects.clearVenuePreset();
         }
 
-        // --- OCCLUSION CLUSTERING (REMOVED) ---
-        // Clustering was sharing occlusion values between speakers up to 8 blocks
-        // apart.
-        // If one speaker peeks out from behind a wall, the *entire cluster* instantly
-        // gets
-        // unoccluded, causing a sudden pop in volume and treble even for speakers still
-        // behind the wall.
-        // Raycast performance is already throttled per-speaker in StreamSource.java.
-
-        // If the player steps outside the building where the music is playing, the
-        // overall
-        // room reverb (the tail of the stadium or hall) should also be physically
-        // muffled and blocked
-        // by the walls. It should not hang in the player's ears like an artificial
-        // overlay.
-        float maxOcclusion = 0.0f;
-        int activeSourceCount = 0;
+        // Muffle each room bus independently when walls separate its emitters from
+        // the listener. Using the maximum keeps a bus open if any routed source has
+        // a clear path, while unrelated venues on the other bus remain unaffected.
+        float[] roomBusOcclusion = {0.0f, 0.0f};
+        boolean[] roomBusHasSources = {false, false};
         for (PlaybackSession session : sessions.values()) {
             for (StreamSource source : session.getStreamSources()) {
-                activeSourceCount++;
-                if (source.currentOcclusion > maxOcclusion) {
-                    maxOcclusion = source.currentOcclusion;
-                }
+                if (!source.isValid || source.getEmitterGroup() == null) continue;
+                int busIndex = source.getEmitterGroup().roomBusIndex();
+                if (busIndex < 0 || busIndex >= roomBusOcclusion.length) continue;
+                roomBusHasSources[busIndex] = true;
+                roomBusOcclusion[busIndex] = Math.max(roomBusOcclusion[busIndex], source.currentOcclusion);
             }
         }
-
-        // If not playing anything, keep maxOcclusion at 1.0 so ambient sound is normal
-        if (activeSourceCount == 0) {
-            maxOcclusion = 1.0f;
+        for (int busIndex = 0; busIndex < roomBusOcclusion.length; busIndex++) {
+            if (!roomBusHasSources[busIndex]) roomBusOcclusion[busIndex] = 1.0f;
         }
-
-        effects.updateMasterReverbOcclusion(maxOcclusion);
+        effects.updateRoomBusOcclusion(roomBusOcclusion);
 
         // Ensure venue reverb is applied if preset exists
         effects.ensureVenueReverb();

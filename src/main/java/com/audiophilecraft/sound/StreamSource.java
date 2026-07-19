@@ -174,6 +174,8 @@ public class StreamSource {
             // Initialize delay distance (cluster sync will be applied on first audio thread
             // tick)
             this.delayDistanceSnapshot = this.currentDistanceSnapshot;
+            updateOpenAlSpatialPosition(
+                    mc.player.getEyePos(), com.audiophilecraft.config.LiveTuningConfig.get().hrtf_yFlatten);
         }
 
         // Generate Buffers
@@ -617,51 +619,17 @@ public class StreamSource {
 
         float effectiveRefDist = this.refDist;
         float baseMaxDist = 60.0f; // Default base max distance
+        updateOpenAlSpatialPosition(listenerPos, cfg.hrtf_yFlatten);
 
         if ("sub".equals(this.speakerType)) {
             effectiveRefDist = cfg.sub_refDist * arrayMultiplier;
             baseMaxDist = cfg.sub_baseMaxDist * arrayMultiplier;
-
-            synchronized (this) {
-                org.lwjgl.openal.AL10.alSourcei(
-                        sourceId, org.lwjgl.openal.AL10.AL_SOURCE_RELATIVE, org.lwjgl.openal.AL10.AL_FALSE);
-                org.lwjgl.openal.AL10.alSource3f(
-                        sourceId,
-                        org.lwjgl.openal.AL10.AL_POSITION,
-                        (float) this.pos.getX() + 0.5f,
-                        (float) this.pos.getY() + 0.5f,
-                        (float) this.pos.getZ() + 0.5f);
-            }
-
         } else if ("mid".equals(this.speakerType)) {
             effectiveRefDist = cfg.mid_refDist * arrayMultiplier;
             baseMaxDist = cfg.mid_baseMaxDist * arrayMultiplier;
-
-            synchronized (this) {
-                org.lwjgl.openal.AL10.alSourcei(
-                        sourceId, org.lwjgl.openal.AL10.AL_SOURCE_RELATIVE, org.lwjgl.openal.AL10.AL_FALSE);
-                org.lwjgl.openal.AL10.alSource3f(
-                        sourceId,
-                        org.lwjgl.openal.AL10.AL_POSITION,
-                        (float) this.pos.getX() + 0.5f,
-                        (float) this.pos.getY() + 0.5f,
-                        (float) this.pos.getZ() + 0.5f);
-            }
-
         } else { // Line Array
             effectiveRefDist = cfg.line_refDist * arrayMultiplier;
             baseMaxDist = cfg.line_baseMaxDist * arrayMultiplier;
-
-            synchronized (this) {
-                org.lwjgl.openal.AL10.alSourcei(
-                        sourceId, org.lwjgl.openal.AL10.AL_SOURCE_RELATIVE, org.lwjgl.openal.AL10.AL_FALSE);
-                org.lwjgl.openal.AL10.alSource3f(
-                        sourceId,
-                        org.lwjgl.openal.AL10.AL_POSITION,
-                        (float) this.pos.getX() + 0.5f,
-                        (float) this.pos.getY() + 0.5f,
-                        (float) this.pos.getZ() + 0.5f);
-            }
         }
 
         // --- SOURCE RADIUS (Width/Spread) ---
@@ -1055,6 +1023,22 @@ public class StreamSource {
                             echoSendFilterId);
                 }
             }
+        }
+    }
+
+    private void updateOpenAlSpatialPosition(Vec3d listenerPos, float yFlatten) {
+        float sourceX = this.pos.getX() + 0.5f;
+        float sourceY = this.pos.getY() + 0.5f;
+        float sourceZ = this.pos.getZ() + 0.5f;
+        if (listenerPos != null) {
+            float clampedFlatten = Math.max(0.0f, Math.min(1.0f, yFlatten));
+            sourceY = (float) (listenerPos.y + (sourceY - listenerPos.y) * clampedFlatten);
+        }
+
+        synchronized (this) {
+            org.lwjgl.openal.AL10.alSourcei(
+                    sourceId, org.lwjgl.openal.AL10.AL_SOURCE_RELATIVE, org.lwjgl.openal.AL10.AL_FALSE);
+            org.lwjgl.openal.AL10.alSource3f(sourceId, org.lwjgl.openal.AL10.AL_POSITION, sourceX, sourceY, sourceZ);
         }
     }
 

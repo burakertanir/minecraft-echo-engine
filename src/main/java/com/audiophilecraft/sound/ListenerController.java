@@ -60,12 +60,12 @@ public class ListenerController {
     /**
      * Updates listener position and orientation. Called every render frame.
      */
-    public void update(Vec3d pos, float yaw, float pitch, float flattenedY) {
+    public void update(Vec3d pos, float yaw, float pitch) {
         this.position = pos;
         this.yaw = yaw;
         this.pitch = pitch;
 
-        alListener3f(AL_POSITION, (float) pos.x, flattenedY, (float) pos.z);
+        alListener3f(AL_POSITION, (float) pos.x, (float) pos.y, (float) pos.z);
         alListener3f(AL_VELOCITY, 0f, 0f, 0f);
 
         // Orientation calculation
