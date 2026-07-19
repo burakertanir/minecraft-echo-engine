@@ -237,7 +237,10 @@ final class AudioPlaybackController {
             World world,
             float power,
             float inputGain) {
+        session.getEmitterGroups().clear();
         for (List<BlockPos> cluster : clusters) {
+            EmitterGroup emitterGroup = new EmitterGroup(cluster);
+            session.getEmitterGroups().add(emitterGroup);
             int[] clusterCounts = SpeakerClusterer.countSpeakerTypes(cluster, world);
             StreamSource leaderSource = null;
             for (BlockPos position : cluster) {
@@ -378,6 +381,7 @@ final class AudioPlaybackController {
                         inputGain,
                         sampleShiftMs,
                         speakerCount,
+                        emitterGroup,
                         leaderSource,
                         cluster.size(),
                         channelMask);
@@ -394,19 +398,10 @@ final class AudioPlaybackController {
         };
 
         if (!session.getStreamSources().isEmpty() && world != null) {
-            List<List<BlockPos>> clusters = SpeakerClusterer.clusterSpeakers(speakers);
+            List<EmitterGroup> emitterGroups = List.copyOf(session.getEmitterGroups());
             List<Vec3d> clusterCenters = new ArrayList<>();
-            for (List<BlockPos> cluster : clusters) {
-                double centerX = 0;
-                double centerY = 0;
-                double centerZ = 0;
-                for (BlockPos position : cluster) {
-                    centerX += position.getX() + 0.5;
-                    centerY += position.getY() + 0.5;
-                    centerZ += position.getZ() + 0.5;
-                }
-                clusterCenters.add(
-                        new Vec3d(centerX / cluster.size(), centerY / cluster.size(), centerZ / cluster.size()));
+            for (EmitterGroup emitterGroup : emitterGroups) {
+                clusterCenters.add(emitterGroup.center());
             }
 
             int generation = trackGeneration;
@@ -423,16 +418,26 @@ final class AudioPlaybackController {
                         return null;
                     })
                     .thenAcceptAsync(
-                            preset -> {
+                            sceneResult -> {
                                 if (generation != trackGeneration) return;
-                                if (preset != null) {
-                                    effects.applyScannedVenuePreset(preset);
+                                if (sceneResult != null) {
+                                    applyGroupProfiles(emitterGroups, sceneResult);
+                                    effects.applyScannedVenuePreset(sceneResult.combinedResult());
                                 }
                                 startPlayback.run();
                             },
                             MinecraftClient.getInstance()::execute);
         } else {
             startPlayback.run();
+        }
+    }
+
+    private void applyGroupProfiles(List<EmitterGroup> groups, AcousticSceneScanResult sceneResult) {
+        List<AcousticProfile> profiles = sceneResult.groupProfiles();
+        AcousticProfile fallbackProfile = sceneResult.combinedResult().profile();
+        for (int i = 0; i < groups.size(); i++) {
+            AcousticProfile profile = i < profiles.size() ? profiles.get(i) : fallbackProfile;
+            groups.get(i).applyAcousticProfile(profile);
         }
     }
 

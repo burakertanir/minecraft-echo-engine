@@ -63,6 +63,7 @@ public class StreamSource {
     // Logic Clustering
     public final StreamSource clusterLeader;
     public final boolean isLeader;
+    private final EmitterGroup emitterGroup;
     private final PlaybackSession session;
 
     // Smoothed versions for pop-free knob transitions
@@ -113,6 +114,7 @@ public class StreamSource {
             float inputGain,
             int sampleShiftMs,
             int speakerCount,
+            EmitterGroup emitterGroup,
             StreamSource clusterLeader,
             int clusterSize,
             int initialChannelMask) {
@@ -137,6 +139,7 @@ public class StreamSource {
         this.speakerCount = speakerCount;
         this.clusterSize = clusterSize;
 
+        this.emitterGroup = emitterGroup;
         this.clusterLeader = clusterLeader;
         this.isLeader = (clusterLeader == null);
 
@@ -193,6 +196,10 @@ public class StreamSource {
         // Queue all buffers (but DON'T play yet — wait for batch start)
         alSourceQueueBuffers(sourceId, this.buffers);
         publish();
+    }
+
+    public EmitterGroup getEmitterGroup() {
+        return emitterGroup;
     }
 
     /**

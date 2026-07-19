@@ -689,21 +689,9 @@ public class AdvancedAcousticScanner {
                 absorptions);
     }
 
-    private volatile VenueDescriptor lastDescriptor = null;
-    private Vec3d lastProbePos = null;
-    public static java.util.List<Vec3d> lastPointCloud =
-            java.util.Collections.synchronizedList(new java.util.ArrayList<>());
-    public static volatile java.util.Set<net.minecraft.util.math.BlockPos> lastVenueBlocks = new java.util.HashSet<>();
-    public static java.util.List<net.minecraft.util.math.BlockPos> lastSpeakers =
-            java.util.Collections.synchronizedList(new java.util.ArrayList<>());
-
-    public VenueDescriptor getLastDescriptor() {
-        return lastDescriptor;
-    }
-
-    public Vec3d getLastProbePos() {
-        return lastProbePos;
-    }
+    private static volatile java.util.List<Vec3d> lastPointCloud = java.util.List.of();
+    private static volatile java.util.Set<BlockPos> lastVenueBlocks = java.util.Set.of();
+    private static volatile java.util.List<BlockPos> lastSpeakers = java.util.List.of();
 
     public static java.util.List<Vec3d> getLastPointCloud() {
         return lastPointCloud;
@@ -715,6 +703,26 @@ public class AdvancedAcousticScanner {
 
     public static java.util.List<net.minecraft.util.math.BlockPos> getLastSpeakers() {
         return lastSpeakers;
+    }
+
+    public static void publishDebugResult(AcousticScanResult result) {
+        if (result == null) {
+            clearDebugGeometry();
+            return;
+        }
+        lastPointCloud = result.pointCloud();
+        lastVenueBlocks = result.venueBlocks();
+    }
+
+    public static void resetDebugState(java.util.List<BlockPos> speakers) {
+        lastPointCloud = java.util.List.of();
+        lastVenueBlocks = java.util.Set.of();
+        lastSpeakers = speakers == null ? java.util.List.of() : java.util.List.copyOf(speakers);
+    }
+
+    public static void clearDebugGeometry() {
+        lastPointCloud = java.util.List.of();
+        lastVenueBlocks = java.util.Set.of();
     }
 
     public VenueDescriptor mergeProbes(java.util.List<ProbeResult> probes) {
@@ -769,20 +777,20 @@ public class AdvancedAcousticScanner {
     }
 
     /**
-     * Main entry point: Pure Cluster-Based Venue Scan.
+     * Scans emitter groups in one pass and preserves the existing combined venue
+     * profile until group-aware routing is enabled.
      *
      * @param world          The Minecraft world
      * @param clusterCenters List of physical cluster centers (where sound actually
      *                       emits)
-     * @return Locked VenuePreset for the entire playback session
+     * @return Combined and per-group acoustic profiles
      */
-    public VenuePreset scanVenue(World world, java.util.List<Vec3d> clusterCenters) {
+    public AcousticSceneScanResult scanEmitterGroups(World world, java.util.List<Vec3d> clusterCenters) {
         if (world == null || clusterCenters == null || clusterCenters.isEmpty()) return null;
 
-        // ─── POINT CLOUD CACHE ──────────────────────────────
         java.util.List<Vec3d> currentCloud = new java.util.ArrayList<>();
-
         java.util.List<ProbeResult> probes = new java.util.ArrayList<>();
+        java.util.List<AcousticProfile> groupProfiles = new java.util.ArrayList<>();
 
         // Limit the number of clusters we scan to prevent lag spikes if a user builds
         // 100 isolated speakers
@@ -790,38 +798,38 @@ public class AdvancedAcousticScanner {
 
         for (int i = 0; i < maxClustersToScan; i++) {
             Vec3d centerPos = clusterCenters.get(i);
-            probes.add(scanProbe(world, centerPos, currentCloud));
+            java.util.List<Vec3d> groupCloud = new java.util.ArrayList<>();
+            ProbeResult probe = scanProbe(world, centerPos, groupCloud);
+            probes.add(probe);
+            currentCloud.addAll(groupCloud);
+
+            VenueDescriptor groupDescriptor = mergeProbes(java.util.List.of(probe));
+            groupProfiles.add(createProfile(groupDescriptor, centerPos, groupCloud));
         }
 
-        // Compute bounding box volume from aggregated point cloud (stable, probe-position-independent)
-        float bboxVolume = computeBoundingBoxVolume(currentCloud);
-
-        // Save the massive aggregated point cloud for GUI rendering
-        AdvancedAcousticScanner.lastPointCloud.clear();
-        AdvancedAcousticScanner.lastPointCloud.addAll(currentCloud);
-
-        // ─── BUILD VENUE MAP: ONLY blocks where reverb rays hit ─────
-        if (!currentCloud.isEmpty()) {
-            java.util.Set<net.minecraft.util.math.BlockPos> hitBlocks = new java.util.HashSet<>();
-            for (Vec3d pt : currentCloud) {
-                hitBlocks.add(new net.minecraft.util.math.BlockPos(
-                        (int) Math.floor(pt.x), (int) Math.floor(pt.y), (int) Math.floor(pt.z)));
-            }
-            java.util.HashSet<net.minecraft.util.math.BlockPos> newBlocks = new java.util.HashSet<>();
-            newBlocks.addAll(hitBlocks);
-            AdvancedAcousticScanner.lastVenueBlocks = newBlocks; // atomic replace
-        }
-
-        // ─── Merge Probes → VenueDescriptor ──────────────
         VenueDescriptor desc = mergeProbes(probes);
         if (desc == null) return null;
 
         // Use the first cluster's position as the reference probe position for the
         // preset
         Vec3d referencePos = clusterCenters.get(0);
+        AcousticProfile combinedProfile = createProfile(desc, referencePos, currentCloud);
+        AcousticScanResult combinedResult = createScanResult(combinedProfile, currentCloud);
+        return new AcousticSceneScanResult(combinedResult, groupProfiles);
+    }
 
-        // ─── Descriptor → VenuePreset ──────────────────────
-        this.lastDescriptor = new VenueDescriptor(
+    public AcousticScanResult scanProfile(World world, java.util.List<Vec3d> clusterCenters) {
+        AcousticSceneScanResult result = scanEmitterGroups(world, clusterCenters);
+        return result == null ? null : result.combinedResult();
+    }
+
+    /** Calculates a self-contained acoustic profile for one emitter group. */
+    public AcousticScanResult scanProfile(World world, Vec3d emitterCenter) {
+        return scanProfile(world, java.util.List.of(emitterCenter));
+    }
+
+    private AcousticProfile createProfile(VenueDescriptor desc, Vec3d referencePos, java.util.List<Vec3d> pointCloud) {
+        VenueDescriptor profileDescriptor = new VenueDescriptor(
                 desc.enclosure,
                 desc.scale,
                 desc.reflectivity,
@@ -830,10 +838,27 @@ public class AdvancedAcousticScanner {
                 desc.earlyDensity,
                 desc.latePotential,
                 desc.avgAbsorption,
-                computeBoundingBoxVolume(currentCloud),
+                computeBoundingBoxVolume(pointCloud),
                 desc.trueSurfaceArea);
-        this.lastProbePos = referencePos;
-        return descriptorToPreset(this.lastDescriptor, referencePos);
+        VenuePreset preset = descriptorToPreset(profileDescriptor, referencePos);
+        return new AcousticProfile(profileDescriptor, preset);
+    }
+
+    private AcousticScanResult createScanResult(AcousticProfile profile, java.util.List<Vec3d> pointCloud) {
+        java.util.Set<BlockPos> hitBlocks = new java.util.HashSet<>();
+        for (Vec3d point : pointCloud) {
+            hitBlocks.add(
+                    new BlockPos((int) Math.floor(point.x), (int) Math.floor(point.y), (int) Math.floor(point.z)));
+        }
+        return new AcousticScanResult(profile, pointCloud, hitBlocks);
+    }
+
+    /** Compatibility entry point for callers that only need the calculated preset. */
+    public VenuePreset scanVenue(World world, java.util.List<Vec3d> clusterCenters) {
+        AcousticScanResult result = scanProfile(world, clusterCenters);
+        if (result == null) return null;
+        publishDebugResult(result);
+        return result.profile().preset();
     }
 
     private float lerp(float a, float b, float t) {

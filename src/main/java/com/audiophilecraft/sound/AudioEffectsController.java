@@ -11,12 +11,13 @@ import net.minecraft.world.World;
 /** Owns shared OpenAL effects, venue reverb state, and listener-centric acoustic updates. */
 final class AudioEffectsController {
     private static final float[] ZERO_PAN = {0f, 0f, 0f};
+    private static final int PRIMARY_ROOM_BUS = 0;
+    private static final int SECONDARY_ROOM_BUS = 1;
 
     private final AdvancedAcousticScanner acousticScanner = new AdvancedAcousticScanner();
+    private final RoomReverbBus[] roomBuses = {new RoomReverbBus(), new RoomReverbBus()};
 
     private float smoothedMasterOcclusion = 1.0f;
-    private int reverbEffectId;
-    private int auxSlotId;
     private int slapbackEffectId;
     private int slapbackAuxSlotId;
     private boolean initialized;
@@ -30,7 +31,12 @@ final class AudioEffectsController {
     private long lastConfigGeneration;
 
     int getAuxSlotId() {
-        return auxSlotId;
+        return getRoomAuxSlotId(PRIMARY_ROOM_BUS);
+    }
+
+    int getRoomAuxSlotId(int busIndex) {
+        if (busIndex < 0 || busIndex >= roomBuses.length) return 0;
+        return roomBuses[busIndex].auxSlotId();
     }
 
     int getSlapbackAuxSlotId() {
@@ -51,75 +57,68 @@ final class AudioEffectsController {
 
     void initialize() {
         if (initialized) return;
-        initialized = true;
 
         try {
-            reverbEffectId = alGenEffects();
-            if (alGetError() != AL_NO_ERROR) {
-                System.err.println("AudioEngine: Failed to create EFX effect");
-                reverbEffectId = 0;
-                return;
-            }
-
-            alEffecti(reverbEffectId, AL_EFFECT_TYPE, AL_EFFECT_EAXREVERB);
-            if (alGetError() != AL_NO_ERROR) {
-                alEffecti(reverbEffectId, AL_EFFECT_TYPE, AL_EFFECT_REVERB);
-                if (alGetError() != AL_NO_ERROR) {
-                    System.err.println("AudioEngine: No reverb support available");
-                    alDeleteEffects(reverbEffectId);
-                    reverbEffectId = 0;
-                    return;
-                }
-            }
-
             alDistanceModel(AL_NONE);
-            alEffectf(reverbEffectId, AL_EAXREVERB_DECAY_TIME, 0.3f);
-            alEffectf(reverbEffectId, AL_EAXREVERB_REFLECTIONS_GAIN, 0.3f);
-            alEffectf(reverbEffectId, AL_EAXREVERB_REFLECTIONS_DELAY, 0.02f);
-            alEffectf(reverbEffectId, AL_EAXREVERB_LATE_REVERB_GAIN, 0.1f);
-            alEffectf(reverbEffectId, AL_EAXREVERB_LATE_REVERB_DELAY, 0.04f);
-            alEffectf(reverbEffectId, AL_EAXREVERB_DIFFUSION, 0.7f);
-            alEffectf(reverbEffectId, AL_EAXREVERB_DENSITY, 0.5f);
-            alEffectf(reverbEffectId, AL_EAXREVERB_GAIN, 0.3f);
-            alEffectf(reverbEffectId, AL_EAXREVERB_GAINHF, 0.6f);
-            alEffectf(reverbEffectId, AL_EAXREVERB_GAINLF, 0.8f);
-            alEffectf(reverbEffectId, AL_EAXREVERB_DECAY_HFRATIO, 0.5f);
-            alEffectf(reverbEffectId, AL_EAXREVERB_DECAY_LFRATIO, 1.1f);
-            alEffectf(reverbEffectId, AL_EAXREVERB_AIR_ABSORPTION_GAINHF, 0.994f);
-            alEffecti(reverbEffectId, AL_EAXREVERB_DECAY_HFLIMIT, 1);
-
-            auxSlotId = alGenAuxiliaryEffectSlots();
-            if (alGetError() != AL_NO_ERROR) {
-                System.err.println("AudioEngine: Failed to create aux slot");
-                alDeleteEffects(reverbEffectId);
-                reverbEffectId = 0;
+            if (!roomBuses[PRIMARY_ROOM_BUS].initialize()) {
+                System.err.println("AudioEngine: Failed to create primary room reverb bus");
+                cleanupNativeEffects();
                 return;
             }
-            alAuxiliaryEffectSloti(auxSlotId, AL_EFFECTSLOT_EFFECT, reverbEffectId);
 
-            slapbackEffectId = alGenEffects();
-            if (alGetError() == AL_NO_ERROR) {
-                alEffecti(slapbackEffectId, AL_EFFECT_TYPE, AL_EFFECT_ECHO);
-                alEffectf(slapbackEffectId, AL_ECHO_DELAY, 0.1f);
-                alEffectf(slapbackEffectId, AL_ECHO_LRDELAY, 0.1f);
-                alEffectf(slapbackEffectId, AL_ECHO_DAMPING, 0.7f);
-                alEffectf(slapbackEffectId, AL_ECHO_FEEDBACK, 0.3f);
-                alEffectf(slapbackEffectId, AL_ECHO_SPREAD, -0.5f);
-                slapbackAuxSlotId = alGenAuxiliaryEffectSlots();
-                if (alGetError() == AL_NO_ERROR) {
-                    alAuxiliaryEffectSloti(slapbackAuxSlotId, AL_EFFECTSLOT_EFFECT, slapbackEffectId);
-                }
+            initializeSlapback();
+            if (slapbackAuxSlotId == 0) {
+                System.err.println("AudioEngine: Slapback effect unavailable");
             }
+
+            if (!roomBuses[SECONDARY_ROOM_BUS].initialize()) {
+                System.err.println("AudioEngine: Secondary room reverb unavailable; using one room bus");
+            }
+
+            initialized = true;
         } catch (Exception e) {
             System.err.println("AudioEngine: EFX init failed: " + e.getMessage());
-            reverbEffectId = 0;
-            auxSlotId = 0;
+            cleanupNativeEffects();
+        }
+    }
+
+    private void initializeSlapback() {
+        slapbackEffectId = alGenEffects();
+        if (alGetError() != AL_NO_ERROR) {
+            slapbackEffectId = 0;
+            return;
+        }
+        alEffecti(slapbackEffectId, AL_EFFECT_TYPE, AL_EFFECT_ECHO);
+        alEffectf(slapbackEffectId, AL_ECHO_DELAY, 0.1f);
+        alEffectf(slapbackEffectId, AL_ECHO_LRDELAY, 0.1f);
+        alEffectf(slapbackEffectId, AL_ECHO_DAMPING, 0.7f);
+        alEffectf(slapbackEffectId, AL_ECHO_FEEDBACK, 0.3f);
+        alEffectf(slapbackEffectId, AL_ECHO_SPREAD, -0.5f);
+        if (alGetError() != AL_NO_ERROR) {
+            alDeleteEffects(slapbackEffectId);
+            slapbackEffectId = 0;
+            return;
+        }
+
+        slapbackAuxSlotId = alGenAuxiliaryEffectSlots();
+        if (alGetError() != AL_NO_ERROR) {
+            alDeleteEffects(slapbackEffectId);
+            slapbackEffectId = 0;
+            slapbackAuxSlotId = 0;
+            return;
+        }
+        alAuxiliaryEffectSloti(slapbackAuxSlotId, AL_EFFECTSLOT_EFFECT, slapbackEffectId);
+        if (alGetError() != AL_NO_ERROR) {
+            alDeleteAuxiliaryEffectSlots(slapbackAuxSlotId);
+            alDeleteEffects(slapbackEffectId);
+            slapbackAuxSlotId = 0;
+            slapbackEffectId = 0;
         }
     }
 
     void ensureVenueReverb() {
         if (venuePreset == null) return;
-        if (auxSlotId == 0 || reverbEffectId == 0) return;
+        if (!roomBuses[PRIMARY_ROOM_BUS].isAvailable()) return;
 
         long currentGeneration = com.audiophilecraft.config.LiveTuningConfig.getReloadGeneration();
         if (currentGeneration != lastConfigGeneration && storedVenueDescriptor != null && storedVenueProbePos != null) {
@@ -152,25 +151,31 @@ final class AudioEffectsController {
         density = Math.max(0.0f, Math.min(1.0f, density));
         diffusion = Math.max(0.0f, Math.min(1.0f, diffusion));
 
-        alEffectf(reverbEffectId, AL_EAXREVERB_DECAY_TIME, decayTime);
-        alEffectf(reverbEffectId, AL_EAXREVERB_DECAY_HFRATIO, venuePreset.decayHFRatio);
-        alEffectf(reverbEffectId, AL_EAXREVERB_DECAY_LFRATIO, venuePreset.decayLFRatio);
-        alEffecti(reverbEffectId, AL_EAXREVERB_DECAY_HFLIMIT, venuePreset.decayHFLimit ? 1 : 0);
-        if (currentReflectionGain >= 0.0f && currentReflectionDelay >= 0.0f) {
-            alEffectf(reverbEffectId, AL_EAXREVERB_REFLECTIONS_GAIN, currentReflectionGain);
-            alEffectf(reverbEffectId, AL_EAXREVERB_REFLECTIONS_DELAY, currentReflectionDelay);
+        for (RoomReverbBus roomBus : roomBuses) {
+            if (!roomBus.isAvailable()) continue;
+            roomBus.setFloat(AL_EAXREVERB_DECAY_TIME, AL_REVERB_DECAY_TIME, decayTime);
+            roomBus.setFloat(AL_EAXREVERB_DECAY_HFRATIO, AL_REVERB_DECAY_HFRATIO, venuePreset.decayHFRatio);
+            roomBus.setFloat(AL_EAXREVERB_DECAY_LFRATIO, -1, venuePreset.decayLFRatio);
+            roomBus.setInt(AL_EAXREVERB_DECAY_HFLIMIT, AL_REVERB_DECAY_HFLIMIT, venuePreset.decayHFLimit ? 1 : 0);
+            if (currentReflectionGain >= 0.0f && currentReflectionDelay >= 0.0f) {
+                roomBus.setFloat(AL_EAXREVERB_REFLECTIONS_GAIN, AL_REVERB_REFLECTIONS_GAIN, currentReflectionGain);
+                roomBus.setFloat(AL_EAXREVERB_REFLECTIONS_DELAY, AL_REVERB_REFLECTIONS_DELAY, currentReflectionDelay);
+            }
+            roomBus.setPan(AL_EAXREVERB_REFLECTIONS_PAN, ZERO_PAN);
+            roomBus.setFloat(AL_EAXREVERB_LATE_REVERB_GAIN, AL_REVERB_LATE_REVERB_GAIN, lateGain);
+            roomBus.setFloat(AL_EAXREVERB_LATE_REVERB_DELAY, AL_REVERB_LATE_REVERB_DELAY, venuePreset.lateReverbDelay);
+            roomBus.setPan(AL_EAXREVERB_LATE_REVERB_PAN, ZERO_PAN);
+            roomBus.setFloat(AL_EAXREVERB_DENSITY, AL_REVERB_DENSITY, density);
+            roomBus.setFloat(AL_EAXREVERB_DIFFUSION, AL_REVERB_DIFFUSION, diffusion);
+            roomBus.setFloat(AL_EAXREVERB_GAIN, AL_REVERB_GAIN, gain);
+            roomBus.setFloat(AL_EAXREVERB_GAINHF, AL_REVERB_GAINHF, gainHF);
+            roomBus.setFloat(AL_EAXREVERB_GAINLF, -1, venuePreset.gainLF);
+            roomBus.setFloat(
+                    AL_EAXREVERB_AIR_ABSORPTION_GAINHF,
+                    AL_REVERB_AIR_ABSORPTION_GAINHF,
+                    venuePreset.airAbsorptionGainHF);
+            roomBus.attachEffect();
         }
-        alEffectfv(reverbEffectId, AL_EAXREVERB_REFLECTIONS_PAN, ZERO_PAN);
-        alEffectf(reverbEffectId, AL_EAXREVERB_LATE_REVERB_GAIN, lateGain);
-        alEffectf(reverbEffectId, AL_EAXREVERB_LATE_REVERB_DELAY, venuePreset.lateReverbDelay);
-        alEffectfv(reverbEffectId, AL_EAXREVERB_LATE_REVERB_PAN, ZERO_PAN);
-        alEffectf(reverbEffectId, AL_EAXREVERB_DENSITY, density);
-        alEffectf(reverbEffectId, AL_EAXREVERB_DIFFUSION, diffusion);
-        alEffectf(reverbEffectId, AL_EAXREVERB_GAIN, gain);
-        alEffectf(reverbEffectId, AL_EAXREVERB_GAINHF, gainHF);
-        alEffectf(reverbEffectId, AL_EAXREVERB_GAINLF, venuePreset.gainLF);
-        alEffectf(reverbEffectId, AL_EAXREVERB_AIR_ABSORPTION_GAINHF, venuePreset.airAbsorptionGainHF);
-        alAuxiliaryEffectSloti(auxSlotId, AL_EFFECTSLOT_EFFECT, reverbEffectId);
     }
 
     private void applySlapbackConfig() {
@@ -192,7 +197,7 @@ final class AudioEffectsController {
     }
 
     private void updateListenerReflections(World world, Vec3d listenerPosition) {
-        if (venuePreset == null || reverbEffectId == 0 || auxSlotId == 0) return;
+        if (venuePreset == null || !roomBuses[PRIMARY_ROOM_BUS].isAvailable()) return;
         com.audiophilecraft.config.LiveTuningConfig config = com.audiophilecraft.config.LiveTuningConfig.get();
         float[][] directions = {
             {1, 0, 0}, {-1, 0, 0},
@@ -268,7 +273,7 @@ final class AudioEffectsController {
     }
 
     void updateMasterReverbOcclusion(float targetMasterOcclusion) {
-        if (reverbEffectId == 0 || venuePreset == null) return;
+        if (!roomBuses[PRIMARY_ROOM_BUS].isAvailable() || venuePreset == null) return;
         com.audiophilecraft.config.LiveTuningConfig config = com.audiophilecraft.config.LiveTuningConfig.get();
         float lerpRate =
                 targetMasterOcclusion < smoothedMasterOcclusion ? config.masterOcc_lerpIn : config.masterOcc_lerpOut;
@@ -279,26 +284,35 @@ final class AudioEffectsController {
                 venuePreset.gainHF * (float) Math.pow(smoothedMasterOcclusion, config.masterOcc_hfExponent);
         masterGain = Math.max(0.0f, Math.min(1.0f, masterGain));
         masterGainHF = Math.max(0.01f, Math.min(1.0f, masterGainHF));
-        alEffectf(reverbEffectId, AL_EAXREVERB_GAIN, masterGain);
-        alEffectf(reverbEffectId, AL_EAXREVERB_GAINHF, masterGainHF);
-        alAuxiliaryEffectSloti(auxSlotId, AL_EFFECTSLOT_EFFECT, reverbEffectId);
+        for (RoomReverbBus roomBus : roomBuses) {
+            if (!roomBus.isAvailable()) continue;
+            roomBus.setFloat(AL_EAXREVERB_GAIN, AL_REVERB_GAIN, masterGain);
+            roomBus.setFloat(AL_EAXREVERB_GAINHF, AL_REVERB_GAINHF, masterGainHF);
+            roomBus.attachEffect();
+        }
     }
 
     void setGamePaused(boolean paused) {
-        if (auxSlotId == 0) return;
-        alAuxiliaryEffectSloti(auxSlotId, AL_EFFECTSLOT_EFFECT, paused ? AL_EFFECT_NULL : reverbEffectId);
+        for (RoomReverbBus roomBus : roomBuses) {
+            roomBus.setPaused(paused);
+        }
         if (slapbackAuxSlotId != 0) {
             alAuxiliaryEffectSloti(slapbackAuxSlotId, AL_EFFECTSLOT_EFFECT, paused ? AL_EFFECT_NULL : slapbackEffectId);
         }
     }
 
     void muteEffectSlots() {
-        if (auxSlotId != 0) alAuxiliaryEffectSlotf(auxSlotId, AL_EFFECTSLOT_GAIN, 0.0f);
+        for (RoomReverbBus roomBus : roomBuses) {
+            roomBus.setSlotGain(0.0f);
+        }
         if (slapbackAuxSlotId != 0) alAuxiliaryEffectSlotf(slapbackAuxSlotId, AL_EFFECTSLOT_GAIN, 0.0f);
     }
 
     void resumeEffectSlots() {
-        if (auxSlotId != 0) alAuxiliaryEffectSlotf(auxSlotId, AL_EFFECTSLOT_GAIN, 1.0f);
+        for (RoomReverbBus roomBus : roomBuses) {
+            roomBus.setSlotGain(1.0f);
+        }
+        if (slapbackAuxSlotId != 0) alAuxiliaryEffectSlotf(slapbackAuxSlotId, AL_EFFECTSLOT_GAIN, 1.0f);
     }
 
     void clearVenueState() {
@@ -309,10 +323,7 @@ final class AudioEffectsController {
     }
 
     void resetVenueState(List<BlockPos> speakers) {
-        AdvancedAcousticScanner.lastPointCloud.clear();
-        AdvancedAcousticScanner.lastVenueBlocks.clear();
-        AdvancedAcousticScanner.lastSpeakers =
-                speakers != null ? new java.util.ArrayList<>(speakers) : new java.util.ArrayList<>();
+        AdvancedAcousticScanner.resetDebugState(speakers);
         clearVenueState();
         com.audiophilecraft.client.screen.PointCloudRenderer.invalidateCache();
         while (alGetError() != AL_NO_ERROR) {
@@ -326,20 +337,28 @@ final class AudioEffectsController {
         venuePresetApplied = false;
     }
 
-    AdvancedAcousticScanner.VenuePreset scanVenue(World world, List<Vec3d> clusterCenters) {
-        return acousticScanner.scanVenue(world, clusterCenters);
+    AcousticSceneScanResult scanVenue(World world, List<Vec3d> clusterCenters) {
+        return acousticScanner.scanEmitterGroups(world, clusterCenters);
     }
 
-    void applyScannedVenuePreset(AdvancedAcousticScanner.VenuePreset preset) {
-        venuePreset = preset;
-        storedVenueDescriptor = acousticScanner.getLastDescriptor();
-        storedVenueProbePos = acousticScanner.getLastProbePos();
+    void applyScannedVenuePreset(AcousticScanResult result) {
+        AcousticProfile profile = result.profile();
+        venuePreset = profile.preset();
+        storedVenueDescriptor = profile.descriptor();
+        storedVenueProbePos = profile.probePosition();
+        AdvancedAcousticScanner.publishDebugResult(result);
         lastConfigGeneration = com.audiophilecraft.config.LiveTuningConfig.getReloadGeneration();
         applyVenueReverb();
         applySlapbackConfig();
     }
 
     void cleanup() {
+        cleanupNativeEffects();
+        currentSlapbackGain = 0.0f;
+        initialized = false;
+    }
+
+    private void cleanupNativeEffects() {
         if (slapbackAuxSlotId != 0) {
             alAuxiliaryEffectSloti(slapbackAuxSlotId, AL_EFFECTSLOT_EFFECT, AL_EFFECT_NULL);
             alDeleteAuxiliaryEffectSlots(slapbackAuxSlotId);
@@ -349,16 +368,8 @@ final class AudioEffectsController {
             alDeleteEffects(slapbackEffectId);
             slapbackEffectId = 0;
         }
-        if (auxSlotId != 0) {
-            alAuxiliaryEffectSloti(auxSlotId, AL_EFFECTSLOT_EFFECT, AL_EFFECT_NULL);
-            alDeleteAuxiliaryEffectSlots(auxSlotId);
-            auxSlotId = 0;
+        for (RoomReverbBus roomBus : roomBuses) {
+            roomBus.cleanup();
         }
-        if (reverbEffectId != 0) {
-            alDeleteEffects(reverbEffectId);
-            reverbEffectId = 0;
-        }
-        currentSlapbackGain = 0.0f;
-        initialized = false;
     }
 }

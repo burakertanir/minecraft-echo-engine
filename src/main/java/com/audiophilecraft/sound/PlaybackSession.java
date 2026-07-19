@@ -25,6 +25,9 @@ public class PlaybackSession {
     // Speaker source list (thread-safe: main/audio thread)
     private final List<StreamSource> streamSources = new CopyOnWriteArrayList<>();
 
+    // Physical speaker groups and their independently scanned acoustic profiles
+    private final List<EmitterGroup> emitterGroups = new CopyOnWriteArrayList<>();
+
     // Audio buffers by speaker type
     private final Map<String, AudioStreamBuffer> streamBuffers = new ConcurrentHashMap<>();
 
@@ -77,6 +80,10 @@ public class PlaybackSession {
 
     public int getSourceCount() {
         return streamSources.size();
+    }
+
+    public List<EmitterGroup> getEmitterGroups() {
+        return emitterGroups;
     }
 
     // --- Buffer accessors ---
@@ -311,6 +318,7 @@ public class PlaybackSession {
             }
         }
         streamSources.clear();
+        emitterGroups.clear();
         for (AudioStreamBuffer buffer : streamBuffers.values()) {
             buffer.cleanup();
         }
@@ -327,10 +335,7 @@ public class PlaybackSession {
         engine.stopAll();
         incrementTrackGeneration();
 
-        AdvancedAcousticScanner.lastPointCloud.clear();
-        AdvancedAcousticScanner.lastVenueBlocks.clear();
-        AdvancedAcousticScanner.lastSpeakers =
-                speakers != null ? new java.util.ArrayList<>(speakers) : new java.util.ArrayList<>();
+        AdvancedAcousticScanner.resetDebugState(speakers);
         setVenuePreset(null);
         setVenuePresetApplied(false);
         setStoredVenueDescriptor(null);
