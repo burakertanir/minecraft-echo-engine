@@ -198,11 +198,32 @@ public class AudioEngine {
     }
 
     public AdvancedAcousticScanner.VenuePreset getVenuePreset() {
-        return effects.getVenuePreset();
+        AcousticProfile nearestProfile = getNearestAcousticProfile();
+        return nearestProfile != null ? nearestProfile.preset() : effects.getVenuePreset();
     }
 
     public AdvancedAcousticScanner.VenueDescriptor getStoredVenueDescriptor() {
-        return effects.getStoredVenueDescriptor();
+        AcousticProfile nearestProfile = getNearestAcousticProfile();
+        return nearestProfile != null ? nearestProfile.descriptor() : effects.getStoredVenueDescriptor();
+    }
+
+    private AcousticProfile getNearestAcousticProfile() {
+        Vec3d currentListenerPosition = listenerPos != null ? listenerPos : Vec3d.ZERO;
+        AcousticProfile nearestProfile = null;
+        double nearestDistanceSq = Double.POSITIVE_INFINITY;
+        for (PlaybackSession session : sessions.values()) {
+            if (!session.isPlaying()) continue;
+            for (EmitterGroup group : session.getEmitterGroups()) {
+                AcousticProfile profile = group.acousticProfile();
+                if (profile == null) continue;
+                double distanceSq = group.center().squaredDistanceTo(currentListenerPosition);
+                if (distanceSq < nearestDistanceSq) {
+                    nearestDistanceSq = distanceSq;
+                    nearestProfile = profile;
+                }
+            }
+        }
+        return nearestProfile;
     }
 
     /**
@@ -457,6 +478,7 @@ public class AudioEngine {
         // scanAtPosition() later.
         // analyzeEnvironment(world);
 
+        playback.refreshNearbyVenueProfiles(sessions.values(), world, listenerPos);
         reverbBusAllocator.update(sessions.values(), listenerPos);
 
         // Update sources for ALL playing sessions
@@ -809,6 +831,15 @@ public class AudioEngine {
         playback.playTrack(sessionUUID, trackId, speakers, power, inputGain);
     }
 
+    public void playTrackWithSpeakerData(
+            java.util.UUID sessionUUID,
+            String trackId,
+            List<SpeakerPlaybackData> speakers,
+            float power,
+            float inputGain) {
+        playback.playTrackWithSpeakerData(sessionUUID, trackId, speakers, power, inputGain);
+    }
+
     public void updateInputGain(float gain) {
         if (getActiveSession() == null) return;
         for (StreamSource ss : getActiveSession().getStreamSources()) {
@@ -836,12 +867,13 @@ public class AudioEngine {
     public void playFromUrl(
             java.util.UUID sessionUUID,
             String url,
-            List<BlockPos> speakers,
+            List<SpeakerPlaybackData> speakers,
             float power,
             float inputGain,
             boolean startImmediately,
             java.util.function.Consumer<java.util.UUID> onReadyCallback) {
-        playback.playFromUrl(sessionUUID, url, speakers, power, inputGain, startImmediately, onReadyCallback);
+        playback.playFromUrlWithSpeakerData(
+                sessionUUID, url, speakers, power, inputGain, startImmediately, onReadyCallback);
     }
 
     public void createSourcesFromClusters(

@@ -10,8 +10,8 @@ public final class EmitterGroup {
     private final Vec3d center;
     private volatile AcousticProfile acousticProfile;
     private volatile int roomBusIndex;
-    private volatile float roomSendGain = 1.0f;
-    private volatile float targetRoomSendGain = 1.0f;
+    private volatile float roomSendGain;
+    private volatile float targetRoomSendGain;
 
     EmitterGroup(List<BlockPos> speakerPositions) {
         if (speakerPositions == null || speakerPositions.isEmpty()) {
@@ -34,7 +34,14 @@ public final class EmitterGroup {
     }
 
     void applyAcousticProfile(AcousticProfile profile) {
+        if (profile == null) return;
         this.acousticProfile = profile;
+        this.targetRoomSendGain = 1.0f;
+    }
+
+    void activateRoomSendImmediately() {
+        this.roomSendGain = 1.0f;
+        this.targetRoomSendGain = 1.0f;
     }
 
     public int roomBusIndex() {

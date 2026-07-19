@@ -960,14 +960,23 @@ public class StreamSource {
             // 2. SOFT distance falloff: Reverb shouldn't drop when walking around the room,
             // but it MUST fade out eventually when you walk extremely far away, otherwise
             // open-air venues will have infinite phantom reverb.
-            float softDistanceFalloff = (float) Math.pow(Math.max(0.001f, attenuation), 0.15f); // Very gentle falloff
+            float reverbRangeFade = 1.0f;
+            float reverbFadeStart = dynamicMaxDist * cfg.fadeStartPercent;
+            if (dist >= dynamicMaxDist || attenuation <= 0.0f) {
+                reverbRangeFade = 0.0f;
+            } else if (dist > reverbFadeStart) {
+                float fadeRatio = (dist - reverbFadeStart) / (dynamicMaxDist - reverbFadeStart);
+                reverbRangeFade = 0.5f * (1.0f + (float) Math.cos(fadeRatio * Math.PI));
+            }
+            float softDistanceFalloff =
+                    attenuation > 0.0f ? (float) Math.pow(attenuation, 0.15f) * reverbRangeFade : 0.0f;
 
             // 3. Combine: occlusion × power scaled send × soft falloff
             float sendGain = reverbOcclusion * powerScaledSend * softDistanceFalloff;
 
             // 4. WET FLOOR: minimum reverb level inside the venue.
             // 0.04 = -28dB floor, prevents completely dry sound. Scales with occlusion.
-            float wetFloor = 0.04f * reverbOcclusion;
+            float wetFloor = 0.04f * reverbOcclusion * reverbRangeFade;
             if (sendGain < wetFloor) sendGain = wetFloor;
 
             // 5. RELAXED CAP: max 0.60 (~ -4.4dB).

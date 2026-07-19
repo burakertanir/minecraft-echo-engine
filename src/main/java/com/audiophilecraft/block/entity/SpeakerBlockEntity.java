@@ -43,6 +43,7 @@ public class SpeakerBlockEntity extends BlockEntity implements ExtendedScreenHan
 
         this.sampleShift = Math.max(0, Math.min(30, sampleShift));
 
+        refreshPlaybackData();
         markDirty();
 
         if (world != null && !world.isClient) {
@@ -60,6 +61,7 @@ public class SpeakerBlockEntity extends BlockEntity implements ExtendedScreenHan
 
         this.verticalTiltDeg = Math.max(-70, Math.min(70, deg));
 
+        refreshPlaybackData();
         markDirty();
 
         if (world != null && !world.isClient) {
@@ -74,9 +76,16 @@ public class SpeakerBlockEntity extends BlockEntity implements ExtendedScreenHan
 
     public void setChannelMask(int mask) {
         this.channelMask = Math.max(0, Math.min(2, mask));
+        refreshPlaybackData();
         markDirty();
         if (world != null && !world.isClient) {
             world.updateListeners(pos, getCachedState(), getCachedState(), 3);
+        }
+    }
+
+    private void refreshPlaybackData() {
+        if (world != null) {
+            com.audiophilecraft.registry.SpeakerRegistry.refreshPlaybackData(world, pos);
         }
     }
 

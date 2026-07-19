@@ -3,6 +3,7 @@ package com.audiophilecraft.network;
 import com.audiophilecraft.AudiophileCraft;
 import com.audiophilecraft.item.AmplifierTabletItem;
 import com.audiophilecraft.registry.SpeakerRegistry;
+import com.audiophilecraft.sound.SpeakerPlaybackData;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
@@ -107,6 +108,38 @@ public class ModMessages {
         }
         return speakers;
     }
+
+    private static List<SpeakerPlaybackData> readSpeakerPlaybackData(PacketByteBuf buf) {
+        int count = buf.readInt();
+        if (count < 0 || count > MAX_SPEAKERS_PER_PACKET) return null;
+
+        List<SpeakerPlaybackData> speakers = new ArrayList<>(count);
+        for (int i = 0; i < count; i++) {
+            BlockPos position = buf.readBlockPos();
+            String speakerType = buf.readString(16);
+            int directionId = buf.readInt();
+            int verticalTilt = buf.readInt();
+            int sampleShift = buf.readInt();
+            int channelMask = buf.readInt();
+            if (!isValidSpeakerType(speakerType)
+                    || directionId < 0
+                    || directionId >= net.minecraft.util.math.Direction.values().length
+                    || verticalTilt < -70
+                    || verticalTilt > 70
+                    || sampleShift < 0
+                    || sampleShift > 30
+                    || channelMask < 0
+                    || channelMask > 2) return null;
+            speakers.add(new SpeakerPlaybackData(
+                    position,
+                    speakerType,
+                    net.minecraft.util.math.Direction.byId(directionId),
+                    verticalTilt,
+                    sampleShift,
+                    channelMask));
+        }
+        return speakers;
+    }
     /** Check if timeout has passed for a pending sync (30s) */
     private static boolean isSyncTimedOut(
             java.util.AbstractMap.SimpleEntry<java.util.Set<java.util.UUID>, Long> entry) {
@@ -194,8 +227,8 @@ public class ModMessages {
                             String testTrackId = "music/test_track";
                             UUID ownerUUID = player.getUuid();
                             // Only find speakers owned by this player, in their dimension
-                            List<BlockPos> speakers = SpeakerRegistry.findSpeakersByOwner(
-                                    player.getWorld().getRegistryKey(), ownerUUID);
+                            List<SpeakerPlaybackData> speakers =
+                                    SpeakerRegistry.findPlaybackDataByOwner(player.getWorld(), ownerUUID);
                             float power = AmplifierTabletItem.getSpeakerPower(stack);
                             float inputGain = AmplifierTabletItem.getInputGain(stack);
                             // Broadcast to all online players so everyone hears the music
@@ -216,8 +249,8 @@ public class ModMessages {
                 ItemStack stack = getTabletStack(player, handOrdinal);
                 if (stack.getItem() instanceof AmplifierTabletItem) {
                     UUID ownerUUID = player.getUuid();
-                    List<BlockPos> speakers = SpeakerRegistry.findSpeakersByOwner(
-                            player.getWorld().getRegistryKey(), ownerUUID);
+                    List<SpeakerPlaybackData> speakers =
+                            SpeakerRegistry.findPlaybackDataByOwner(player.getWorld(), ownerUUID);
                     float power = AmplifierTabletItem.getSpeakerPower(stack);
                     float inputGain = AmplifierTabletItem.getInputGain(stack);
                     // Init sync tracking for all online players
@@ -527,14 +560,14 @@ public class ModMessages {
             String trackId = buf.readString(256);
             float power = buf.readFloat();
             float inputGain = buf.readFloat();
-            List<BlockPos> speakers = readSpeakerPositions(buf);
+            List<SpeakerPlaybackData> speakers = readSpeakerPlaybackData(buf);
             if (speakers == null
                     || trackId.isBlank()
                     || !isFiniteInRange(power, 0.1f, 10.0f)
                     || !isFiniteInRange(inputGain, 0.0f, 3.0f)) return;
             client.execute(() -> {
                 com.audiophilecraft.sound.AudioEngine engine = com.audiophilecraft.sound.AudioEngine.getInstance();
-                engine.playTrack(sessionUUID, trackId, speakers, power, inputGain);
+                engine.playTrackWithSpeakerData(sessionUUID, trackId, speakers, power, inputGain);
             });
         });
 
@@ -543,7 +576,7 @@ public class ModMessages {
             String url = buf.readString(2048);
             float power = buf.readFloat();
             float inputGain = buf.readFloat();
-            List<BlockPos> speakers = readSpeakerPositions(buf);
+            List<SpeakerPlaybackData> speakers = readSpeakerPlaybackData(buf);
             if (speakers == null
                     || !isValidAudioUrl(url)
                     || !isFiniteInRange(power, 0.1f, 10.0f)
@@ -713,7 +746,7 @@ public class ModMessages {
             net.minecraft.server.network.ServerPlayerEntity player,
             UUID ownerUUID,
             String trackId,
-            List<BlockPos> speakers,
+            List<SpeakerPlaybackData> speakers,
             float power,
             float inputGain) {
         PacketByteBuf buf = PacketByteBufs.create();
@@ -722,8 +755,13 @@ public class ModMessages {
         buf.writeFloat(power);
         buf.writeFloat(inputGain);
         buf.writeInt(speakers.size());
-        for (BlockPos p : speakers) {
-            buf.writeBlockPos(p);
+        for (SpeakerPlaybackData speaker : speakers) {
+            buf.writeBlockPos(speaker.position());
+            buf.writeString(speaker.speakerType(), 16);
+            buf.writeInt(speaker.facing().getId());
+            buf.writeInt(speaker.verticalTiltDeg());
+            buf.writeInt(speaker.sampleShiftMs());
+            buf.writeInt(speaker.channelMask());
         }
         ServerPlayNetworking.send(player, S2C_PLAY_TRACK, buf);
     }
@@ -732,7 +770,7 @@ public class ModMessages {
             net.minecraft.server.network.ServerPlayerEntity player,
             UUID ownerUUID,
             String url,
-            List<BlockPos> speakers,
+            List<SpeakerPlaybackData> speakers,
             float power,
             float inputGain) {
         PacketByteBuf buf = PacketByteBufs.create();
@@ -741,8 +779,13 @@ public class ModMessages {
         buf.writeFloat(power);
         buf.writeFloat(inputGain);
         buf.writeInt(speakers.size());
-        for (BlockPos p : speakers) {
-            buf.writeBlockPos(p);
+        for (SpeakerPlaybackData speaker : speakers) {
+            buf.writeBlockPos(speaker.position());
+            buf.writeString(speaker.speakerType(), 16);
+            buf.writeInt(speaker.facing().getId());
+            buf.writeInt(speaker.verticalTiltDeg());
+            buf.writeInt(speaker.sampleShiftMs());
+            buf.writeInt(speaker.channelMask());
         }
         ServerPlayNetworking.send(player, S2C_PLAY_URL, buf);
     }
