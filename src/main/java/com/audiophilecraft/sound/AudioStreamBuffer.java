@@ -192,24 +192,27 @@ public class AudioStreamBuffer {
     }
 
     public short getSampleLagrange(double absolutePosition) {
-        return lagrange(absolutePosition, 0);
+        return hermite(absolutePosition, 0);
     }
 
     public short getSampleLagrange(double absolutePosition, int channelMask) {
-        return lagrange(absolutePosition, channelMask);
+        return hermite(absolutePosition, channelMask);
     }
 
-    private short lagrange(double absolutePosition, int channelMask) {
+    private short hermite(double absolutePosition, int channelMask) {
         long idx = (long) Math.floor(absolutePosition);
         double f = absolutePosition - idx;
         double y0 = getSample(idx - 1, channelMask);
         double y1 = getSample(idx, channelMask);
         double y2 = getSample(idx + 1, channelMask);
         double y3 = getSample(idx + 2, channelMask);
-        double out = y0 * (f * (f - 1) * (f - 2)) / (-6.0)
-                + y1 * ((f + 1) * (f - 1) * (f - 2)) / (2.0)
-                + y2 * ((f + 1) * f * (f - 2)) / (-2.0)
-                + y3 * ((f + 1) * f * (f - 1)) / (6.0);
+        // Catmull-Rom spline: C1 continuous (tangent continuity), eliminates
+        // the overshoot and metallic harmonics of Lagrange interpolation.
+        double a = -0.5 * y0 + 1.5 * y1 - 1.5 * y2 + 0.5 * y3;
+        double b =  y0 - 2.5 * y1 + 2.0 * y2 - 0.5 * y3;
+        double c = -0.5 * y0 + 0.5 * y2;
+        double d = y1;
+        double out = ((a * f + b) * f + c) * f + d;
         if (out > 32767.0) out = 32767.0;
         if (out < -32768.0) out = -32768.0;
         return (short) out;

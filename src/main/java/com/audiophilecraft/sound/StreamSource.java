@@ -246,6 +246,7 @@ public class StreamSource {
         // Reset delay state so it re-initializes from current distance
         this.lastRenderedDelaySamples = -1.0;
         this.prevTargetDelaySamples = -1.0;
+        this.delayVelocity = 0.0;
 
         // Flush OpenAL's queued buffers
         org.lwjgl.openal.AL10.alSourceStop(sourceId);
@@ -1068,6 +1069,7 @@ public class StreamSource {
     // Delay State — single authoritative source across both thread paths
     private double lastRenderedDelaySamples = -1.0;
     private double prevTargetDelaySamples = -1.0;
+    private double delayVelocity = 0.0; // 2nd order: rate of change of delay (samples/sample)
 
     /**
      * ═══════════════════════════════════════════════════════════════════════
@@ -1224,8 +1226,17 @@ public class StreamSource {
         double targetDelta = endTarget - startTarget;
         prevTargetDelaySamples = endTarget;
 
-        // 1.5% max pitch shift limit (Doppler shift clamp).
-        double maxDeltaPerSample = 0.015;
+        // ═══════════════════════════════════════════════════════════════
+        // 2ND ORDER CRITICALLY DAMPED SPRING — DELAY SMOOTHER
+        // 1st order IIR only guarantees C0 continuity (value).
+        // 2nd order spring guarantees C1 (derivative/pitch continuity),
+        // eliminating metallic phase-modulation artifacts during flight.
+        // ═══════════════════════════════════════════════════════════════
+        double omega = 2.0 * Math.PI * 25.0 / sampleRate; // 25Hz natural frequency
+        double omegaSq = omega * omega;
+        double twoOmega = 2.0 * omega;
+        double maxDeltaPerSample = 0.015; // 1.5% max pitch shift (Doppler clamp)
+        double localVelocity = this.delayVelocity;
 
         for (int i = 0; i < STREAM_BUFFER_SIZE; i++) {
             // Linear interpolate target from old to new — no more 21ms steps
@@ -1233,21 +1244,16 @@ public class StreamSource {
             double interpolatedTarget = startTarget + targetDelta * t;
             double delta = interpolatedTarget - currentDelay;
 
-            double absDelta = Math.abs(delta);
+            // Critically damped spring: F = ω²·error − 2ω·velocity
+            // Guarantees smooth convergence with zero overshoot or ringing.
+            double acceleration = omegaSq * delta - twoOmega * localVelocity;
+            localVelocity += acceleration;
 
-            // ═══════════════════════════════════════════════════════════════
-            // CONTINUOUS QUADRATIC SLEW COEFFICIENT
-            // Replaces the old stepped if-else logic for perfectly smooth pitch
-            // ═══════════════════════════════════════════════════════════════
-            double factor = Math.min(absDelta / 500.0, 1.0);
-            double slewCoeff = 0.002 + (factor * factor) * 0.048;
+            // Safety clamp: cap pitch shift at ±1.5%
+            if (localVelocity > maxDeltaPerSample) localVelocity = maxDeltaPerSample;
+            if (localVelocity < -maxDeltaPerSample) localVelocity = -maxDeltaPerSample;
 
-            double step = delta * slewCoeff;
-
-            if (step > maxDeltaPerSample) step = maxDeltaPerSample;
-            if (step < -maxDeltaPerSample) step = -maxDeltaPerSample;
-
-            currentDelay += step;
+            currentDelay += localVelocity;
 
             // GLOBAL MASTER CLOCK: absolute position minus propagation delay
             double readPos = (bufferStartSample + i) - currentDelay;
@@ -1263,6 +1269,7 @@ public class StreamSource {
         }
 
         lastRenderedDelaySamples = currentDelay;
+        this.delayVelocity = localVelocity;
 
         // ═══════════════════════════════════════════════════════════════
         // DSP STAGE (shared by all branches)

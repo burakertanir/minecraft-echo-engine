@@ -56,176 +56,191 @@ public class AdvancedAcousticScanner {
     static {
         // Highly Reflective (Hard, smooth surfaces)
         for (Block b : new Block[] {
-            Blocks.STONE,
-            Blocks.COBBLESTONE,
-            Blocks.MOSSY_COBBLESTONE,
-            Blocks.STONE_BRICKS,
-            Blocks.MOSSY_STONE_BRICKS,
-            Blocks.CRACKED_STONE_BRICKS,
-            Blocks.CHISELED_STONE_BRICKS,
-            Blocks.SMOOTH_STONE,
-            Blocks.POLISHED_ANDESITE,
-            Blocks.POLISHED_DIORITE,
-            Blocks.POLISHED_GRANITE,
-            Blocks.ANDESITE,
-            Blocks.DIORITE,
-            Blocks.GRANITE,
-            Blocks.DEEPSLATE,
-            Blocks.POLISHED_DEEPSLATE,
-            Blocks.DEEPSLATE_BRICKS,
-            Blocks.DEEPSLATE_TILES,
-            Blocks.TUFF,
-            Blocks.CALCITE,
-            Blocks.DRIPSTONE_BLOCK,
-            Blocks.POINTED_DRIPSTONE,
-            Blocks.BEDROCK
-        }) ABSORPTION_MAP.put(b, 0.06f);
+                Blocks.STONE,
+                Blocks.COBBLESTONE,
+                Blocks.MOSSY_COBBLESTONE,
+                Blocks.STONE_BRICKS,
+                Blocks.MOSSY_STONE_BRICKS,
+                Blocks.CRACKED_STONE_BRICKS,
+                Blocks.CHISELED_STONE_BRICKS,
+                Blocks.SMOOTH_STONE,
+                Blocks.POLISHED_ANDESITE,
+                Blocks.POLISHED_DIORITE,
+                Blocks.POLISHED_GRANITE,
+                Blocks.ANDESITE,
+                Blocks.DIORITE,
+                Blocks.GRANITE,
+                Blocks.DEEPSLATE,
+                Blocks.POLISHED_DEEPSLATE,
+                Blocks.DEEPSLATE_BRICKS,
+                Blocks.DEEPSLATE_TILES,
+                Blocks.TUFF,
+                Blocks.CALCITE,
+                Blocks.DRIPSTONE_BLOCK,
+                Blocks.POINTED_DRIPSTONE,
+                Blocks.BEDROCK
+        })
+            ABSORPTION_MAP.put(b, 0.06f);
         for (Block b : new Block[] {
-            Blocks.OBSIDIAN,
-            Blocks.CRYING_OBSIDIAN,
-            Blocks.END_STONE,
-            Blocks.END_STONE_BRICKS,
-            Blocks.IRON_BLOCK,
-            Blocks.GOLD_BLOCK,
-            Blocks.DIAMOND_BLOCK,
-            Blocks.NETHERITE_BLOCK,
-            Blocks.COPPER_BLOCK,
-            Blocks.ANVIL,
-            Blocks.ICE,
-            Blocks.PACKED_ICE,
-            Blocks.BLUE_ICE
-        }) ABSORPTION_MAP.put(b, 0.02f);
-        for (Block b : new Block[] {Blocks.BRICKS, Blocks.NETHER_BRICKS, Blocks.RED_NETHER_BRICKS})
+                Blocks.OBSIDIAN,
+                Blocks.CRYING_OBSIDIAN,
+                Blocks.END_STONE,
+                Blocks.END_STONE_BRICKS,
+                Blocks.IRON_BLOCK,
+                Blocks.GOLD_BLOCK,
+                Blocks.DIAMOND_BLOCK,
+                Blocks.NETHERITE_BLOCK,
+                Blocks.COPPER_BLOCK,
+                Blocks.ANVIL,
+                Blocks.ICE,
+                Blocks.PACKED_ICE,
+                Blocks.BLUE_ICE
+        })
+            ABSORPTION_MAP.put(b, 0.02f);
+        for (Block b : new Block[] { Blocks.BRICKS, Blocks.NETHER_BRICKS, Blocks.RED_NETHER_BRICKS })
             ABSORPTION_MAP.put(b, 0.04f);
         for (Block b : new Block[] {
-            Blocks.WHITE_CONCRETE, Blocks.LIGHT_GRAY_CONCRETE, Blocks.GRAY_CONCRETE,
-            Blocks.BLACK_CONCRETE, Blocks.RED_CONCRETE, Blocks.ORANGE_CONCRETE,
-            Blocks.YELLOW_CONCRETE, Blocks.LIME_CONCRETE, Blocks.GREEN_CONCRETE,
-            Blocks.CYAN_CONCRETE, Blocks.LIGHT_BLUE_CONCRETE, Blocks.BLUE_CONCRETE,
-            Blocks.PURPLE_CONCRETE, Blocks.MAGENTA_CONCRETE, Blocks.PINK_CONCRETE,
-            Blocks.BROWN_CONCRETE
-        }) ABSORPTION_MAP.put(b, 0.05f);
+                Blocks.WHITE_CONCRETE, Blocks.LIGHT_GRAY_CONCRETE, Blocks.GRAY_CONCRETE,
+                Blocks.BLACK_CONCRETE, Blocks.RED_CONCRETE, Blocks.ORANGE_CONCRETE,
+                Blocks.YELLOW_CONCRETE, Blocks.LIME_CONCRETE, Blocks.GREEN_CONCRETE,
+                Blocks.CYAN_CONCRETE, Blocks.LIGHT_BLUE_CONCRETE, Blocks.BLUE_CONCRETE,
+                Blocks.PURPLE_CONCRETE, Blocks.MAGENTA_CONCRETE, Blocks.PINK_CONCRETE,
+                Blocks.BROWN_CONCRETE
+        })
+            ABSORPTION_MAP.put(b, 0.05f);
         for (Block b : new Block[] {
-            Blocks.TERRACOTTA, Blocks.WHITE_TERRACOTTA, Blocks.LIGHT_GRAY_TERRACOTTA,
-            Blocks.GRAY_TERRACOTTA, Blocks.BLACK_TERRACOTTA, Blocks.RED_TERRACOTTA,
-            Blocks.ORANGE_TERRACOTTA, Blocks.YELLOW_TERRACOTTA, Blocks.LIME_TERRACOTTA,
-            Blocks.GREEN_TERRACOTTA, Blocks.CYAN_TERRACOTTA, Blocks.LIGHT_BLUE_TERRACOTTA,
-            Blocks.BLUE_TERRACOTTA, Blocks.PURPLE_TERRACOTTA, Blocks.MAGENTA_TERRACOTTA,
-            Blocks.PINK_TERRACOTTA, Blocks.BROWN_TERRACOTTA
-        }) ABSORPTION_MAP.put(b, 0.06f);
+                Blocks.TERRACOTTA, Blocks.WHITE_TERRACOTTA, Blocks.LIGHT_GRAY_TERRACOTTA,
+                Blocks.GRAY_TERRACOTTA, Blocks.BLACK_TERRACOTTA, Blocks.RED_TERRACOTTA,
+                Blocks.ORANGE_TERRACOTTA, Blocks.YELLOW_TERRACOTTA, Blocks.LIME_TERRACOTTA,
+                Blocks.GREEN_TERRACOTTA, Blocks.CYAN_TERRACOTTA, Blocks.LIGHT_BLUE_TERRACOTTA,
+                Blocks.BLUE_TERRACOTTA, Blocks.PURPLE_TERRACOTTA, Blocks.MAGENTA_TERRACOTTA,
+                Blocks.PINK_TERRACOTTA, Blocks.BROWN_TERRACOTTA
+        })
+            ABSORPTION_MAP.put(b, 0.06f);
         for (Block b : new Block[] {
-            Blocks.GLASS,
-            Blocks.GLASS_PANE,
-            Blocks.WHITE_STAINED_GLASS,
-            Blocks.WHITE_STAINED_GLASS_PANE,
-            Blocks.TINTED_GLASS
-        }) ABSORPTION_MAP.put(b, 0.10f);
+                Blocks.GLASS,
+                Blocks.GLASS_PANE,
+                Blocks.WHITE_STAINED_GLASS,
+                Blocks.WHITE_STAINED_GLASS_PANE,
+                Blocks.TINTED_GLASS
+        })
+            ABSORPTION_MAP.put(b, 0.10f);
         for (Block b : new Block[] {
-            Blocks.PRISMARINE,
-            Blocks.PRISMARINE_BRICKS,
-            Blocks.DARK_PRISMARINE,
-            Blocks.QUARTZ_BLOCK,
-            Blocks.SMOOTH_QUARTZ,
-            Blocks.QUARTZ_BRICKS,
-            Blocks.QUARTZ_PILLAR
-        }) ABSORPTION_MAP.put(b, 0.04f);
+                Blocks.PRISMARINE,
+                Blocks.PRISMARINE_BRICKS,
+                Blocks.DARK_PRISMARINE,
+                Blocks.QUARTZ_BLOCK,
+                Blocks.SMOOTH_QUARTZ,
+                Blocks.QUARTZ_BRICKS,
+                Blocks.QUARTZ_PILLAR
+        })
+            ABSORPTION_MAP.put(b, 0.04f);
         // Medium Absorption (Wood, Dirt, Sand)
         for (Block b : new Block[] {
-            Blocks.OAK_PLANKS,
-            Blocks.SPRUCE_PLANKS,
-            Blocks.BIRCH_PLANKS,
-            Blocks.JUNGLE_PLANKS,
-            Blocks.ACACIA_PLANKS,
-            Blocks.DARK_OAK_PLANKS,
-            Blocks.MANGROVE_PLANKS,
-            Blocks.CHERRY_PLANKS,
-            Blocks.BAMBOO_PLANKS,
-            Blocks.CRIMSON_PLANKS,
-            Blocks.WARPED_PLANKS,
-            Blocks.OAK_LOG,
-            Blocks.SPRUCE_LOG,
-            Blocks.BIRCH_LOG,
-            Blocks.JUNGLE_LOG,
-            Blocks.ACACIA_LOG,
-            Blocks.DARK_OAK_LOG,
-            Blocks.MANGROVE_LOG,
-            Blocks.CHERRY_LOG,
-            Blocks.STRIPPED_OAK_LOG,
-            Blocks.STRIPPED_SPRUCE_LOG,
-            Blocks.STRIPPED_BIRCH_LOG,
-            Blocks.STRIPPED_JUNGLE_LOG
-        }) ABSORPTION_MAP.put(b, 0.15f);
+                Blocks.OAK_PLANKS,
+                Blocks.SPRUCE_PLANKS,
+                Blocks.BIRCH_PLANKS,
+                Blocks.JUNGLE_PLANKS,
+                Blocks.ACACIA_PLANKS,
+                Blocks.DARK_OAK_PLANKS,
+                Blocks.MANGROVE_PLANKS,
+                Blocks.CHERRY_PLANKS,
+                Blocks.BAMBOO_PLANKS,
+                Blocks.CRIMSON_PLANKS,
+                Blocks.WARPED_PLANKS,
+                Blocks.OAK_LOG,
+                Blocks.SPRUCE_LOG,
+                Blocks.BIRCH_LOG,
+                Blocks.JUNGLE_LOG,
+                Blocks.ACACIA_LOG,
+                Blocks.DARK_OAK_LOG,
+                Blocks.MANGROVE_LOG,
+                Blocks.CHERRY_LOG,
+                Blocks.STRIPPED_OAK_LOG,
+                Blocks.STRIPPED_SPRUCE_LOG,
+                Blocks.STRIPPED_BIRCH_LOG,
+                Blocks.STRIPPED_JUNGLE_LOG
+        })
+            ABSORPTION_MAP.put(b, 0.15f);
         for (Block b : new Block[] {
-            Blocks.DIRT, Blocks.COARSE_DIRT, Blocks.ROOTED_DIRT, Blocks.GRASS_BLOCK,
-            Blocks.PODZOL, Blocks.MYCELIUM, Blocks.FARMLAND, Blocks.DIRT_PATH,
-            Blocks.MUD, Blocks.MUDDY_MANGROVE_ROOTS
-        }) ABSORPTION_MAP.put(b, 0.25f);
+                Blocks.DIRT, Blocks.COARSE_DIRT, Blocks.ROOTED_DIRT, Blocks.GRASS_BLOCK,
+                Blocks.PODZOL, Blocks.MYCELIUM, Blocks.FARMLAND, Blocks.DIRT_PATH,
+                Blocks.MUD, Blocks.MUDDY_MANGROVE_ROOTS
+        })
+            ABSORPTION_MAP.put(b, 0.25f);
         for (Block b : new Block[] {
-            Blocks.SAND,
-            Blocks.RED_SAND,
-            Blocks.SANDSTONE,
-            Blocks.RED_SANDSTONE,
-            Blocks.SMOOTH_SANDSTONE,
-            Blocks.SMOOTH_RED_SANDSTONE,
-            Blocks.GRAVEL,
-            Blocks.CLAY,
-            Blocks.SOUL_SAND,
-            Blocks.SOUL_SOIL
-        }) ABSORPTION_MAP.put(b, 0.20f);
+                Blocks.SAND,
+                Blocks.RED_SAND,
+                Blocks.SANDSTONE,
+                Blocks.RED_SANDSTONE,
+                Blocks.SMOOTH_SANDSTONE,
+                Blocks.SMOOTH_RED_SANDSTONE,
+                Blocks.GRAVEL,
+                Blocks.CLAY,
+                Blocks.SOUL_SAND,
+                Blocks.SOUL_SOIL
+        })
+            ABSORPTION_MAP.put(b, 0.20f);
         ABSORPTION_MAP.put(Blocks.BOOKSHELF, 0.35f);
         ABSORPTION_MAP.put(Blocks.CHISELED_BOOKSHELF, 0.35f);
         // High Absorption (Soft materials)
         for (Block b : new Block[] {
-            Blocks.WHITE_WOOL, Blocks.LIGHT_GRAY_WOOL, Blocks.GRAY_WOOL, Blocks.BLACK_WOOL,
-            Blocks.RED_WOOL, Blocks.ORANGE_WOOL, Blocks.YELLOW_WOOL, Blocks.LIME_WOOL,
-            Blocks.GREEN_WOOL, Blocks.CYAN_WOOL, Blocks.LIGHT_BLUE_WOOL, Blocks.BLUE_WOOL,
-            Blocks.PURPLE_WOOL, Blocks.MAGENTA_WOOL, Blocks.PINK_WOOL, Blocks.BROWN_WOOL
-        }) ABSORPTION_MAP.put(b, 0.80f);
+                Blocks.WHITE_WOOL, Blocks.LIGHT_GRAY_WOOL, Blocks.GRAY_WOOL, Blocks.BLACK_WOOL,
+                Blocks.RED_WOOL, Blocks.ORANGE_WOOL, Blocks.YELLOW_WOOL, Blocks.LIME_WOOL,
+                Blocks.GREEN_WOOL, Blocks.CYAN_WOOL, Blocks.LIGHT_BLUE_WOOL, Blocks.BLUE_WOOL,
+                Blocks.PURPLE_WOOL, Blocks.MAGENTA_WOOL, Blocks.PINK_WOOL, Blocks.BROWN_WOOL
+        })
+            ABSORPTION_MAP.put(b, 0.80f);
         for (Block b : new Block[] {
-            Blocks.WHITE_CARPET, Blocks.LIGHT_GRAY_CARPET, Blocks.GRAY_CARPET, Blocks.BLACK_CARPET,
-            Blocks.RED_CARPET, Blocks.ORANGE_CARPET, Blocks.YELLOW_CARPET, Blocks.LIME_CARPET,
-            Blocks.GREEN_CARPET, Blocks.CYAN_CARPET, Blocks.LIGHT_BLUE_CARPET, Blocks.BLUE_CARPET,
-            Blocks.PURPLE_CARPET, Blocks.MAGENTA_CARPET, Blocks.PINK_CARPET, Blocks.BROWN_CARPET,
-            Blocks.MOSS_CARPET
-        }) ABSORPTION_MAP.put(b, 0.70f);
-        for (Block b : new Block[] {Blocks.SNOW_BLOCK, Blocks.SNOW, Blocks.POWDER_SNOW}) ABSORPTION_MAP.put(b, 0.65f);
+                Blocks.WHITE_CARPET, Blocks.LIGHT_GRAY_CARPET, Blocks.GRAY_CARPET, Blocks.BLACK_CARPET,
+                Blocks.RED_CARPET, Blocks.ORANGE_CARPET, Blocks.YELLOW_CARPET, Blocks.LIME_CARPET,
+                Blocks.GREEN_CARPET, Blocks.CYAN_CARPET, Blocks.LIGHT_BLUE_CARPET, Blocks.BLUE_CARPET,
+                Blocks.PURPLE_CARPET, Blocks.MAGENTA_CARPET, Blocks.PINK_CARPET, Blocks.BROWN_CARPET,
+                Blocks.MOSS_CARPET
+        })
+            ABSORPTION_MAP.put(b, 0.70f);
+        for (Block b : new Block[] { Blocks.SNOW_BLOCK, Blocks.SNOW, Blocks.POWDER_SNOW })
+            ABSORPTION_MAP.put(b, 0.65f);
         for (Block b : new Block[] {
-            Blocks.OAK_LEAVES,
-            Blocks.SPRUCE_LEAVES,
-            Blocks.BIRCH_LEAVES,
-            Blocks.JUNGLE_LEAVES,
-            Blocks.ACACIA_LEAVES,
-            Blocks.DARK_OAK_LEAVES,
-            Blocks.MANGROVE_LEAVES,
-            Blocks.CHERRY_LEAVES,
-            Blocks.AZALEA_LEAVES,
-            Blocks.FLOWERING_AZALEA_LEAVES
-        }) ABSORPTION_MAP.put(b, 0.40f);
+                Blocks.OAK_LEAVES,
+                Blocks.SPRUCE_LEAVES,
+                Blocks.BIRCH_LEAVES,
+                Blocks.JUNGLE_LEAVES,
+                Blocks.ACACIA_LEAVES,
+                Blocks.DARK_OAK_LEAVES,
+                Blocks.MANGROVE_LEAVES,
+                Blocks.CHERRY_LEAVES,
+                Blocks.AZALEA_LEAVES,
+                Blocks.FLOWERING_AZALEA_LEAVES
+        })
+            ABSORPTION_MAP.put(b, 0.40f);
         ABSORPTION_MAP.put(Blocks.MOSS_BLOCK, 0.55f);
         ABSORPTION_MAP.put(Blocks.SPONGE, 0.75f);
         ABSORPTION_MAP.put(Blocks.WET_SPONGE, 0.75f);
         ABSORPTION_MAP.put(Blocks.HAY_BLOCK, 0.65f);
         for (Block b : new Block[] {
-            Blocks.WHITE_BED, Blocks.LIGHT_GRAY_BED, Blocks.GRAY_BED, Blocks.BLACK_BED,
-            Blocks.RED_BED, Blocks.ORANGE_BED, Blocks.YELLOW_BED, Blocks.LIME_BED,
-            Blocks.GREEN_BED, Blocks.CYAN_BED, Blocks.LIGHT_BLUE_BED, Blocks.BLUE_BED,
-            Blocks.PURPLE_BED, Blocks.MAGENTA_BED, Blocks.PINK_BED, Blocks.BROWN_BED
-        }) ABSORPTION_MAP.put(b, 0.50f);
+                Blocks.WHITE_BED, Blocks.LIGHT_GRAY_BED, Blocks.GRAY_BED, Blocks.BLACK_BED,
+                Blocks.RED_BED, Blocks.ORANGE_BED, Blocks.YELLOW_BED, Blocks.LIME_BED,
+                Blocks.GREEN_BED, Blocks.CYAN_BED, Blocks.LIGHT_BLUE_BED, Blocks.BLUE_BED,
+                Blocks.PURPLE_BED, Blocks.MAGENTA_BED, Blocks.PINK_BED, Blocks.BROWN_BED
+        })
+            ABSORPTION_MAP.put(b, 0.50f);
         // Nether
         for (Block b : new Block[] {
-            Blocks.NETHERRACK,
-            Blocks.NETHER_BRICKS,
-            Blocks.BASALT,
-            Blocks.SMOOTH_BASALT,
-            Blocks.POLISHED_BASALT,
-            Blocks.BLACKSTONE,
-            Blocks.POLISHED_BLACKSTONE,
-            Blocks.POLISHED_BLACKSTONE_BRICKS,
-            Blocks.GILDED_BLACKSTONE
-        }) ABSORPTION_MAP.put(b, 0.04f);
-        for (Block b : new Block[] {Blocks.NETHER_WART_BLOCK, Blocks.WARPED_WART_BLOCK, Blocks.SHROOMLIGHT})
+                Blocks.NETHERRACK,
+                Blocks.NETHER_BRICKS,
+                Blocks.BASALT,
+                Blocks.SMOOTH_BASALT,
+                Blocks.POLISHED_BASALT,
+                Blocks.BLACKSTONE,
+                Blocks.POLISHED_BLACKSTONE,
+                Blocks.POLISHED_BLACKSTONE_BRICKS,
+                Blocks.GILDED_BLACKSTONE
+        })
+            ABSORPTION_MAP.put(b, 0.04f);
+        for (Block b : new Block[] { Blocks.NETHER_WART_BLOCK, Blocks.WARPED_WART_BLOCK, Blocks.SHROOMLIGHT })
             ABSORPTION_MAP.put(b, 0.30f);
-        for (Block b : new Block[] {Blocks.SCULK, Blocks.SCULK_CATALYST, Blocks.SCULK_VEIN})
+        for (Block b : new Block[] { Blocks.SCULK, Blocks.SCULK_CATALYST, Blocks.SCULK_VEIN })
             ABSORPTION_MAP.put(b, 0.50f);
         ABSORPTION_MAP.put(Blocks.AMETHYST_BLOCK, 0.08f);
         ABSORPTION_MAP.put(Blocks.BUDDING_AMETHYST, 0.08f);
@@ -489,15 +504,21 @@ public class AdvancedAcousticScanner {
     }
 
     private boolean isAcousticObstacle(BlockState state, World world, BlockPos pos) {
-        if (state.isAir()) return false;
+        if (state.isAir())
+            return false;
         net.minecraft.block.Block block = state.getBlock();
         // Trees and plants scatter sound, they don't enclose spaces
-        if (block instanceof net.minecraft.block.LeavesBlock) return false;
-        if (block instanceof net.minecraft.block.PlantBlock) return false;
+        if (block instanceof net.minecraft.block.LeavesBlock)
+            return false;
+        if (block instanceof net.minecraft.block.PlantBlock)
+            return false;
         // Speaker blocks emit sound — they shouldn't block venue scanning rays
-        if (block instanceof com.audiophilecraft.block.SpeakerBlock) return false;
-        // If the block has no physical collision (like signs, string, etc.), it's transparent
-        if (state.getCollisionShape(world, pos).isEmpty()) return false;
+        if (block instanceof com.audiophilecraft.block.SpeakerBlock)
+            return false;
+        // If the block has no physical collision (like signs, string, etc.), it's
+        // transparent
+        if (state.getCollisionShape(world, pos).isEmpty())
+            return false;
         return true;
     }
 
@@ -592,9 +613,12 @@ public class AdvancedAcousticScanner {
             if (distances[i] < MAX_RAY_DIST) {
                 wallsHit++;
                 totalDist += distances[i];
-                if (distances[i] <= 5.0f) nearHits++;
-                else if (distances[i] <= 15.0f) midHits++;
-                else farHits++;
+                if (distances[i] <= 5.0f)
+                    nearHits++;
+                else if (distances[i] <= 15.0f)
+                    midHits++;
+                else
+                    farHits++;
             } else {
                 skyEscapes++;
             }
@@ -627,7 +651,8 @@ public class AdvancedAcousticScanner {
         // Collect only wall-hit distances (exclude sky escapes)
         int wallHitCount = 0;
         for (int i = 0; i < RAY_COUNT; i++) {
-            if (distances[i] < MAX_RAY_DIST) wallHitCount++;
+            if (distances[i] < MAX_RAY_DIST)
+                wallHitCount++;
         }
 
         float volumeCap = MAX_RAY_DIST; // Default: no capping
@@ -635,7 +660,8 @@ public class AdvancedAcousticScanner {
             float[] sorted = new float[wallHitCount];
             int idx = 0;
             for (int i = 0; i < RAY_COUNT; i++) {
-                if (distances[i] < MAX_RAY_DIST) sorted[idx++] = distances[i];
+                if (distances[i] < MAX_RAY_DIST)
+                    sorted[idx++] = distances[i];
             }
             java.util.Arrays.sort(sorted);
 
@@ -645,7 +671,8 @@ public class AdvancedAcousticScanner {
             volumeCap = q3 + 1.5f * iqr;
             // Safety floor: never cap below 10 blocks (prevents over-capping in
             // perfectly uniform tiny rooms where IQR ≈ 0)
-            if (volumeCap < 10.0f) volumeCap = Math.max(10.0f, q3 * 2.0f);
+            if (volumeCap < 10.0f)
+                volumeCap = Math.max(10.0f, q3 * 2.0f);
         }
 
         float sumCubeDist = 0;
@@ -663,7 +690,8 @@ public class AdvancedAcousticScanner {
             }
         }
 
-        if (validVolumeRays == 0) validVolumeRays = 1; // Failsafe
+        if (validVolumeRays == 0)
+            validVolumeRays = 1; // Failsafe
 
         // Monte Carlo True Geometric Volume: (4/3 * Pi) * average(r^3)
         float averageCubeDist = sumCubeDist / (float) validVolumeRays;
@@ -726,7 +754,8 @@ public class AdvancedAcousticScanner {
     }
 
     public VenueDescriptor mergeProbes(java.util.List<ProbeResult> probes) {
-        if (probes.isEmpty()) return null;
+        if (probes.isEmpty())
+            return null;
 
         float totalWeight = probes.size();
         float wEnclosure = 0, wAbsorption = 0;
@@ -786,7 +815,8 @@ public class AdvancedAcousticScanner {
      * @return Combined and per-group acoustic profiles
      */
     public AcousticSceneScanResult scanEmitterGroups(World world, java.util.List<Vec3d> clusterCenters) {
-        if (world == null || clusterCenters == null || clusterCenters.isEmpty()) return null;
+        if (world == null || clusterCenters == null || clusterCenters.isEmpty())
+            return null;
 
         java.util.List<Vec3d> currentCloud = new java.util.ArrayList<>();
         java.util.List<ProbeResult> probes = new java.util.ArrayList<>();
@@ -808,7 +838,8 @@ public class AdvancedAcousticScanner {
         }
 
         VenueDescriptor desc = mergeProbes(probes);
-        if (desc == null) return null;
+        if (desc == null)
+            return null;
 
         // Use the first cluster's position as the reference probe position for the
         // preset
@@ -853,10 +884,13 @@ public class AdvancedAcousticScanner {
         return new AcousticScanResult(profile, pointCloud, hitBlocks);
     }
 
-    /** Compatibility entry point for callers that only need the calculated preset. */
+    /**
+     * Compatibility entry point for callers that only need the calculated preset.
+     */
     public VenuePreset scanVenue(World world, java.util.List<Vec3d> clusterCenters) {
         AcousticScanResult result = scanProfile(world, clusterCenters);
-        if (result == null) return null;
+        if (result == null)
+            return null;
         publishDebugResult(result);
         return result.profile().preset();
     }
@@ -867,22 +901,30 @@ public class AdvancedAcousticScanner {
 
     /**
      * Compute a probe-position-independent volume from the aggregated point cloud.
-     * Uses axis-aligned bounding box: (maxX - minX) × (maxY - minY) × (maxZ - minZ).
+     * Uses axis-aligned bounding box: (maxX - minX) × (maxY - minY) × (maxZ -
+     * minZ).
      * The point cloud already captures all surfaces hit by rays across all probes.
      */
     private static float computeBoundingBoxVolume(java.util.List<Vec3d> pointCloud) {
-        if (pointCloud == null || pointCloud.isEmpty()) return 1000.0f;
+        if (pointCloud == null || pointCloud.isEmpty())
+            return 1000.0f;
 
         float minX = Float.MAX_VALUE, minY = Float.MAX_VALUE, minZ = Float.MAX_VALUE;
         float maxX = -Float.MAX_VALUE, maxY = -Float.MAX_VALUE, maxZ = -Float.MAX_VALUE;
 
         for (Vec3d pt : pointCloud) {
-            if (pt.x < minX) minX = (float) pt.x;
-            if (pt.y < minY) minY = (float) pt.y;
-            if (pt.z < minZ) minZ = (float) pt.z;
-            if (pt.x > maxX) maxX = (float) pt.x;
-            if (pt.y > maxY) maxY = (float) pt.y;
-            if (pt.z > maxZ) maxZ = (float) pt.z;
+            if (pt.x < minX)
+                minX = (float) pt.x;
+            if (pt.y < minY)
+                minY = (float) pt.y;
+            if (pt.z < minZ)
+                minZ = (float) pt.z;
+            if (pt.x > maxX)
+                maxX = (float) pt.x;
+            if (pt.y > maxY)
+                maxY = (float) pt.y;
+            if (pt.z > maxZ)
+                maxZ = (float) pt.z;
         }
 
         float dx = Math.max(0.1f, maxX - minX);
@@ -918,8 +960,8 @@ public class AdvancedAcousticScanner {
         // using an exponential curve.
         // Even 16% openness mathematically means the entire ceiling is gone, so
         // enclosure must drop sharply.
-        float opennessPenalty =
-                (float) Math.pow(Math.max(0.0f, 1.0f - vOpenness), cfg.openAir_enclosure_penalty_exponent);
+        float opennessPenalty = (float) Math.pow(Math.max(0.0f, 1.0f - vOpenness),
+                cfg.openAir_enclosure_penalty_exponent);
         float effectiveEnclosure = vEnclosure * opennessPenalty;
         effectiveEnclosure = Math.max(0.0f, Math.min(1.0f, effectiveEnclosure));
 
@@ -934,11 +976,13 @@ public class AdvancedAcousticScanner {
 
         // Pure Sabine RT60 governs the decay without artificial enclosure curves.
 
-        if (vDecay < 0.1f) vDecay = 0.1f;
+        if (vDecay < 0.1f)
+            vDecay = 0.1f;
 
         // Open-air decay hard caps removed; Sabine handles open-air volume dynamically.
 
-        if (vDecay > 15.0f) vDecay = 15.0f;
+        if (vDecay > 15.0f)
+            vDecay = 15.0f;
 
         // ─── REVERB GAIN ────────────────────────────────────────────
         // Use effectiveEnclosure for gain calculation.
@@ -977,10 +1021,10 @@ public class AdvancedAcousticScanner {
             vDecay *= cfg.tier10_decayMul;
             vGain = Math.max(cfg.tier10_minGain, baseEnclosureMultiplier * cfg.tier10_gainMul);
             vReflGain = Math.max(0.0f, reflectionMaterialFactor * cfg.tier10_reflGainMul);
-            float maxLate10 =
-                    lerp(cfg.tier10_maxLateMultiplier_lowEncl, cfg.tier10_maxLateMultiplier_highEncl, enclBlend);
-            lateReverbMultiplier =
-                    Math.min(cfg.tier10_lateReverbMul + (roomFactor * cfg.tier10_lateReverbRoomScale), maxLate10);
+            float maxLate10 = lerp(cfg.tier10_maxLateMultiplier_lowEncl, cfg.tier10_maxLateMultiplier_highEncl,
+                    enclBlend);
+            lateReverbMultiplier = Math.min(cfg.tier10_lateReverbMul + (roomFactor * cfg.tier10_lateReverbRoomScale),
+                    maxLate10);
             vGainHF *= cfg.tier10_hfMul;
             vGainLF *= cfg.tier10_lfMul;
         } else if (tier9) {
@@ -989,8 +1033,8 @@ public class AdvancedAcousticScanner {
             vGain = Math.max(cfg.tier9_minGain, baseEnclosureMultiplier * cfg.tier9_gainMul);
             vReflGain = Math.max(0.0f, reflectionMaterialFactor * cfg.tier9_reflGainMul);
             float maxLate9 = lerp(cfg.tier9_maxLateMultiplier_lowEncl, cfg.tier9_maxLateMultiplier_highEncl, enclBlend);
-            lateReverbMultiplier =
-                    Math.min(cfg.tier9_lateReverbMul + (roomFactor * cfg.tier9_lateReverbRoomScale), maxLate9);
+            lateReverbMultiplier = Math.min(cfg.tier9_lateReverbMul + (roomFactor * cfg.tier9_lateReverbRoomScale),
+                    maxLate9);
             vGainHF *= cfg.tier9_hfMul;
             vGainLF *= cfg.tier9_lfMul;
         } else if (tier8) {
@@ -999,8 +1043,8 @@ public class AdvancedAcousticScanner {
             vGain = Math.max(cfg.tier8_minGain, baseEnclosureMultiplier * cfg.tier8_gainMul);
             vReflGain = Math.max(0.0f, reflectionMaterialFactor * cfg.tier8_reflGainMul);
             float maxLate8 = lerp(cfg.tier8_maxLateMultiplier_lowEncl, cfg.tier8_maxLateMultiplier_highEncl, enclBlend);
-            lateReverbMultiplier =
-                    Math.min(cfg.tier8_lateReverbMul + (roomFactor * cfg.tier8_lateReverbRoomScale), maxLate8);
+            lateReverbMultiplier = Math.min(cfg.tier8_lateReverbMul + (roomFactor * cfg.tier8_lateReverbRoomScale),
+                    maxLate8);
             vGainHF *= cfg.tier8_hfMul;
             vGainLF *= cfg.tier8_lfMul;
         } else if (tier7) {
@@ -1008,10 +1052,10 @@ public class AdvancedAcousticScanner {
             vDecay *= cfg.tier7_decayMul;
             vGain = Math.max(cfg.tier7_minGain, baseEnclosureMultiplier * cfg.tier7_gainMul);
             vReflGain = Math.max(0.0f, reflectionMaterialFactor * cfg.tier7_reflGainMul);
-            float maxLateMultiplier =
-                    lerp(cfg.tier7_maxLateMultiplier_lowEncl, cfg.tier7_maxLateMultiplier_highEncl, enclBlend);
-            lateReverbMultiplier =
-                    Math.min(cfg.tier7_lateReverbMul + (roomFactor * cfg.tier7_lateReverbRoomScale), maxLateMultiplier);
+            float maxLateMultiplier = lerp(cfg.tier7_maxLateMultiplier_lowEncl, cfg.tier7_maxLateMultiplier_highEncl,
+                    enclBlend);
+            lateReverbMultiplier = Math.min(cfg.tier7_lateReverbMul + (roomFactor * cfg.tier7_lateReverbRoomScale),
+                    maxLateMultiplier);
             vGainHF *= cfg.tier7_hfMul;
             vGainLF *= cfg.tier7_lfMul;
         } else if (effectiveVolume > cfg.tier6_volumeThreshold || effectiveMeanDist > cfg.tier6_distThreshold) {
@@ -1085,8 +1129,8 @@ public class AdvancedAcousticScanner {
         // Late reverb requires high-order multi-path reflections. In open spaces,
         // energy escapes before forming a tail, so it drops exponentially.
         float tailRetention = (float) Math.pow(effectiveEnclosure, cfg.openAir_enclosure_penalty_exponent);
-        float openAirTailMultiplier =
-                cfg.openAir_dynamic_lateReverbMul + (tailRetention * (1.0f - cfg.openAir_dynamic_lateReverbMul));
+        float openAirTailMultiplier = cfg.openAir_dynamic_lateReverbMul
+                + (tailRetention * (1.0f - cfg.openAir_dynamic_lateReverbMul));
         lateReverbMultiplier *= openAirTailMultiplier;
         vGainHF *= cfg.openAir_dynamic_hfMul;
         vGainLF *= cfg.openAir_dynamic_lfMul;
@@ -1150,18 +1194,20 @@ public class AdvancedAcousticScanner {
             tierDiffusion = cfg.tier1_diffusion;
         }
 
-        if (tierDensity >= 0.0f) vDensity = tierDensity;
-        if (tierDiffusion >= 0.0f) vDiffusion = tierDiffusion;
+        if (tierDensity >= 0.0f)
+            vDensity = tierDensity;
+        if (tierDiffusion >= 0.0f)
+            vDiffusion = tierDiffusion;
 
         // Dynamic HF Decay Ratio
-        float hfRatio = 1.05f - (vAvgAbsorption * 0.45f) - ((1.0f - effectiveEnclosure) * 0.15f);
-        float vHFRatio = Math.max(0.45f, Math.min(hfRatio, 1.05f));
+        float hfRatio = 0.80f - (vAvgAbsorption * 0.45f) - ((1.0f - effectiveEnclosure) * 0.15f);
+        float vHFRatio = Math.max(0.20f, Math.min(hfRatio, 0.80f));
 
         // Dynamic LF Decay Ratio
         float volumeScale = Math.min(vVolume / 30000.0f, 1.0f);
         float openAirPenaltyLF = (1.0f - effectiveEnclosure) * 0.15f;
-        float lfRatio = 0.70f - (volumeScale * 0.15f) - openAirPenaltyLF;
-        float vLFRatio = Math.max(0.40f, Math.min(lfRatio, 0.70f));
+        float lfRatio = 1.20f - (volumeScale * 0.15f) - openAirPenaltyLF;
+        float vLFRatio = Math.max(0.80f, Math.min(lfRatio, 1.20f));
 
         boolean vHFLimit = vAvgAbsorption < 0.2f;
         float vAirAbs = vMeanDist > 15.0f ? 0.95f : 0.994f;
