@@ -37,7 +37,9 @@ public class AudiophileCraftClient implements ClientModInitializer {
             }
 
             if (client.player != null && client.world != null) {
-                com.audiophilecraft.sound.AudioEngine.getInstance().updateSourcesTick(client.world);
+                com.audiophilecraft.sound.AudioEngine engine = com.audiophilecraft.sound.AudioEngine.getInstance();
+                engine.updateAudioDeviceFallback();
+                engine.updateSourcesTick(client.world);
             }
         });
 

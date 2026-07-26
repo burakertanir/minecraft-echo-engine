@@ -2,6 +2,8 @@ package com.audiophilecraft.sound;
 
 import java.nio.IntBuffer;
 import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.HashMap;
 import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
@@ -27,6 +29,10 @@ import org.lwjgl.openal.ALCapabilities;
  * synchronization contract.
  */
 final class AudioRuntimeController {
+    private static final int ECHO_GROUP_COUNT = 9;
+    private static final float ECHO_NORMALIZATION_EPSILON = 0.000001f;
+    private static final float ECHO_NORMALIZATION_RECOVERY = 0.25f;
+
     private final Object lifecycleLock;
     private final Map<UUID, PlaybackSession> sessions;
     private final Supplier<PlaybackSession> activeSessionSupplier;
@@ -34,6 +40,7 @@ final class AudioRuntimeController {
     private final ReverbBusAllocator reverbBusAllocator;
     private final AudioPlaybackController playback;
     private final IntBuffer reusableRestartBuffer = BufferUtils.createIntBuffer(1024);
+    private final Map<PlaybackSession, float[]> echoNormalizationFactors = new HashMap<>();
 
     private volatile Vec3d listenerPosition = Vec3d.ZERO;
     private volatile Vec3d smoothedListenerPosition = Vec3d.ZERO;
@@ -175,15 +182,77 @@ final class AudioRuntimeController {
             session.getStreamSources().removeAll(sourcesToRemove);
 
             if (session.getStreamSources().isEmpty()) {
+                echoNormalizationFactors.remove(session);
                 playback.cancelUrlRequest(entry.getKey());
                 synchronized (lifecycleLock) {
                     session.stopAll();
                     sessionIterator.remove();
                 }
                 removedSession = true;
+            } else {
+                normalizeEchoSends(session);
             }
         }
         return removedSession;
+    }
+
+    private void normalizeEchoSends(PlaybackSession session) {
+        float[] totalContributions = new float[ECHO_GROUP_COUNT];
+        float[] strongestContributions = new float[ECHO_GROUP_COUNT];
+        boolean[] activeGroups = new boolean[ECHO_GROUP_COUNT];
+
+        for (StreamSource source : session.getStreamSources()) {
+            if (!source.isValid) continue;
+
+            int groupIndex = echoGroupIndex(source);
+            float contribution = Math.max(0.0f, source.getPendingEchoContribution());
+            totalContributions[groupIndex] += contribution;
+            strongestContributions[groupIndex] = Math.max(strongestContributions[groupIndex], contribution);
+            activeGroups[groupIndex] = true;
+        }
+
+        float[] normalizationFactors = echoNormalizationFactors.computeIfAbsent(session, ignored -> {
+            float[] factors = new float[ECHO_GROUP_COUNT];
+            Arrays.fill(factors, 1.0f);
+            return factors;
+        });
+        for (int groupIndex = 0; groupIndex < ECHO_GROUP_COUNT; groupIndex++) {
+            if (!activeGroups[groupIndex]) {
+                normalizationFactors[groupIndex] = 1.0f;
+                continue;
+            }
+
+            float totalContribution = totalContributions[groupIndex];
+            float targetFactor = 1.0f;
+            if (totalContribution > ECHO_NORMALIZATION_EPSILON) {
+                targetFactor = strongestContributions[groupIndex] / totalContribution;
+            }
+
+            float previousFactor = normalizationFactors[groupIndex];
+            float normalizedFactor = targetFactor;
+            if (targetFactor > previousFactor) {
+                normalizedFactor = previousFactor + (targetFactor - previousFactor) * ECHO_NORMALIZATION_RECOVERY;
+            }
+            normalizationFactors[groupIndex] = normalizedFactor;
+        }
+
+        for (StreamSource source : session.getStreamSources()) {
+            if (!source.isValid) continue;
+            source.applyEchoNormalization(normalizationFactors[echoGroupIndex(source)]);
+        }
+    }
+
+    private int echoGroupIndex(StreamSource source) {
+        int speakerTypeIndex;
+        if (AudioEngine.TYPE_SUB.equals(source.speakerType)) {
+            speakerTypeIndex = 0;
+        } else if (AudioEngine.TYPE_MID.equals(source.speakerType)) {
+            speakerTypeIndex = 1;
+        } else {
+            speakerTypeIndex = 2;
+        }
+        int channelIndex = Math.max(0, Math.min(2, source.getChannelMask()));
+        return speakerTypeIndex * 3 + channelIndex;
     }
 
     private void updateListenerAcoustics(World world) {
@@ -248,6 +317,7 @@ final class AudioRuntimeController {
 
     void stopSessionContents(PlaybackSession session) {
         if (session == null) return;
+        echoNormalizationFactors.remove(session);
         session.stopAll();
         refreshReverbBusAssignments();
     }
@@ -256,6 +326,7 @@ final class AudioRuntimeController {
         playback.cancelUrlRequest(sessionId);
         PlaybackSession session = sessions.remove(sessionId);
         if (session != null) {
+            echoNormalizationFactors.remove(session);
             session.stopAll();
         }
         refreshReverbBusAssignments();
@@ -268,8 +339,43 @@ final class AudioRuntimeController {
             session.stopAll();
         }
         sessions.clear();
+        echoNormalizationFactors.clear();
         reverbBusAllocator.reset();
         checkAndShutdownThread();
+    }
+
+    boolean hasNativeAudioResources() {
+        for (PlaybackSession session : sessions.values()) {
+            if (!session.getStreamSources().isEmpty()) return true;
+        }
+        return false;
+    }
+
+    boolean nativeSourcesValid() {
+        for (PlaybackSession session : sessions.values()) {
+            for (StreamSource source : session.getStreamSources()) {
+                if (source.isValid && !AL10.alIsSource(source.sourceId)) return false;
+            }
+        }
+        return true;
+    }
+
+    void abandonAfterAudioDeviceLoss() {
+        playback.abandonAfterAudioDeviceLoss();
+        synchronized (lifecycleLock) {
+            if (audioThread != null) {
+                audioThread.shutdownNow();
+                audioThread = null;
+            }
+
+            for (PlaybackSession session : sessions.values()) {
+                session.abandonAfterAudioDeviceLoss();
+            }
+            sessions.clear();
+            echoNormalizationFactors.clear();
+            reusableRestartBuffer.clear();
+            reverbBusAllocator.abandonAssignments();
+        }
     }
 
     private void checkAndShutdownThread() {

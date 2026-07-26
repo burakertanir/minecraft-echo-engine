@@ -13,12 +13,23 @@ final class AudioEffectsController {
     private static final float[] ZERO_PAN = {0f, 0f, 0f};
     private static final int PRIMARY_ROOM_BUS = 0;
     private static final int SECONDARY_ROOM_BUS = 1;
+    private static final int LISTENER_REFLECTION_RANGE_BLOCKS = 30;
+    private static final float ECHO_PROXIMITY_KNEE_START = 0.65f;
+    private static final float ECHO_PROXIMITY_LIMIT = 0.78f;
+    private static final float ECHO_GAIN_ATTACK = 0.30f;
+    private static final float ECHO_GAIN_RELEASE = 0.20f;
+    private static final int[][] LISTENER_SCAN_DIRECTIONS = {
+        {1, 0, 0}, {-1, 0, 0},
+        {0, 1, 0}, {0, -1, 0},
+        {0, 0, 1}, {0, 0, -1}
+    };
 
     private final AdvancedAcousticScanner acousticScanner = new AdvancedAcousticScanner();
     private final RoomReverbBus[] roomBuses = {new RoomReverbBus(), new RoomReverbBus()};
     private final AcousticProfile[] roomBusProfiles = new AcousticProfile[2];
     private final float[] roomBusMixGains = {1.0f, 1.0f};
     private final float[] smoothedRoomBusOcclusion = {1.0f, 1.0f};
+    private final BlockPos.Mutable listenerScanPosition = new BlockPos.Mutable();
 
     private int slapbackEffectId;
     private int slapbackAuxSlotId;
@@ -28,6 +39,7 @@ final class AudioEffectsController {
     private volatile float currentReflectionGainMultiplier = 1.0f;
     private volatile float currentReflectionDelay = -1.0f;
     private volatile float currentSlapbackGain;
+    private boolean slapbackGainInitialized;
     private AdvancedAcousticScanner.VenueDescriptor storedVenueDescriptor;
     private Vec3d storedVenueProbePos;
     private long lastConfigGeneration;
@@ -65,6 +77,19 @@ final class AudioEffectsController {
 
     int getSlapbackAuxSlotId() {
         return slapbackAuxSlotId;
+    }
+
+    boolean isInitialized() {
+        return initialized;
+    }
+
+    boolean nativeResourcesValid() {
+        if (!initialized || !roomBuses[PRIMARY_ROOM_BUS].nativeResourcesValid()) return false;
+        if ((slapbackEffectId == 0) != (slapbackAuxSlotId == 0)) return false;
+        if (slapbackEffectId != 0 && (!alIsEffect(slapbackEffectId) || !alIsAuxiliaryEffectSlot(slapbackAuxSlotId))) {
+            return false;
+        }
+        return !roomBuses[SECONDARY_ROOM_BUS].isAvailable() || roomBuses[SECONDARY_ROOM_BUS].nativeResourcesValid();
     }
 
     float getSlapbackGain() {
@@ -229,81 +254,82 @@ final class AudioEffectsController {
     }
 
     void updateListenerAcoustics(World world, Vec3d listenerPosition) {
-        updateListenerReflections(world, listenerPosition);
-        updateListenerSlapback(world, listenerPosition);
-    }
+        boolean reflectionsAvailable = venuePreset != null && roomBuses[PRIMARY_ROOM_BUS].isAvailable();
+        boolean slapbackAvailable = slapbackEffectId != 0 && slapbackAuxSlotId != 0;
+        if (world == null || listenerPosition == null || (!reflectionsAvailable && !slapbackAvailable)) return;
 
-    private void updateListenerReflections(World world, Vec3d listenerPosition) {
-        if (venuePreset == null || !roomBuses[PRIMARY_ROOM_BUS].isAvailable()) return;
-        float[][] directions = {
-            {1, 0, 0}, {-1, 0, 0},
-            {0, 1, 0}, {0, -1, 0},
-            {0, 0, 1}, {0, 0, -1}
-        };
-        int maxDistance = 10;
-        float minimumDistance = maxDistance;
+        float minimumDistance = LISTENER_REFLECTION_RANGE_BLOCKS;
+        float proximityEnergySum = 0.0f;
+        float weightedAbsorptionSum = 0.0f;
+        float absorptionWeight = 0.0f;
 
-        for (float[] direction : directions) {
-            float hitDistance = maxDistance;
-            BlockPos.Mutable checkPosition = new BlockPos.Mutable();
-            for (int step = 1; step <= maxDistance; step++) {
-                checkPosition.set(
+        for (int[] direction : LISTENER_SCAN_DIRECTIONS) {
+            float hitDistance = LISTENER_REFLECTION_RANGE_BLOCKS;
+            float absorption = 0.0f;
+            for (int step = 1; step <= LISTENER_REFLECTION_RANGE_BLOCKS; step++) {
+                listenerScanPosition.set(
                         (int) Math.floor(listenerPosition.x + direction[0] * step),
                         (int) Math.floor(listenerPosition.y + direction[1] * step),
                         (int) Math.floor(listenerPosition.z + direction[2] * step));
-                net.minecraft.block.BlockState state = world.getBlockState(checkPosition);
-                if (state.isSolidBlock(world, checkPosition)) {
+                net.minecraft.block.BlockState state = world.getBlockState(listenerScanPosition);
+                if (state.isSolidBlock(world, listenerScanPosition)) {
                     hitDistance = step;
+                    if (slapbackAvailable) {
+                        absorption = AdvancedAcousticScanner.getAbsorptionForReflection(state.getBlock());
+                    }
                     break;
                 }
             }
             if (hitDistance < minimumDistance) minimumDistance = hitDistance;
+
+            float proximity = Math.max(0.0f, 1.0f - hitDistance / (float) LISTENER_REFLECTION_RANGE_BLOCKS);
+            float proximityEnergy = proximity * proximity;
+            proximityEnergySum += proximityEnergy;
+            weightedAbsorptionSum += absorption * proximityEnergy;
+            absorptionWeight += proximityEnergy;
         }
 
+        if (reflectionsAvailable) {
+            updateListenerReflections(minimumDistance);
+        }
+        if (slapbackAvailable) {
+            float averageProximity = (float) Math.sqrt(proximityEnergySum / LISTENER_SCAN_DIRECTIONS.length);
+            float averageAbsorption = absorptionWeight > 0.0001f ? weightedAbsorptionSum / absorptionWeight : 0.0f;
+            updateListenerSlapback(averageProximity, averageAbsorption);
+        }
+    }
+
+    private void updateListenerReflections(float minimumDistance) {
         float reflectionDelay = Math.max(0.001f, Math.min(minimumDistance * 2.0f / 2000.0f, 0.3f));
-        float distanceFactor = Math.max(0.0f, Math.min(1.0f, 1.0f - minimumDistance / maxDistance));
+        float distanceFactor =
+                Math.max(0.0f, Math.min(1.0f, 1.0f - minimumDistance / LISTENER_REFLECTION_RANGE_BLOCKS));
         currentReflectionGainMultiplier = 1.0f + distanceFactor * 0.5f;
         currentReflectionDelay = reflectionDelay;
     }
 
-    private void updateListenerSlapback(World world, Vec3d listenerPosition) {
-        if (slapbackEffectId == 0 || slapbackAuxSlotId == 0) return;
-        float[][] directions = {{1, 0, 0}, {-1, 0, 0}, {0, 1, 0}, {0, -1, 0}, {0, 0, 1}, {0, 0, -1}};
-        int maxDistance = 40;
-        float minimumDistance = maxDistance;
-        float bestAbsorption = 0.0f;
-
-        for (float[] direction : directions) {
-            float hitDistance = maxDistance;
-            float absorption = 0.0f;
-            BlockPos.Mutable checkPosition = new BlockPos.Mutable();
-            for (int step = 1; step <= maxDistance; step++) {
-                checkPosition.set(
-                        (int) Math.floor(listenerPosition.x + direction[0] * step),
-                        (int) Math.floor(listenerPosition.y + direction[1] * step),
-                        (int) Math.floor(listenerPosition.z + direction[2] * step));
-                net.minecraft.block.BlockState state = world.getBlockState(checkPosition);
-                if (state.isSolidBlock(world, checkPosition)) {
-                    hitDistance = step;
-                    absorption = AdvancedAcousticScanner.getAbsorptionForReflection(state.getBlock());
-                    break;
-                }
-            }
-            if (hitDistance < minimumDistance) {
-                minimumDistance = hitDistance;
-                bestAbsorption = absorption;
-            }
-        }
-
+    private void updateListenerSlapback(float averageProximity, float averageAbsorption) {
         com.audiophilecraft.config.LiveTuningConfig config = com.audiophilecraft.config.LiveTuningConfig.get();
-        float gain = config.echo_baseGain
-                + ((maxDistance - minimumDistance) / maxDistance) * (config.echo_maxGain - config.echo_baseGain);
-        if (bestAbsorption > 0.30f) gain *= 1.0f - bestAbsorption;
-        if (currentSlapbackGain < 0.0f) {
+        float compressedProximity = compressEchoProximity(averageProximity);
+        float gain = config.echo_baseGain + compressedProximity * (config.echo_maxGain - config.echo_baseGain);
+        if (averageAbsorption > 0.30f) gain *= 1.0f - averageAbsorption;
+
+        if (!slapbackGainInitialized) {
             currentSlapbackGain = gain;
+            slapbackGainInitialized = true;
         } else {
-            currentSlapbackGain += (gain - currentSlapbackGain) * 0.05f;
+            float smoothing = gain > currentSlapbackGain ? ECHO_GAIN_ATTACK : ECHO_GAIN_RELEASE;
+            currentSlapbackGain += (gain - currentSlapbackGain) * smoothing;
         }
+    }
+
+    private static float compressEchoProximity(float proximity) {
+        float clamped = Math.max(0.0f, Math.min(1.0f, proximity));
+        if (clamped <= ECHO_PROXIMITY_KNEE_START) return clamped;
+
+        float kneeRange = 1.0f - ECHO_PROXIMITY_KNEE_START;
+        float progress = (clamped - ECHO_PROXIMITY_KNEE_START) / kneeRange;
+        float smoothProgress = progress * progress * (3.0f - 2.0f * progress);
+        return ECHO_PROXIMITY_KNEE_START + (ECHO_PROXIMITY_LIMIT - ECHO_PROXIMITY_KNEE_START) * smoothProgress;
     }
 
     void updateRoomBusOcclusion(float[] targetOcclusion) {
@@ -390,6 +416,20 @@ final class AudioEffectsController {
     void cleanup() {
         cleanupNativeEffects();
         currentSlapbackGain = 0.0f;
+        slapbackGainInitialized = false;
+        initialized = false;
+        effectSlotsMuted = false;
+    }
+
+    void abandonNativeResources() {
+        slapbackEffectId = 0;
+        slapbackAuxSlotId = 0;
+        for (RoomReverbBus roomBus : roomBuses) {
+            roomBus.abandonNativeResources();
+        }
+        clearVenueState();
+        currentSlapbackGain = 0.0f;
+        slapbackGainInitialized = false;
         initialized = false;
         effectSlotsMuted = false;
     }

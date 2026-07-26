@@ -131,8 +131,7 @@ public class StreamSource {
                 sampleShiftMs,
                 delayDistanceSnapshot,
                 initialChannelMask,
-                spatialController.smoothedInputGain(),
-                spatialController.smoothedPower());
+                spatialController.smoothedInputGain());
         publish();
     }
 
@@ -171,6 +170,14 @@ public class StreamSource {
         return audioRenderer.getChannelMask();
     }
 
+    float getPendingEchoContribution() {
+        return spatialController.pendingEchoContribution();
+    }
+
+    void applyEchoNormalization(float normalization) {
+        spatialController.applyPendingEchoSend(normalization);
+    }
+
     /** Starts playback after all sources in the session have been created. */
     public void start() {
         openAlResources.start();
@@ -179,11 +186,8 @@ public class StreamSource {
     public synchronized void seekToTime(double timeSeconds) {
         if (!isValid) return;
 
-        isFinished = audioRenderer.seekToTime(
-                timeSeconds,
-                delayDistanceSnapshot,
-                spatialController.smoothedInputGain(),
-                spatialController.smoothedPower());
+        isFinished =
+                audioRenderer.seekToTime(timeSeconds, delayDistanceSnapshot, spatialController.smoothedInputGain());
     }
 
     public synchronized boolean update(World world, Vec3d listenerPosition, double timeSeconds) {
@@ -249,7 +253,6 @@ public class StreamSource {
                 globalSampleTime,
                 delayDistanceSnapshot,
                 spatialController.smoothedInputGain(),
-                spatialController.smoothedPower(),
                 isFinished);
         isFinished = result.finished();
         return result.restartRequired();

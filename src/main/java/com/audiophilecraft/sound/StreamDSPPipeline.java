@@ -1,8 +1,7 @@
 package com.audiophilecraft.sound;
 
 /**
- * Self-contained DSP pipeline: input gain → crossover → 5-band EQ → soft clip →
- * limiter.
+ * Self-contained DSP pipeline: input gain, crossover and 5-band EQ.
  * Extracted from StreamSource to allow per-session DSP configurations.
  */
 public class StreamDSPPipeline {
@@ -61,7 +60,7 @@ public class StreamDSPPipeline {
     /**
      * Runs the full DSP chain on the audio buffer.
      */
-    public void process(short[] data, float sampleRate, float inputGain, float power) {
+    public void process(short[] data, float sampleRate, float inputGain) {
         AudioDSP.applyGain(data, inputGain);
 
         if (crossoverFilter1 != null)
@@ -85,11 +84,5 @@ public class StreamDSPPipeline {
             if (eqFilters[i] != null)
                 eqFilters[i].process(data);
         }
-
-        if (power > 5.0f) {
-            float drive = 1.0f + ((power - 5.0f) * 0.1f);
-            AudioDSP.applySoftClip(data, drive);
-        }
-        AudioDSP.applyPeakLimiter(data, 0.98f);
     }
 }

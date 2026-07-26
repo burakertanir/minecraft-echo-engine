@@ -29,6 +29,10 @@ final class SourceSpatialController {
     private float smoothedDirectGain = 1.0f;
     private float targetOcclusion = 1.0f;
     private float currentOcclusion = 1.0f;
+    private float pendingEchoSendGain;
+    private float pendingEchoHighFrequencyGain = 1.0f;
+    private float pendingEchoContribution;
+    private boolean pendingEchoSend;
 
     // Scratch state reused on every update to avoid per-source tick allocations.
     private float distance;
@@ -112,6 +116,18 @@ final class SourceSpatialController {
 
     float currentOcclusion() {
         return currentOcclusion;
+    }
+
+    float pendingEchoContribution() {
+        return pendingEchoContribution;
+    }
+
+    void applyPendingEchoSend(float normalization) {
+        if (!pendingEchoSend) return;
+
+        float normalizedGain = pendingEchoSendGain * Math.max(0.0f, Math.min(1.0f, normalization));
+        openAlResources.applyEchoSend(
+                AudioEngine.getInstance().getSlapbackAuxSlotId(), normalizedGain, pendingEchoHighFrequencyGain);
     }
 
     private void smoothControls(float power, float inputGain) {
@@ -384,6 +400,10 @@ final class SourceSpatialController {
 
     private void applyRoomAndEchoSends(float reverbHighFrequencyGain, LiveTuningConfig config) {
         AudioEngine engine = AudioEngine.getInstance();
+        pendingEchoSendGain = 0.0f;
+        pendingEchoHighFrequencyGain = 1.0f;
+        pendingEchoContribution = 0.0f;
+        pendingEchoSend = false;
         if (!openAlResources.hasRoomSendFilter() || engine.getAuxSlotId() == 0) return;
 
         float reverbOcclusion = Math.max(0.15f, currentOcclusion);
@@ -406,8 +426,7 @@ final class SourceSpatialController {
         if (sendGain > 0.60f) sendGain = 0.60f;
         if (engine.isSideMuted()) sendGain = 0.0f;
 
-        sendGain /= (float) Math.max(1.0, Math.sqrt(clusterSize));
-        float roomSendGain = sendGain;
+        float roomSendGain = sendGain / (float) Math.max(1.0, Math.sqrt(clusterSize));
         if (emitterGroup != null) {
             roomSendGain *= emitterGroup.roomSendGain();
         }
@@ -415,9 +434,11 @@ final class SourceSpatialController {
 
         if (engine.getSlapbackAuxSlotId() != 0 && openAlResources.hasEchoSendFilter()) {
             float echoDistanceFalloff = (float) Math.pow(Math.max(0.001f, attenuation), 0.3f);
-            float echoSendGain = sendGain * engine.getSlapbackGain() * echoDistanceFalloff;
-            float echoHighFrequencyGain = reverbHighFrequencyGain * Math.max(0.01f, 1.0f - config.echo_damping);
-            openAlResources.applyEchoSend(engine.getSlapbackAuxSlotId(), echoSendGain, echoHighFrequencyGain);
+            pendingEchoSendGain = sendGain * engine.getSlapbackGain() * echoDistanceFalloff;
+            pendingEchoHighFrequencyGain = reverbHighFrequencyGain * Math.max(0.01f, 1.0f - config.echo_damping);
+            pendingEchoContribution =
+                    pendingEchoSendGain * Math.max(0.0f, smoothedGain) * Math.max(0.0f, smoothedInputGain);
+            pendingEchoSend = true;
         }
     }
 

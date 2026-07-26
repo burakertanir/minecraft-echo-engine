@@ -98,7 +98,6 @@ final class AudioPlaybackController {
             AudioDSP.applyFilter(audioData, sampleRate, AudioDSP.FilterType.HIGH_PASS, 120, 0.707f, 0);
             AudioDSP.applyFilter(audioData, sampleRate, AudioDSP.FilterType.HIGH_PASS, 120, 0.707f, 0);
         }
-        AudioDSP.applyPeakLimiter(audioData, 0.98f);
     }
 
     void playTrack(UUID sessionUUID, String trackId, List<BlockPos> speakers, float power, float inputGain) {
@@ -139,6 +138,13 @@ final class AudioPlaybackController {
                 loader.cancelStreamingRequest(requestId);
             }
         }
+    }
+
+    void abandonAfterAudioDeviceLoss() {
+        trackGeneration++;
+        dynamicVenueScanInProgress = false;
+        lastDynamicVenueCheckNanos = 0L;
+        cancelAllUrlRequests();
     }
 
     private boolean isActiveUrlRequest(UUID sessionUUID, long requestId) {

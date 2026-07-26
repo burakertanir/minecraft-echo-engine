@@ -90,6 +90,16 @@ final class ReverbBusAllocator {
     }
 
     void reset() {
+        clearState();
+        effects.setRoomBusMixGain(0, 1.0f);
+        effects.setRoomBusMixGain(1, 1.0f);
+    }
+
+    void abandonAssignments() {
+        clearState();
+    }
+
+    private void clearState() {
         busProfiles[0] = null;
         busProfiles[1] = null;
         pendingReplacement = null;
@@ -97,8 +107,6 @@ final class ReverbBusAllocator {
         lastUpdateNanos = 0L;
         lastEvaluationNanos = 0L;
         lastCompletedChangeNanos = 0L;
-        effects.setRoomBusMixGain(0, 1.0f);
-        effects.setRoomBusMixGain(1, 1.0f);
     }
 
     private void initializeAssignments(List<Candidate> candidates, long nowNanos) {

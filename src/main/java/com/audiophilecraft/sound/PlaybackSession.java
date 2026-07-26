@@ -327,6 +327,30 @@ public class PlaybackSession {
         venuePresetApplied = false;
     }
 
+    void abandonAfterAudioDeviceLoss() {
+        isPlaying = false;
+        isPaused = false;
+        isManuallyPaused = false;
+        isSeeking = false;
+        streamStartTime = 0L;
+        pauseStartTimestamp = 0L;
+        playUrl = "";
+
+        for (StreamSource source : streamSources) {
+            source.releaseNativeMemory();
+        }
+        streamSources.clear();
+        emitterGroups.clear();
+        for (AudioStreamBuffer buffer : streamBuffers.values()) {
+            buffer.cleanup();
+        }
+        streamBuffers.clear();
+        venuePreset = null;
+        venuePresetApplied = false;
+        storedVenueDescriptor = null;
+        storedVenueProbePos = null;
+    }
+
     /**
      * Start playing a track through this session.
      * Delegates to AudioEngine for OpenAL/EFX/thread orchestration.

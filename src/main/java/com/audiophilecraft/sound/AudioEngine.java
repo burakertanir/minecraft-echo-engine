@@ -32,6 +32,7 @@ public class AudioEngine {
     private final AudioPlaybackController playback;
     private final AudioMixerController mixer;
     private final AudioRuntimeController runtime;
+    private final AudioDeviceFallbackController audioDeviceFallback;
 
     private AudioEngine() {
         effects = new AudioEffectsController();
@@ -40,6 +41,7 @@ public class AudioEngine {
         mixer = new AudioMixerController(sessions, this::getActiveSession);
         runtime = new AudioRuntimeController(
                 this, sessions, this::getActiveSession, effects, reverbBusAllocator, playback);
+        audioDeviceFallback = new AudioDeviceFallbackController(this);
     }
 
     public static synchronized AudioEngine getInstance() {
@@ -205,6 +207,10 @@ public class AudioEngine {
         runtime.updateSourcesTick(world);
     }
 
+    public void updateAudioDeviceFallback() {
+        audioDeviceFallback.tick();
+    }
+
     public void pauseAll() {
         runtime.pauseAll();
     }
@@ -230,8 +236,31 @@ public class AudioEngine {
     }
 
     public void cleanupEfx() {
+        audioDeviceFallback.reset();
         reverbBusAllocator.reset();
         effects.cleanup();
+    }
+
+    boolean hasNativeAudioState() {
+        return effects.isInitialized() || runtime.hasNativeAudioResources();
+    }
+
+    boolean nativeAudioResourcesValid() {
+        boolean effectsValid = !effects.isInitialized() || effects.nativeResourcesValid();
+        return effectsValid && runtime.nativeSourcesValid();
+    }
+
+    synchronized void abandonLostAudioBackend() {
+        runtime.abandonAfterAudioDeviceLoss();
+        effects.abandonNativeResources();
+    }
+
+    synchronized boolean restoreAudioBackend() {
+        while (org.lwjgl.openal.AL10.alGetError() != org.lwjgl.openal.AL10.AL_NO_ERROR) {
+            // Drain errors left behind while the old device was disappearing.
+        }
+        effects.initialize();
+        return effects.isInitialized();
     }
 
     void loadPersistedEqIntoSession(PlaybackSession session, UUID sessionId) {

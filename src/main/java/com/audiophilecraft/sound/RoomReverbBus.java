@@ -52,6 +52,10 @@ final class RoomReverbBus {
         return effectId != 0 && auxSlotId != 0;
     }
 
+    boolean nativeResourcesValid() {
+        return isAvailable() && alIsEffect(effectId) && alIsAuxiliaryEffectSlot(auxSlotId);
+    }
+
     int auxSlotId() {
         return auxSlotId;
     }
@@ -96,6 +100,12 @@ final class RoomReverbBus {
             alDeleteEffects(effectId);
             effectId = 0;
         }
+        usesEax = false;
+    }
+
+    void abandonNativeResources() {
+        effectId = 0;
+        auxSlotId = 0;
         usesEax = false;
     }
 

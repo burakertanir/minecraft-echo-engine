@@ -122,43 +122,6 @@ public class AudioDSP {
     }
 
     /**
-     * Soft Clipping (tanh Saturation)
-     * Simulates speaker distortion when driven too hard.
-     * drive: 1.0 = clean, 2.0+ = noticeable distortion, 4.0+ = heavy crunch
-     */
-    public static void applySoftClip(short[] data, float drive) {
-        if (drive < 1.0f) drive = 1.0f;
-        for (int i = 0; i < data.length; i++) {
-            // Normalize to -1.0 ... 1.0
-            double sample = data[i] / 32767.0;
-            // Apply drive (amplify before clipping)
-            sample *= drive;
-            // tanh saturation — smoothly squashes peaks, adds harmonics
-            sample = Math.tanh(sample);
-            // Back to short range
-            data[i] = (short) (sample * 32767);
-        }
-    }
-
-    public static void applyPeakLimiter(short[] data, float threshold) {
-        if (threshold <= 0.0f) return;
-        if (threshold > 1.0f) threshold = 1.0f;
-
-        int peak = 0;
-        for (int i = 0; i < data.length; i++) {
-            int v = data[i];
-            if (v < 0) v = -v;
-            if (v > peak) peak = v;
-        }
-
-        int limit = Math.round(threshold * 32767.0f);
-        if (peak <= limit) return;
-
-        float gain = (float) limit / (float) peak;
-        applyGain(data, gain);
-    }
-
-    /**
      * Dynamic Range Compression
      * Makes quiet parts louder and loud parts clip — "Wall of Sound" effect.
      * threshold: 0.0-1.0 (signal level above which compression kicks in, e.g. 0.3)
