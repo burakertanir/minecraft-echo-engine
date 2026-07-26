@@ -40,6 +40,7 @@ public class StreamSource {
     public final boolean isLeader;
     private final EmitterGroup emitterGroup;
     private final PlaybackSession session;
+    private final SourceOcclusionTracker occlusionTracker = new SourceOcclusionTracker();
 
     // Smoothed versions for pop-free knob transitions
     private volatile float smoothedPower;
@@ -246,11 +247,6 @@ public class StreamSource {
     private float smoothedGain = 0.0f;
     private float smoothedDirectGain = 1.0f;
 
-    // Occlusion caching (avoid expensive ray-march every tick per speaker)
-    private float cachedTargetOcclusion = 1.0f;
-    private long lastOcclusionCalcTick = -1;
-    private Vec3d lastOcclusionListenerPos = null;
-
     private void updatePhysics(
             net.minecraft.world.World world, Vec3d listenerPos, double distance, double dx, double dy, double dz) {
         com.audiophilecraft.config.LiveTuningConfig cfg = com.audiophilecraft.config.LiveTuningConfig.get();
@@ -277,7 +273,7 @@ public class StreamSource {
         // --- PRE-CALCULATIONS ---
         float dirGain = 1.0f;
         float directionalFocus = 1.0f;
-        float targetOcclusion = cachedTargetOcclusion;
+        float targetOcclusion;
         float proximityBoost = 1.0f;
         float attenuation = 1.0f;
         float dist = (float) currentDistanceSnapshot;
@@ -380,144 +376,9 @@ public class StreamSource {
         // but the audio thread would immediately overwrite it → race condition.
         // Now the audio thread owns delayDistanceSnapshot exclusively.
 
-        // --- RAYCAST OCCLUSION (CPU Expensive - Cache + Recalc Periodically) ---
-        // Run per-source to maintain realistic occlusion where half a cluster can be
-        // muffled independently
-        if (world != null && distance > 1.5) {
-            long nowTick = world.getTime();
-            boolean movedEnough = (lastOcclusionListenerPos == null)
-                    || (lastOcclusionListenerPos.squaredDistanceTo(listenerPos) > 0.04);
-            // Distance-based throttling: far speakers recalc less often
-            int recalcInterval;
-            if (distance < 30.0) {
-                recalcInterval = 2; // 0.25s — nearby, responsive
-            } else if (distance < 100.0) {
-                recalcInterval = 20; // 1.0s — mid-range
-            } else {
-                recalcInterval = 40; // 2.0s — far, barely audible anyway
-            }
-            boolean timeToRecalc = (lastOcclusionCalcTick < 0) || ((nowTick - lastOcclusionCalcTick) >= recalcInterval);
-
-            if (movedEnough || timeToRecalc) {
-                // ═══════════════════════════════════════════════════════════════
-                // FIXED-STEP RAYCAST OCCLUSION
-                // Walks from speaker to listener in 0.25-block steps.
-                // Each solid block is naturally sampled ~4 times (1/0.25),
-                // giving aggressive occlusion even for single-block walls.
-                // ═══════════════════════════════════════════════════════════════
-
-                // Ray origin: speaker center
-                double ox = pos.getX() + 0.5;
-                double oy = pos.getY() + 0.5;
-                double oz = pos.getZ() + 0.5;
-
-                // Ray direction: speaker → listener
-                double rdx = listenerPos.x - ox;
-                double rdy = listenerPos.y - oy;
-                double rdz = listenerPos.z - oz;
-                double rayLen = Math.sqrt(rdx * rdx + rdy * rdy + rdz * rdz);
-                if (rayLen < 0.001) rayLen = 0.001;
-                rdx /= rayLen;
-                rdy /= rayLen;
-                rdz /= rayLen;
-
-                float stepSize = 0.25f;
-                net.minecraft.util.math.BlockPos.Mutable checkPos = new net.minecraft.util.math.BlockPos.Mutable();
-                boolean isSub = "sub".equals(this.speakerType);
-
-                int solidStepCount = 0;
-                float minTransmissionHit = 1.0f;
-                boolean chunkUnloaded = false;
-
-                int lastChunkX = Integer.MAX_VALUE;
-                int lastChunkZ = Integer.MAX_VALUE;
-                net.minecraft.world.chunk.Chunk currentChunk = null;
-
-                for (float t = stepSize; t < rayLen; t += stepSize) {
-                    int bx = (int) Math.floor(ox + rdx * t);
-                    int by = (int) Math.floor(oy + rdy * t);
-                    int bz = (int) Math.floor(oz + rdz * t);
-
-                    // Skip the speaker block itself
-                    if (bx == pos.getX() && by == pos.getY() && bz == pos.getZ()) continue;
-
-                    checkPos.set(bx, by, bz);
-
-                    int chunkX = bx >> 4;
-                    int chunkZ = bz >> 4;
-
-                    if (chunkX != lastChunkX || chunkZ != lastChunkZ) {
-                        currentChunk =
-                                world.getChunk(chunkX, chunkZ, net.minecraft.world.chunk.ChunkStatus.FULL, false);
-                        lastChunkX = chunkX;
-                        lastChunkZ = chunkZ;
-                    }
-
-                    if (currentChunk == null || currentChunk instanceof net.minecraft.world.chunk.EmptyChunk) {
-                        // Unloaded chunk = no block data available.
-                        // ABORT entire raycast and PRESERVE the last successfully computed occlusion
-                        // value.
-                        chunkUnloaded = true;
-                        break;
-                    } else {
-                        net.minecraft.block.BlockState state = currentChunk.getBlockState(checkPos);
-                        if (!state.isAir()) {
-                            float blockTransmission = AdvancedAcousticScanner.getBlockTransmission(state, isSub);
-                            // Only apply if it's an actual occluding material
-                            if (blockTransmission < 1.0f) {
-                                solidStepCount++;
-                                if (blockTransmission < minTransmissionHit) {
-                                    minTransmissionHit = blockTransmission;
-                                }
-                            }
-                        }
-                    }
-                }
-
-                float transmissionProduct = 1.0f;
-                if (chunkUnloaded) {
-                    transmissionProduct = -1.0f; // Sentinel: signals "abort, keep cached"
-                } else if (solidStepCount > 0) {
-                    float solidDistance = solidStepCount * stepSize;
-                    float flexOffset = com.audiophilecraft.config.LiveTuningConfig.get().occ_raycast_flexOffset;
-                    int blockThickness = (int) Math.max(1, Math.ceil(solidDistance - flexOffset));
-
-                    float thicknessDecay = com.audiophilecraft.config.LiveTuningConfig.get().occ_thicknessDecay;
-                    transmissionProduct = minTransmissionHit * (float) Math.pow(thicknessDecay, blockThickness - 1);
-
-                    if (transmissionProduct < 0.001f) {
-                        transmissionProduct = 0.001f;
-                    }
-                }
-
-                // If transmissionProduct is -1.0, the raycast was aborted due to unloaded
-                // chunks. Keep the last successfully computed occlusion value.
-                if (transmissionProduct >= 0.0f) {
-                    float newTarget = Math.max(0.002f, transmissionProduct);
-                    cachedTargetOcclusion = newTarget;
-                    this.targetOcclusion = newTarget;
-                }
-                lastOcclusionCalcTick = nowTick;
-                lastOcclusionListenerPos = listenerPos;
-            }
-        }
-
-        // DECAY TIMER REMOVED: Previously, occlusion would fade to 1.0 (open air) after
-        // 2 seconds of no raycast recalc. This is WRONG — if the chunk is unloaded, the
-        // wall is still physically there. The last known occlusion value is preserved
-        // indefinitely until the chunk is loaded again and a fresh raycast can verify.
-
-        // Use raw occlusion for smoothing to decouple LF and HF tracking.
-        // Bass/Low-mid bypassing is now calculated mathematically at the filter stage.
-
-        // Asymmetric Occlusion Smoothing (TEMPORAL HYSTERESIS):
-        // Occluding (entering building, drop) = FAST (0.35f, highly responsive)
-        // De-occluding (exiting, fade in) = SMOOTH BUT SWIFT (0.15f, takes ~0.3s)
-        // With the raycast now properly hitting stairs/slabs, we don't need a massive
-        // 2-second delay to hide staircase stuttering anymore. This makes it feel
-        // premium.
-        float occLerp = (targetOcclusion < this.currentOcclusion) ? cfg.occ_lerpIn : cfg.occ_lerpOut;
-        this.currentOcclusion += (targetOcclusion - this.currentOcclusion) * occLerp;
+        targetOcclusion = occlusionTracker.update(world, pos, listenerPos, distance, "sub".equals(speakerType), cfg);
+        this.targetOcclusion = occlusionTracker.target();
+        this.currentOcclusion = occlusionTracker.current();
 
         // --- MANUAL DISTANCE ATTENUATION (DYNAMIC LINEAR) ---
         // Inverse Distance model creates an infinite tail. User reports sound
