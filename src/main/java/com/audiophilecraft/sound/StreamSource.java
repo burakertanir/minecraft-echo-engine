@@ -7,6 +7,7 @@ import net.minecraft.util.math.Vec3d;
 public class StreamSource {
     public final int sourceId;
     private final StreamAudioRenderer audioRenderer;
+    private final OpenALSourceResources openAlResources;
 
     // Distance snapshot (volatile: written by audio thread during feed, read by
     // main thread for physics)
@@ -96,6 +97,7 @@ public class StreamSource {
         this.filterId = filterId;
         this.sendFilterId = sendFilterId;
         this.echoSendFilterId = echoSendFilterId;
+        this.openAlResources = new OpenALSourceResources(sourceId, filterId, sendFilterId, echoSendFilterId);
         this.sampleShiftMs = sampleShiftMs;
         this.speakerCount = speakerCount;
         this.clusterSize = clusterSize;
@@ -122,7 +124,7 @@ public class StreamSource {
             double dz = pos.getZ() + 0.5 - initialListenerPosition.z;
             this.currentDistanceSnapshot = (float) Math.sqrt(dx * dx + dy * dy + dz * dz);
             this.delayDistanceSnapshot = this.currentDistanceSnapshot;
-            updateOpenAlSpatialPosition(initialListenerPosition, cfg.hrtf_yFlatten);
+            openAlResources.updateSpatialPosition(pos, initialListenerPosition, cfg.hrtf_yFlatten);
         }
 
         // Followers must use the leader delay while priming their first OpenAL
@@ -167,7 +169,7 @@ public class StreamSource {
      * to ensure all speakers start at exactly the same time.
      */
     public void start() {
-        alSourcePlay(sourceId);
+        openAlResources.start();
     }
 
     /**
@@ -393,7 +395,7 @@ public class StreamSource {
 
         float effectiveRefDist = this.refDist;
         float baseMaxDist = 60.0f; // Default base max distance
-        updateOpenAlSpatialPosition(listenerPos, cfg.hrtf_yFlatten);
+        openAlResources.updateSpatialPosition(pos, listenerPos, cfg.hrtf_yFlatten);
 
         if ("sub".equals(this.speakerType)) {
             effectiveRefDist = cfg.sub_refDist * arrayMultiplier;
@@ -424,7 +426,7 @@ public class StreamSource {
         } else {
             sourceRadius = Math.max(0.15f, (float) Math.sqrt(this.speakerCount) * cfg.sourceRadius_line);
         }
-        org.lwjgl.openal.AL10.alSourcef(sourceId, 0x1031, sourceRadius);
+        openAlResources.setRadius(sourceRadius);
 
         // Scale Reference Distance with Power (higher power = larger full-volume zone)
         // This matches dynamicMaxDist scaling, keeping the attenuation curve shape
@@ -542,10 +544,7 @@ public class StreamSource {
             this.smoothedGain = 0.0f;
         }
 
-        // Apply to OpenAL
-        synchronized (this) {
-            org.lwjgl.openal.AL10.alSourcef(sourceId, org.lwjgl.openal.AL10.AL_GAIN, this.smoothedGain);
-        }
+        openAlResources.setGain(this.smoothedGain);
 
         // Setup complete.
 
@@ -698,20 +697,18 @@ public class StreamSource {
             reverbSendHF = Math.min(reverbSendHF, 0.05f);
         }
 
-        if (filterId != 0) {
+        if (openAlResources.hasDirectFilter()) {
             // Apply Mid (Direct Sound) Mute
             if (AudioEngine.getInstance().isMidMuted()) {
                 directGain = 0.0f;
                 directGainHF = 0.0f;
             }
 
-            org.lwjgl.openal.EXTEfx.alFilterf(filterId, org.lwjgl.openal.EXTEfx.AL_LOWPASS_GAIN, directGain);
-            org.lwjgl.openal.EXTEfx.alFilterf(filterId, org.lwjgl.openal.EXTEfx.AL_LOWPASS_GAINHF, directGainHF);
-            org.lwjgl.openal.AL10.alSourcei(sourceId, org.lwjgl.openal.EXTEfx.AL_DIRECT_FILTER, filterId);
+            openAlResources.applyDirectFilter(directGain, directGainHF);
         }
 
         // Reverb Send (Room - Index 0)
-        if (sendFilterId != 0 && AudioEngine.getInstance().getAuxSlotId() != 0) {
+        if (openAlResources.hasRoomSendFilter() && AudioEngine.getInstance().getAuxSlotId() != 0) {
             float reverbOcclusion = Math.max(0.15f, this.currentOcclusion);
 
             // ═══════════════════════════════════════════════════════════════
@@ -773,55 +770,18 @@ public class StreamSource {
                 roomSendGain *= emitterGroup.roomSendGain();
             }
 
-            // Apply filter for Room Send
-            synchronized (this) {
-                org.lwjgl.openal.EXTEfx.alFilterf(sendFilterId, org.lwjgl.openal.EXTEfx.AL_LOWPASS_GAIN, roomSendGain);
-                org.lwjgl.openal.EXTEfx.alFilterf(
-                        sendFilterId, org.lwjgl.openal.EXTEfx.AL_LOWPASS_GAINHF, reverbSendHF);
+            openAlResources.applyRoomSend(
+                    AudioEngine.getInstance().getAuxSlotId(emitterGroup), roomSendGain, reverbSendHF);
 
-                // Send 0: Room Reverb
-                org.lwjgl.openal.AL11.alSource3i(
-                        sourceId,
-                        org.lwjgl.openal.EXTEfx.AL_AUXILIARY_SEND_FILTER,
-                        AudioEngine.getInstance().getAuxSlotId(emitterGroup),
-                        0,
-                        sendFilterId);
+            if (AudioEngine.getInstance().getSlapbackAuxSlotId() != 0 && openAlResources.hasEchoSendFilter()) {
+                float echoDistanceFalloff = (float) Math.pow(Math.max(0.001f, attenuation), 0.3f);
+                float echoSendGain = sendGain * AudioEngine.getInstance().getSlapbackGain() * echoDistanceFalloff;
 
-                // Send 1: Slapback Echo
-                if (AudioEngine.getInstance().getSlapbackAuxSlotId() != 0 && echoSendFilterId != 0) {
-                    float echoDistanceFalloff = (float) Math.pow(Math.max(0.001f, attenuation), 0.3f);
-                    float echoSendGain = sendGain * AudioEngine.getInstance().getSlapbackGain() * echoDistanceFalloff;
-
-                    org.lwjgl.openal.EXTEfx.alFilterf(
-                            echoSendFilterId, org.lwjgl.openal.EXTEfx.AL_LOWPASS_GAIN, echoSendGain);
-                    // Apply echo damping directly to the input filter so the FIRST bounce is muffled
-                    float echoSendHF = reverbSendHF * Math.max(0.01f, (1.0f - cfg.echo_damping));
-                    org.lwjgl.openal.EXTEfx.alFilterf(
-                            echoSendFilterId, org.lwjgl.openal.EXTEfx.AL_LOWPASS_GAINHF, echoSendHF);
-                    org.lwjgl.openal.AL11.alSource3i(
-                            sourceId,
-                            org.lwjgl.openal.EXTEfx.AL_AUXILIARY_SEND_FILTER,
-                            AudioEngine.getInstance().getSlapbackAuxSlotId(),
-                            1,
-                            echoSendFilterId);
-                }
+                // Apply echo damping directly to the input filter so the FIRST bounce is muffled
+                float echoSendHF = reverbSendHF * Math.max(0.01f, (1.0f - cfg.echo_damping));
+                openAlResources.applyEchoSend(
+                        AudioEngine.getInstance().getSlapbackAuxSlotId(), echoSendGain, echoSendHF);
             }
-        }
-    }
-
-    private void updateOpenAlSpatialPosition(Vec3d listenerPos, float yFlatten) {
-        float sourceX = this.pos.getX() + 0.5f;
-        float sourceY = this.pos.getY() + 0.5f;
-        float sourceZ = this.pos.getZ() + 0.5f;
-        if (listenerPos != null) {
-            float clampedFlatten = Math.max(0.0f, Math.min(1.0f, yFlatten));
-            sourceY = (float) (listenerPos.y + (sourceY - listenerPos.y) * clampedFlatten);
-        }
-
-        synchronized (this) {
-            org.lwjgl.openal.AL10.alSourcei(
-                    sourceId, org.lwjgl.openal.AL10.AL_SOURCE_RELATIVE, org.lwjgl.openal.AL10.AL_FALSE);
-            org.lwjgl.openal.AL10.alSource3f(sourceId, org.lwjgl.openal.AL10.AL_POSITION, sourceX, sourceY, sourceZ);
         }
     }
 
@@ -870,12 +830,12 @@ public class StreamSource {
     }
 
     public void pause() {
-        org.lwjgl.openal.AL10.alSourcePause(sourceId);
+        openAlResources.pause();
     }
 
     public void resume() {
         if (isValid) {
-            org.lwjgl.openal.AL10.alSourcePlay(sourceId);
+            openAlResources.resume();
         }
     }
 
@@ -893,59 +853,8 @@ public class StreamSource {
     public synchronized void cleanup() {
         if (!isValid) return; // Prevent double cleanup
 
-        alSourceStop(sourceId);
-
+        openAlResources.stop();
         releaseNativeMemory();
-
-        // Safely unqueue all processed/queued streaming buffers before detaching
-        while (org.lwjgl.openal.AL10.alGetSourcei(sourceId, org.lwjgl.openal.AL10.AL_BUFFERS_QUEUED) > 0) {
-            int processed = org.lwjgl.openal.AL10.alGetSourcei(sourceId, org.lwjgl.openal.AL10.AL_BUFFERS_PROCESSED);
-            if (processed <= 0) break;
-            while (processed > 0) {
-                org.lwjgl.openal.AL10.alSourceUnqueueBuffers(sourceId);
-                processed--;
-            }
-        }
-
-        org.lwjgl.openal.AL10.alSourcei(sourceId, org.lwjgl.openal.AL10.AL_BUFFER, 0);
-
-        // Detach filters/sends before deletion
-        try {
-            org.lwjgl.openal.AL10.alSourcei(
-                    sourceId, org.lwjgl.openal.EXTEfx.AL_DIRECT_FILTER, org.lwjgl.openal.EXTEfx.AL_FILTER_NULL);
-            org.lwjgl.openal.AL11.alSource3i(
-                    sourceId,
-                    org.lwjgl.openal.EXTEfx.AL_AUXILIARY_SEND_FILTER,
-                    0,
-                    0,
-                    org.lwjgl.openal.EXTEfx.AL_FILTER_NULL);
-            org.lwjgl.openal.AL11.alSource3i(
-                    sourceId,
-                    org.lwjgl.openal.EXTEfx.AL_AUXILIARY_SEND_FILTER,
-                    0,
-                    1,
-                    org.lwjgl.openal.EXTEfx.AL_FILTER_NULL);
-        } catch (Exception e) {
-            System.err.println("StreamSource: Failed to detach filters/sends: " + e.getMessage());
-        }
-
-        // Delete the source FIRST. Once the source is deleted, no references to the
-        // buffers can exist.
-        alDeleteSources(sourceId);
-
-        // Now safe to delete the buffers and filters
-        audioRenderer.deleteOpenAlBuffers();
-        try {
-            if (filterId != 0) org.lwjgl.openal.EXTEfx.alDeleteFilters(filterId);
-            if (sendFilterId != 0) org.lwjgl.openal.EXTEfx.alDeleteFilters(sendFilterId);
-            if (echoSendFilterId != 0) org.lwjgl.openal.EXTEfx.alDeleteFilters(echoSendFilterId);
-        } catch (Exception e) {
-            System.err.println("StreamSource: Failed to delete filters: " + e.getMessage());
-        }
-
-        // Drain any OpenAL errors to prevent error queue buildup
-        while (alGetError() != AL_NO_ERROR) {
-            /* drain */
-        }
+        openAlResources.delete(audioRenderer);
     }
 }
