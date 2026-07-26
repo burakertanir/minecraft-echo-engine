@@ -485,14 +485,16 @@ final class AudioPlaybackController {
 
             List<EmitterGroup> scannedGroups = List.copyOf(emitterGroups);
             int generation = trackGeneration;
-            CompletableFuture.supplyAsync(() -> {
-                        try {
-                            return effects.scanVenue(world, clusterCenters);
-                        } catch (Exception e) {
-                            System.err.println("Venue scan crash: " + e.getMessage());
-                            return null;
-                        }
-                    })
+            CompletableFuture.supplyAsync(
+                            () -> {
+                                try {
+                                    return effects.scanVenue(world, clusterCenters);
+                                } catch (Exception e) {
+                                    System.err.println("Venue scan crash: " + e.getMessage());
+                                    return null;
+                                }
+                            },
+                            MinecraftClient.getInstance()::execute)
                     .exceptionally(exception -> {
                         System.err.println("Venue scan future failed: " + exception.getMessage());
                         return null;
@@ -556,14 +558,16 @@ final class AudioPlaybackController {
 
         dynamicVenueScanInProgress = true;
         int generation = trackGeneration;
-        CompletableFuture.supplyAsync(() -> {
-                    try {
-                        return effects.scanVenue(world, clusterCenters);
-                    } catch (Exception e) {
-                        System.err.println("Dynamic venue scan crash: " + e.getMessage());
-                        return null;
-                    }
-                })
+        CompletableFuture.supplyAsync(
+                        () -> {
+                            try {
+                                return effects.scanVenue(world, clusterCenters);
+                            } catch (Exception e) {
+                                System.err.println("Dynamic venue scan crash: " + e.getMessage());
+                                return null;
+                            }
+                        },
+                        MinecraftClient.getInstance()::execute)
                 .exceptionally(exception -> {
                     System.err.println("Dynamic venue scan future failed: " + exception.getMessage());
                     return null;

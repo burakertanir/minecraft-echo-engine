@@ -27,7 +27,7 @@ public class OggDecoder {
      * 2. decodeChunk() repeatedly → fills output array incrementally
      * 3. close() when done
      */
-    public static class StreamingDecoder {
+    public static class StreamingDecoder implements AutoCloseable {
         private long handle;
         private ByteBuffer fileData; // Must stay alive while decoder is open
         public final int sampleRate;
@@ -51,7 +51,7 @@ public class OggDecoder {
          * @param maxSamples Maximum samples to decode
          * @return Number of mono samples actually decoded (0 = EOF)
          */
-        public int decodeChunk(short[] output, int offset, int maxSamples) {
+        public synchronized int decodeChunk(short[] output, int offset, int maxSamples) {
             if (finished || handle == 0) return 0;
 
             // Use a temporary interleaved buffer for decoding
@@ -90,14 +90,22 @@ public class OggDecoder {
             return finished;
         }
 
-        public void close() {
-            if (handle != 0) {
-                STBVorbis.stb_vorbis_close(handle);
-                handle = 0;
-            }
-            if (fileData != null) {
-                MemoryUtil.memFree(fileData);
-                fileData = null;
+        @Override
+        public synchronized void close() {
+            long handleToClose = handle;
+            ByteBuffer dataToFree = fileData;
+            handle = 0;
+            fileData = null;
+            finished = true;
+
+            try {
+                if (handleToClose != 0) {
+                    STBVorbis.stb_vorbis_close(handleToClose);
+                }
+            } finally {
+                if (dataToFree != null) {
+                    MemoryUtil.memFree(dataToFree);
+                }
             }
         }
     }
@@ -108,6 +116,8 @@ public class OggDecoder {
      */
     public static StreamingDecoder openStreaming(String resourcePath) {
         ByteBuffer vorbisData = null;
+        long handle = 0;
+        boolean ownershipTransferred = false;
         try {
             var id = new net.minecraft.util.Identifier("audiophilecraft", resourcePath);
             var resource = net.minecraft.client.MinecraftClient.getInstance()
@@ -125,70 +135,75 @@ public class OggDecoder {
                 System.err.println("AudiophileCraft: Resource not found: " + id);
                 return null;
             }
+
+            try (MemoryStack stack = MemoryStack.stackPush()) {
+                IntBuffer error = stack.mallocInt(1);
+                handle = STBVorbis.stb_vorbis_open_memory(vorbisData, error, null);
+
+                if (handle == 0) {
+                    System.err.println("AudiophileCraft: Failed to open OGG stream: error=" + error.get(0));
+                    return null;
+                }
+
+                STBVorbisInfo info = STBVorbisInfo.malloc(stack);
+                STBVorbis.stb_vorbis_get_info(handle, info);
+
+                int sampleRate = info.sample_rate();
+                int channels = info.channels();
+                if (channels != 1 && channels != 2) {
+                    System.err.println("AudiophileCraft: Unsupported OGG stream channel count: " + channels);
+                    return null;
+                }
+                int totalSamples = STBVorbis.stb_vorbis_stream_length_in_samples(handle);
+
+                StreamingDecoder decoder = new StreamingDecoder(handle, vorbisData, sampleRate, channels, totalSamples);
+                ownershipTransferred = true;
+                return decoder;
+            }
         } catch (Exception e) {
             e.printStackTrace();
-            if (vorbisData != null) MemoryUtil.memFree(vorbisData);
             return null;
-        }
-
-        try (MemoryStack stack = MemoryStack.stackPush()) {
-            IntBuffer error = stack.mallocInt(1);
-            long handle = STBVorbis.stb_vorbis_open_memory(vorbisData, error, null);
-
-            if (handle == 0) {
-                System.err.println("AudiophileCraft: Failed to open OGG stream: error=" + error.get(0));
-                MemoryUtil.memFree(vorbisData);
-                return null;
+        } finally {
+            if (!ownershipTransferred) {
+                if (handle != 0) {
+                    STBVorbis.stb_vorbis_close(handle);
+                }
+                if (vorbisData != null) {
+                    MemoryUtil.memFree(vorbisData);
+                }
             }
-
-            STBVorbisInfo info = STBVorbisInfo.malloc(stack);
-            STBVorbis.stb_vorbis_get_info(handle, info);
-
-            int sampleRate = info.sample_rate();
-            int channels = info.channels();
-            int totalSamples = STBVorbis.stb_vorbis_stream_length_in_samples(handle);
-
-            return new StreamingDecoder(handle, vorbisData, sampleRate, channels, totalSamples);
         }
     }
 
     private static final boolean DEBUG_DECIBEL = false;
 
     public static RawTrackData loadOgg(String resourcePath) {
+        ByteBuffer vorbisData = null;
+        ShortBuffer rawAudio = null;
+        ShortBuffer resultBuffer = null;
+        boolean ownershipTransferred = false;
+
         try (MemoryStack stack = MemoryStack.stackPush()) {
             IntBuffer channels = stack.mallocInt(1);
             IntBuffer sampleRate = stack.mallocInt(1);
 
-            ByteBuffer vorbisData = null;
-            try {
-                var id = new net.minecraft.util.Identifier("audiophilecraft", resourcePath);
-                var resource = net.minecraft.client.MinecraftClient.getInstance()
-                        .getResourceManager()
-                        .getResource(id);
-                if (resource.isPresent()) {
-                    try (var stream = resource.get().getInputStream()) {
-                        byte[] bytes = stream.readAllBytes();
-                        vorbisData = MemoryUtil.memAlloc(bytes.length);
-                        vorbisData.put(bytes);
-                        vorbisData.flip();
-                    }
-                } else {
-                    System.err.println("AudiophileCraft: Resource not found: " + id);
-                    return null;
+            var id = new net.minecraft.util.Identifier("audiophilecraft", resourcePath);
+            var resource = net.minecraft.client.MinecraftClient.getInstance()
+                    .getResourceManager()
+                    .getResource(id);
+            if (resource.isPresent()) {
+                try (var stream = resource.get().getInputStream()) {
+                    byte[] bytes = stream.readAllBytes();
+                    vorbisData = MemoryUtil.memAlloc(bytes.length);
+                    vorbisData.put(bytes);
+                    vorbisData.flip();
                 }
-            } catch (Exception e) {
-                e.printStackTrace();
-                if (vorbisData != null) MemoryUtil.memFree(vorbisData);
+            } else {
+                System.err.println("AudiophileCraft: Resource not found: " + id);
                 return null;
             }
 
-            java.nio.ShortBuffer rawAudio;
-            try {
-                rawAudio = STBVorbis.stb_vorbis_decode_memory(vorbisData, channels, sampleRate);
-            } finally {
-                MemoryUtil.memFree(vorbisData);
-            }
-
+            rawAudio = STBVorbis.stb_vorbis_decode_memory(vorbisData, channels, sampleRate);
             if (rawAudio == null) {
                 System.err.println("AudiophileCraft: Failed to decode Ogg: " + resourcePath);
                 return null;
@@ -196,30 +211,25 @@ public class OggDecoder {
 
             int channelCount = channels.get(0);
             int sampleRateVal = sampleRate.get(0);
-            java.nio.ShortBuffer resultBuffer;
 
-            try {
-                if (channelCount == 1) {
-                    // Mono: duplicate to pseudo-stereo [M,M,M,M,...]
-                    int frames = rawAudio.capacity();
-                    resultBuffer = MemoryUtil.memAllocShort(frames * 2);
-                    for (int i = 0; i < frames; i++) {
-                        short s = rawAudio.get(i);
-                        resultBuffer.put(s);
-                        resultBuffer.put(s);
-                    }
-                    resultBuffer.flip();
-                } else if (channelCount == 2) {
-                    // Already interleaved stereo — use as-is
-                    resultBuffer = MemoryUtil.memAllocShort(rawAudio.capacity());
-                    resultBuffer.put(rawAudio.duplicate());
-                    resultBuffer.flip();
-                } else {
-                    System.err.println("AudiophileCraft: Unsupported channel count: " + channelCount);
-                    return null;
+            if (channelCount == 1) {
+                // Mono: duplicate to pseudo-stereo [M,M,M,M,...]
+                int frames = rawAudio.capacity();
+                resultBuffer = MemoryUtil.memAllocShort(Math.multiplyExact(frames, 2));
+                for (int i = 0; i < frames; i++) {
+                    short s = rawAudio.get(i);
+                    resultBuffer.put(s);
+                    resultBuffer.put(s);
                 }
-            } finally {
-                LibCStdlib.free(rawAudio);
+                resultBuffer.flip();
+            } else if (channelCount == 2) {
+                // Already interleaved stereo - use as-is
+                resultBuffer = MemoryUtil.memAllocShort(rawAudio.capacity());
+                resultBuffer.put(rawAudio.duplicate());
+                resultBuffer.flip();
+            } else {
+                System.err.println("AudiophileCraft: Unsupported channel count: " + channelCount);
+                return null;
             }
 
             RawTrackData data = new RawTrackData();
@@ -227,7 +237,21 @@ public class OggDecoder {
             data.channels = channelCount;
             data.sampleRate = sampleRateVal;
             data.format = AL_FORMAT_MONO16;
+            ownershipTransferred = true;
             return data;
+        } catch (Exception e) {
+            e.printStackTrace();
+            return null;
+        } finally {
+            if (!ownershipTransferred && resultBuffer != null) {
+                MemoryUtil.memFree(resultBuffer);
+            }
+            if (rawAudio != null) {
+                LibCStdlib.free(rawAudio);
+            }
+            if (vorbisData != null) {
+                MemoryUtil.memFree(vorbisData);
+            }
         }
     }
 }

@@ -2,26 +2,11 @@ package com.audiophilecraft.sound;
 
 import static org.lwjgl.openal.AL10.*;
 
-import java.nio.IntBuffer;
-import java.nio.ShortBuffer;
 import net.minecraft.util.math.Vec3d;
-import org.lwjgl.BufferUtils;
-import org.lwjgl.system.MemoryUtil;
 
 public class StreamSource {
     public final int sourceId;
-    private AudioStreamBuffer streamBuffer; // non-final — swapped for L/R channel changes
-
-    // ═══════════════════════════════════════════════════════════════════════
-    // GLOBAL MASTER CLOCK ARCHITECTURE
-    // All sources derive their read position from a single global sample time:
-    // readPosition = globalSampleTime - propagationDelaySamples
-    // No per-source local counter. Zero drift. Mathematically guaranteed.
-    // 6 buffers × 1024 samples = ~128ms of runway in the sound card.
-    // ═══════════════════════════════════════════════════════════════════════
-    private static final int BUFFER_COUNT = 6;
-    private static final int STREAM_BUFFER_SIZE = 1024; // ~21ms per buffer
-    private final IntBuffer buffers;
+    private final StreamAudioRenderer audioRenderer;
 
     // Distance snapshot (volatile: written by audio thread during feed, read by
     // main thread for physics)
@@ -30,18 +15,8 @@ public class StreamSource {
     // Delay-specific distance: for leaders = own distance, for followers = leader's
     // distance.
     // Written ONLY by the audio thread → no race condition with main thread.
-    // Used exclusively by generatePcmBlock() for propagation delay calculation.
+    // Passed to StreamAudioRenderer for propagation delay calculation.
     private volatile float delayDistanceSnapshot = 0;
-
-    // Output cursor: tracks the next sample position to generate.
-    // RESET from global clock at start/seek/underrun → zero inter-source drift.
-    // Between resets, advances sequentially by STREAM_BUFFER_SIZE to guarantee
-    // buffer-boundary continuity (no gaps or overlaps → no crackle).
-    private double outputCursor = 0;
-
-    // Audio-thread-owned native buffer for OpenAL uploads
-    private ShortBuffer audioThreadPcmBuffer;
-    private short[] audioThreadRawAudio;
 
     // Metadata for physics
     public final net.minecraft.util.math.BlockPos pos;
@@ -70,12 +45,6 @@ public class StreamSource {
     private volatile float smoothedPower;
     private volatile float smoothedInputGain = 1.0f;
 
-    // DSP Pipeline (crossover -> EQ -> softclip -> limiter)
-    private final StreamDSPPipeline dspPipeline;
-
-    // Reusable buffers (Optimization: avoids memAlloc/memFree every refill)
-    private ShortBuffer reusablePcmBuffer;
-    private short[] reusableRawAudio;
     private int clusterSize;
 
     // Valid check
@@ -83,18 +52,11 @@ public class StreamSource {
 
     public volatile boolean isFinished = false;
 
-    // Channel selection: 0=BOTH, 1=LEFT, 2=RIGHT
-    // Changed via setChannelMask() at runtime — next buffer fill picks up new channel
-    private volatile int channelMask = 0;
-
     // Publishes the fully-constructed object: set after all fields initialized
     private void publish() {
         this.isFinished = false;
         this.isValid = true;
     }
-
-    // Fast fade-in to prevent harsh waveform snap-pops on manual seeks
-    private long seekFadeSamplesRemaining = 0;
 
     public StreamSource(
             PlaybackSession session,
@@ -120,8 +82,6 @@ public class StreamSource {
             int initialChannelMask) {
         this.session = session;
         this.sourceId = sourceId;
-        this.streamBuffer = streamBuffer;
-        this.channelMask = initialChannelMask;
 
         // Metadata
         this.pos = pos;
@@ -150,18 +110,6 @@ public class StreamSource {
         this.inputGain = inputGain;
         this.smoothedInputGain = inputGain;
 
-        // Initialize DSP pipeline
-        float sr = (streamBuffer != null && streamBuffer.sampleRate > 0) ? (float) streamBuffer.sampleRate : 44100f;
-        this.dspPipeline = new StreamDSPPipeline(this.session, this.speakerType, sr);
-
-        // Allocate reusable buffers (once, not per-refill)
-        this.reusablePcmBuffer = MemoryUtil.memAllocShort(STREAM_BUFFER_SIZE);
-        this.reusableRawAudio = new short[STREAM_BUFFER_SIZE];
-
-        // Audio-thread-owned buffers for background OpenAL uploads
-        this.audioThreadPcmBuffer = MemoryUtil.memAllocShort(STREAM_BUFFER_SIZE);
-        this.audioThreadRawAudio = new short[STREAM_BUFFER_SIZE];
-
         // CRITICAL: Calculate initial distance from listener BEFORE first buffer fill.
         // Without this, all speakers start with 0ms delay and slowly ramp up,
         // causing audible desync between near and far speakers for ~2 seconds.
@@ -178,25 +126,16 @@ public class StreamSource {
                     mc.player.getEyePos(), com.audiophilecraft.config.LiveTuningConfig.get().hrtf_yFlatten);
         }
 
-        // Generate Buffers
-        this.buffers = BufferUtils.createIntBuffer(BUFFER_COUNT);
-        alGenBuffers(this.buffers);
-
-        // Initially fill OpenAL hardware queue with sequential absolute positions.
-        // Buffer 0 = samples [0, 1024), Buffer 1 = [1024, 2048), etc.
-        // All sources fill the same sample ranges → zero phase offset at start.
-        for (int i = 0; i < BUFFER_COUNT; i++) {
-            double bufferStartSample = (double) (i * STREAM_BUFFER_SIZE);
-            generatePcmBlock(reusableRawAudio, bufferStartSample);
-            reusablePcmBuffer.clear();
-            reusablePcmBuffer.put(reusableRawAudio);
-            reusablePcmBuffer.flip();
-            alBufferData(buffers.get(i), AL_FORMAT_MONO16, reusablePcmBuffer, (int) streamBuffer.sampleRate);
-        }
-        this.outputCursor = (double) (BUFFER_COUNT * STREAM_BUFFER_SIZE);
-
-        // Queue all buffers (but DON'T play yet — wait for batch start)
-        alSourceQueueBuffers(sourceId, this.buffers);
+        this.audioRenderer = new StreamAudioRenderer(
+                session,
+                sourceId,
+                streamBuffer,
+                speakerType,
+                sampleShiftMs,
+                delayDistanceSnapshot,
+                initialChannelMask,
+                smoothedInputGain,
+                smoothedPower);
         publish();
     }
 
@@ -210,11 +149,11 @@ public class StreamSource {
      * Takes effect on the next OpenAL buffer refill (~10ms).
      */
     public void setChannelMask(int mask) {
-        this.channelMask = mask;
+        audioRenderer.setChannelMask(mask);
     }
 
     public int getChannelMask() {
-        return channelMask;
+        return audioRenderer.getChannelMask();
     }
 
     /**
@@ -233,40 +172,8 @@ public class StreamSource {
     public synchronized void seekToTime(double timeSeconds) {
         if (!isValid) return;
 
-        // CRITICAL: Reset finished state so seek works on ended tracks
-        this.isFinished = false;
-
-        // 50ms ramp-in fade to stop DAC cone snap/clicks from splicing peak waves
-        this.seekFadeSamplesRemaining = (long) (0.05 * streamBuffer.sampleRate);
-
-        // Reset IIR filter state to prevent impulse ringing at splice
-        if (this.dspPipeline != null) {
-            this.dspPipeline.reset();
-        }
-        // Reset delay state so it re-initializes from current distance
-        this.lastRenderedDelaySamples = -1.0;
-        this.prevTargetDelaySamples = -1.0;
-        this.delayVelocity = 0.0;
-
-        // Flush OpenAL's queued buffers
-        org.lwjgl.openal.AL10.alSourceStop(sourceId);
-        // Detach all buffers atomically — faster and safer than unqueue loop
-        org.lwjgl.openal.AL10.alSourcei(sourceId, org.lwjgl.openal.AL10.AL_BUFFER, 0);
-
-        // Refill using global absolute positions from the seek target
-        double seekStartSample = timeSeconds * streamBuffer.sampleRate;
-        for (int i = 0; i < BUFFER_COUNT; i++) {
-            double bufferStartSample = seekStartSample + (i * STREAM_BUFFER_SIZE);
-            generatePcmBlock(reusableRawAudio, bufferStartSample);
-            reusablePcmBuffer.clear();
-            reusablePcmBuffer.put(reusableRawAudio);
-            reusablePcmBuffer.flip();
-            alBufferData(buffers.get(i), AL_FORMAT_MONO16, reusablePcmBuffer, (int) streamBuffer.sampleRate);
-        }
-        this.outputCursor = seekStartSample + (BUFFER_COUNT * STREAM_BUFFER_SIZE);
-
-        // Queue and let AudioEngine trigger atomic alSourcePlayv
-        org.lwjgl.openal.AL10.alSourceQueueBuffers(sourceId, this.buffers);
+        this.isFinished =
+                audioRenderer.seekToTime(timeSeconds, delayDistanceSnapshot, smoothedInputGain, smoothedPower);
     }
 
     public synchronized boolean update(net.minecraft.world.World world, Vec3d listenerPos, double timeSeconds) {
@@ -1058,238 +965,42 @@ public class StreamSource {
 
     /** Returns the shared AudioStreamBuffer for this source. */
     public AudioStreamBuffer getStreamBuffer() {
-        return streamBuffer;
+        return audioRenderer.getStreamBuffer();
     }
 
     /** Returns the current output cursor position (sample index). */
     public double getOutputCursor() {
-        return outputCursor;
+        return audioRenderer.getOutputCursor();
     }
 
-    // Delay State — single authoritative source across both thread paths
-    private double lastRenderedDelaySamples = -1.0;
-    private double prevTargetDelaySamples = -1.0;
-    private double delayVelocity = 0.0; // 2nd order: rate of change of delay (samples/sample)
-
     /**
-     * ═══════════════════════════════════════════════════════════════════════
-     * GLOBAL MASTER CLOCK — AUDIO-THREAD BUFFER FEEDING
-     * ═══════════════════════════════════════════════════════════════════════
-     * Called from the BACKGROUND AUDIO THREAD (not the main/render thread).
-     * Performs the full OpenAL buffer lifecycle using the GLOBAL sample time:
-     * 1. Update distance from listener (200Hz, FPS-independent)
-     * 2. Unqueue processed (empty) buffers from the sound card
-     * 3. Generate NEW PCM inline using: readPos = globalSampleTime -
-     * propagationDelay
-     * 4. Queue them back to keep the sound card fed
-     * 5. Signal atomic restart if underrun occurred
-     *
-     * NO precomputed queue. NO local samplesWritten counter.
-     * ALL sources use the SAME globalSampleTime → zero drift, guaranteed.
-     *
-     * @param globalSampleTime Current wall-clock position in samples (shared by ALL
-     *                         sources)
-     * @param listenerPos      Current smoothed listener position for distance
-     *                         calculation
-     * @return true if this source needs an atomic restart (underrun recovery)
+     * Feeds processed OpenAL buffers from the shared global audio clock.
+     * Called from the background audio thread while this source is locked.
      */
     public synchronized boolean feedOpenALFromAudioThread(double globalSampleTime, Vec3d listenerPos) {
         if (!isValid) return false;
 
-        // ═══════════════════════════════════════════════════════════════
-        // DISTANCE CALCULATION: Done on audio thread at 200Hz.
-        // Completely independent of Minecraft's FPS or tick rate.
-        // ═══════════════════════════════════════════════════════════════
         if (listenerPos != null) {
             double spkX = pos.getX() + 0.5;
             double spkY = pos.getY() + 0.5;
             double spkZ = pos.getZ() + 0.5;
             double dx = spkX - listenerPos.x;
-            // Flattens physical Y-axis for delay, doppler and distance attenuation.
             double dy = (spkY - listenerPos.y) * com.audiophilecraft.config.LiveTuningConfig.get().physics_yFlatten;
             double dz = spkZ - listenerPos.z;
             float ownDistance = (float) Math.sqrt(dx * dx + dy * dy + dz * dz);
             this.currentDistanceSnapshot = ownDistance;
 
-            // CLUSTER DELAY SYNC (audio thread owned — no race condition)
-            // Followers use leader's distance for propagation delay.
-            // Leaders in the for-loop are always processed BEFORE followers
-            // (insertion order), so leader's currentDistanceSnapshot is fresh.
-
             if (!isLeader && clusterLeader != null && clusterLeader.isValid) {
-
                 this.delayDistanceSnapshot = clusterLeader.currentDistanceSnapshot;
-
             } else {
-
                 this.delayDistanceSnapshot = ownDistance;
             }
         }
 
-        // 1. Check how many buffers the sound card has finished playing
-        int processed = org.lwjgl.openal.AL10.alGetSourcei(sourceId, org.lwjgl.openal.AL10.AL_BUFFERS_PROCESSED);
-
-        while (processed > 0) {
-            // 2. Unqueue the empty buffer
-            int bufferId = org.lwjgl.openal.AL10.alSourceUnqueueBuffers(sourceId);
-
-            if (!isFinished) {
-                // 3. Use outputCursor for sequential buffer continuity.
-                // This ensures zero gaps/overlaps between consecutive buffers.
-                double bufferStartSample = this.outputCursor;
-
-                // RING BUFFER GUARD: Ensure decoded data is available
-                long readEnd = (long) (bufferStartSample + STREAM_BUFFER_SIZE);
-                if (readEnd <= streamBuffer.getWriteCursor()) {
-                    generatePcmBlock(audioThreadRawAudio, bufferStartSample);
-                    audioThreadPcmBuffer.clear();
-                    audioThreadPcmBuffer.put(audioThreadRawAudio);
-                    audioThreadPcmBuffer.flip();
-                    alBufferData(bufferId, AL_FORMAT_MONO16, audioThreadPcmBuffer, (int) streamBuffer.sampleRate);
-                    org.lwjgl.openal.AL10.alSourceQueueBuffers(sourceId, bufferId);
-                    this.outputCursor += STREAM_BUFFER_SIZE;
-                } else {
-                    // Ring buffer not ready — generate silence to keep pipeline alive
-                    java.util.Arrays.fill(audioThreadRawAudio, (short) 0);
-                    audioThreadPcmBuffer.clear();
-                    audioThreadPcmBuffer.put(audioThreadRawAudio);
-                    audioThreadPcmBuffer.flip();
-                    alBufferData(bufferId, AL_FORMAT_MONO16, audioThreadPcmBuffer, (int) streamBuffer.sampleRate);
-                    org.lwjgl.openal.AL10.alSourceQueueBuffers(sourceId, bufferId);
-                    this.outputCursor += STREAM_BUFFER_SIZE;
-                }
-            }
-            // else: EOF reached — don't queue anything, let OpenAL drain naturally.
-            processed--;
-        }
-
-        // 5. Underrun recovery
-        int state = org.lwjgl.openal.AL10.alGetSourcei(sourceId, org.lwjgl.openal.AL10.AL_SOURCE_STATE);
-        if (state == org.lwjgl.openal.AL10.AL_STOPPED && !isFinished) {
-            int queued = org.lwjgl.openal.AL10.alGetSourcei(sourceId, org.lwjgl.openal.AL10.AL_BUFFERS_QUEUED);
-            if (queued > 0) {
-                // Snap outputCursor to global clock on underrun recovery
-                this.outputCursor = globalSampleTime + ((double) queued * STREAM_BUFFER_SIZE);
-                return true; // SIGNAL FOR ATOMIC RESTART
-            }
-        }
-
-        return false;
-    }
-
-    /**
-     * ═══════════════════════════════════════════════════════════════════════
-     * STATELESS PCM GENERATION (GLOBAL MASTER CLOCK)
-     * ═══════════════════════════════════════════════════════════════════════
-     * Generates one buffer of PCM audio for an absolute sample position.
-     * Read position is derived from the global timeline minus propagation delay:
-     * readPos = bufferStartSample + i - propagationDelaySamples
-     *
-     * This method is STATELESS with respect to timeline — it can generate
-     * audio for ANY absolute sample position. The only state it carries is
-     * the delay smoother (lastRenderedDelaySamples) for Doppler-free transitions.
-     *
-     * @param output            Pre-allocated array of size STREAM_BUFFER_SIZE to
-     *                          fill
-     * @param bufferStartSample Absolute sample position for the start of this
-     *                          buffer
-     * @return true if PCM was generated, false if sampleRate is invalid
-     */
-    private synchronized boolean generatePcmBlock(short[] output, double bufferStartSample) {
-        double sampleRate = streamBuffer.sampleRate;
-        if (sampleRate <= 0) return false;
-
-        double speedOfSound = com.audiophilecraft.config.LiveTuningConfig.get().speedOfSound;
-        double targetDelaySeconds = (delayDistanceSnapshot / speedOfSound) + (this.sampleShiftMs / 1000.0);
-        double targetDelaySamples = targetDelaySeconds * sampleRate;
-
-        if (lastRenderedDelaySamples < 0) {
-            lastRenderedDelaySamples = targetDelaySamples;
-        }
-        if (prevTargetDelaySamples < 0) {
-            prevTargetDelaySamples = targetDelaySamples;
-        }
-
-        boolean finished = false;
-
-        // Snapshot channel mask once per buffer for consistent stereo channel
-        int currentChannelMask = this.channelMask;
-
-        // ═══════════════════════════════════════════════════════════════
-        // ADAPTIVE PER-SAMPLE DELAY SMOOTHING with TARGET INTERPOLATION
-        // Delay target linearly interpolates from old to new across buffer,
-        // eliminating the "stepped" pitch feeling from 21ms target jumps.
-        // ═══════════════════════════════════════════════════════════════
-        double currentDelay = lastRenderedDelaySamples;
-        double startTarget = prevTargetDelaySamples;
-        double endTarget = targetDelaySamples;
-        double targetDelta = endTarget - startTarget;
-        prevTargetDelaySamples = endTarget;
-
-        // ═══════════════════════════════════════════════════════════════
-        // 2ND ORDER CRITICALLY DAMPED SPRING — DELAY SMOOTHER
-        // 1st order IIR only guarantees C0 continuity (value).
-        // 2nd order spring guarantees C1 (derivative/pitch continuity),
-        // eliminating metallic phase-modulation artifacts during flight.
-        // ═══════════════════════════════════════════════════════════════
-        double omega = 2.0 * Math.PI * 25.0 / sampleRate; // 25Hz natural frequency
-        double omegaSq = omega * omega;
-        double twoOmega = 2.0 * omega;
-        double maxDeltaPerSample = 0.015; // 1.5% max pitch shift (Doppler clamp)
-        double localVelocity = this.delayVelocity;
-
-        for (int i = 0; i < STREAM_BUFFER_SIZE; i++) {
-            // Linear interpolate target from old to new — no more 21ms steps
-            double t = (double) (i + 1) / STREAM_BUFFER_SIZE;
-            double interpolatedTarget = startTarget + targetDelta * t;
-            double delta = interpolatedTarget - currentDelay;
-
-            // Critically damped spring: F = ω²·error − 2ω·velocity
-            // Guarantees smooth convergence with zero overshoot or ringing.
-            double acceleration = omegaSq * delta - twoOmega * localVelocity;
-            localVelocity += acceleration;
-
-            // Safety clamp: cap pitch shift at ±1.5%
-            if (localVelocity > maxDeltaPerSample) localVelocity = maxDeltaPerSample;
-            if (localVelocity < -maxDeltaPerSample) localVelocity = -maxDeltaPerSample;
-
-            currentDelay += localVelocity;
-
-            // GLOBAL MASTER CLOCK: absolute position minus propagation delay
-            double readPos = (bufferStartSample + i) - currentDelay;
-
-            if (readPos >= streamBuffer.getTotalSamples()) {
-                finished = true;
-                output[i] = 0;
-            } else if (readPos < 0) {
-                output[i] = 0;
-            } else {
-                output[i] = streamBuffer.getSampleLagrange(readPos, currentChannelMask);
-            }
-        }
-
-        lastRenderedDelaySamples = currentDelay;
-        this.delayVelocity = localVelocity;
-
-        // ═══════════════════════════════════════════════════════════════
-        // DSP STAGE (shared by all branches)
-        // ═══════════════════════════════════════════════════════════════
-        // DSP STAGE (shared by all branches)
-        // DSP pipeline
-        this.dspPipeline.process(output, (float) streamBuffer.sampleRate, this.smoothedInputGain, this.smoothedPower);
-
-        // Feed peak meter (post-DSP, pre-OpenAL) — ~0 cost: 1 loop + 1 volatile write
-        // BUG FIX: Only feed peaks if this source belongs to the local player's active session,
-        // otherwise the tablet shows peaks from other players' speakers in multiplayer.
-        if (this.session == com.audiophilecraft.sound.AudioEngine.getInstance().getActiveSession()) {
-            PeakMeter.getInstance().feedPeak(this.speakerType, output, STREAM_BUFFER_SIZE);
-        }
-
-        if (finished) {
-            isFinished = true;
-        }
-
-        return true;
+        StreamAudioRenderer.FeedResult result = audioRenderer.feed(
+                globalSampleTime, delayDistanceSnapshot, smoothedInputGain, smoothedPower, isFinished);
+        this.isFinished = result.finished();
+        return result.restartRequired();
     }
 
     public void pause() {
@@ -1308,24 +1019,7 @@ public class StreamSource {
      * Used when the OpenAL context is destroyed and old IDs are invalid.
      */
     public synchronized void releaseNativeMemory() {
-        // Free reusable native buffer
-        if (reusablePcmBuffer != null) {
-            try {
-                MemoryUtil.memFree(reusablePcmBuffer);
-            } catch (Exception e) {
-                /* ignore */ }
-            reusablePcmBuffer = null;
-        }
-
-        // Free audio-thread native buffer
-        if (audioThreadPcmBuffer != null) {
-            try {
-                MemoryUtil.memFree(audioThreadPcmBuffer);
-            } catch (Exception e) {
-                /* ignore */ }
-            audioThreadPcmBuffer = null;
-        }
-
+        audioRenderer.releaseNativeMemory();
         isValid = false;
         isFinished = true;
     }
@@ -1374,7 +1068,7 @@ public class StreamSource {
         alDeleteSources(sourceId);
 
         // Now safe to delete the buffers and filters
-        alDeleteBuffers(buffers);
+        audioRenderer.deleteOpenAlBuffers();
         try {
             if (filterId != 0) org.lwjgl.openal.EXTEfx.alDeleteFilters(filterId);
             if (sendFilterId != 0) org.lwjgl.openal.EXTEfx.alDeleteFilters(sendFilterId);
