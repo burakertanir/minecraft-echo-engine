@@ -260,9 +260,22 @@ public class AudioEngine {
     }
 
     void syncListenerToCamera() {
-        if (MinecraftClient.getInstance().cameraEntity == null) return;
-        this.listenerPos = MinecraftClient.getInstance().cameraEntity.getPos();
-        this.smoothedListenerPos = this.listenerPos;
+        Vec3d cameraPosition = captureCurrentListenerPosition();
+        if (cameraPosition == null) return;
+        this.listenerPos = cameraPosition;
+        this.smoothedListenerPos = cameraPosition;
+    }
+
+    static Vec3d captureCurrentListenerPosition() {
+        MinecraftClient client = MinecraftClient.getInstance();
+        net.minecraft.client.render.Camera camera = client.gameRenderer.getCamera();
+        if (camera != null && camera.isReady()) {
+            return camera.getPos();
+        }
+        if (client.player != null) {
+            return client.player.getEyePos();
+        }
+        return client.cameraEntity != null ? client.cameraEntity.getPos() : null;
     }
 
     /** Returns the smoothed underwater HF gain (0.08 = submerged, 1.0 = normal) */

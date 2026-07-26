@@ -113,17 +113,22 @@ public class StreamSource {
         // CRITICAL: Calculate initial distance from listener BEFORE first buffer fill.
         // Without this, all speakers start with 0ms delay and slowly ramp up,
         // causing audible desync between near and far speakers for ~2 seconds.
-        net.minecraft.client.MinecraftClient mc = net.minecraft.client.MinecraftClient.getInstance();
-        if (mc.player != null) {
-            double dx = pos.getX() + 0.5 - mc.player.getX();
-            double dy = pos.getY() + 0.5 - mc.player.getY();
-            double dz = pos.getZ() + 0.5 - mc.player.getZ();
+        Vec3d initialListenerPosition = AudioEngine.captureCurrentListenerPosition();
+        if (initialListenerPosition != null) {
+            com.audiophilecraft.config.LiveTuningConfig cfg = com.audiophilecraft.config.LiveTuningConfig.get();
+            double dx = pos.getX() + 0.5 - initialListenerPosition.x;
+            double dy = (pos.getY() + 0.5 - initialListenerPosition.y) * cfg.physics_yFlatten;
+            double dz = pos.getZ() + 0.5 - initialListenerPosition.z;
             this.currentDistanceSnapshot = (float) Math.sqrt(dx * dx + dy * dy + dz * dz);
-            // Initialize delay distance (cluster sync will be applied on first audio thread
-            // tick)
             this.delayDistanceSnapshot = this.currentDistanceSnapshot;
-            updateOpenAlSpatialPosition(
-                    mc.player.getEyePos(), com.audiophilecraft.config.LiveTuningConfig.get().hrtf_yFlatten);
+            updateOpenAlSpatialPosition(initialListenerPosition, cfg.hrtf_yFlatten);
+        }
+
+        // Followers must use the leader delay while priming their first OpenAL
+        // buffers. Waiting for the first audio-thread tick leaves the initial
+        // queue rendered at each speaker's own distance.
+        if (!isLeader && clusterLeader != null && clusterLeader.isValid) {
+            this.delayDistanceSnapshot = clusterLeader.currentDistanceSnapshot;
         }
 
         this.audioRenderer = new StreamAudioRenderer(
