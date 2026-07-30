@@ -4,7 +4,6 @@ import static org.lwjgl.openal.AL10.*;
 import static org.lwjgl.openal.AL11.*;
 import static org.lwjgl.openal.EXTEfx.*;
 
-import java.nio.ShortBuffer;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Comparator;
@@ -62,42 +61,34 @@ final class AudioPlaybackController {
         if (rawData == null) return;
 
         try {
-            createStreamBufferForType(session, trackId, rawData, AudioEngine.TYPE_SUB);
-            createStreamBufferForType(session, trackId, rawData, AudioEngine.TYPE_MID);
-            createStreamBufferForType(session, trackId, rawData, AudioEngine.TYPE_LINE);
-            createStreamBufferForType(session, trackId, rawData, AudioEngine.TYPE_NORMAL);
+            rawData.pcmData.rewind();
+            short[] pcmInterleaved = new short[rawData.pcmData.remaining()];
+            rawData.pcmData.get(pcmInterleaved);
+            int totalFrames = pcmInterleaved.length / 2;
+            installSharedStereoBuffer(
+                    session, trackId + "_stream", pcmInterleaved, totalFrames, totalFrames, rawData.sampleRate);
         } finally {
             if (rawData.pcmData != null) MemoryUtil.memFree(rawData.pcmData);
         }
     }
 
-    private void createStreamBufferForType(
-            PlaybackSession session, String trackId, OggDecoder.RawTrackData rawData, String type) {
-        rawData.pcmData.rewind();
-        short[] audioData = new short[rawData.pcmData.remaining()];
-        rawData.pcmData.rewind();
-        rawData.pcmData.get(audioData);
-        applyDspForType(audioData, rawData.sampleRate, type);
-
-        AudioStreamBuffer buffer = new AudioStreamBuffer(trackId + "_" + type, rawData.sampleRate);
-        ShortBuffer pcm = MemoryUtil.memAllocShort(audioData.length);
-        pcm.put(audioData);
-        pcm.flip();
-        buffer.setSourceData(pcm);
-        session.getStreamBuffers().put(type, buffer);
-    }
-
-    void applyDspForType(short[] audioData, int sampleRate, String speakerType) {
-        AudioDSP.applyGain(audioData, 0.60f);
-        if (AudioEngine.TYPE_SUB.equals(speakerType)) {
-            AudioDSP.applyFilter(audioData, sampleRate, AudioDSP.FilterType.LOW_PASS, 120, 0.707f, 0);
-            AudioDSP.applyFilter(audioData, sampleRate, AudioDSP.FilterType.LOW_PASS, 120, 0.707f, 0);
-        } else if (AudioEngine.TYPE_MID.equals(speakerType)) {
-            AudioDSP.applyFilter(audioData, sampleRate, AudioDSP.FilterType.HIGH_PASS, 45, 0.577f, 0);
-        } else if (AudioEngine.TYPE_LINE.equals(speakerType)) {
-            AudioDSP.applyFilter(audioData, sampleRate, AudioDSP.FilterType.HIGH_PASS, 120, 0.707f, 0);
-            AudioDSP.applyFilter(audioData, sampleRate, AudioDSP.FilterType.HIGH_PASS, 120, 0.707f, 0);
+    private void installSharedStereoBuffer(
+            PlaybackSession session,
+            String trackId,
+            short[] pcmInterleaved,
+            int decodedFrames,
+            int totalExpectedFrames,
+            int sampleRate) {
+        if (pcmInterleaved.length % 2 != 0) {
+            throw new IllegalArgumentException("Stereo PCM must contain complete L/R frames");
         }
+
+        AudioStreamBuffer sharedBuffer = new AudioStreamBuffer(trackId, sampleRate);
+        sharedBuffer.initStreaming(pcmInterleaved, decodedFrames, totalExpectedFrames);
+        session.getStreamBuffers().put(AudioEngine.TYPE_SUB, sharedBuffer);
+        session.getStreamBuffers().put(AudioEngine.TYPE_MID, sharedBuffer);
+        session.getStreamBuffers().put(AudioEngine.TYPE_LINE, sharedBuffer);
+        session.getStreamBuffers().put(AudioEngine.TYPE_NORMAL, sharedBuffer);
     }
 
     void playTrack(UUID sessionUUID, String trackId, List<BlockPos> speakers, float power, float inputGain) {
@@ -186,19 +177,15 @@ final class AudioPlaybackController {
                     return;
                 }
 
-                AudioStreamBuffer sharedBuffer = new AudioStreamBuffer("url_stream", sampleRate);
                 System.out.println("AudioEngine: URL request #" + requestId + " ready for session " + sessionUUID);
-                sharedBuffer.initStreaming(pcmInterleaved, decodedFrames, totalExpected);
 
                 PlaybackSession session = sessions.computeIfAbsent(sessionUUID, key -> new PlaybackSession(engine));
                 engine.stopSessionContents(session);
                 engine.loadPersistedEqIntoSession(session, sessionUUID);
                 session.setPlayUrl(url);
                 session.getStreamBuffers().clear();
-                session.getStreamBuffers().put(AudioEngine.TYPE_SUB, sharedBuffer);
-                session.getStreamBuffers().put(AudioEngine.TYPE_MID, sharedBuffer);
-                session.getStreamBuffers().put(AudioEngine.TYPE_LINE, sharedBuffer);
-                session.getStreamBuffers().put(AudioEngine.TYPE_NORMAL, sharedBuffer);
+                installSharedStereoBuffer(
+                        session, "url_stream", pcmInterleaved, decodedFrames, totalExpected, sampleRate);
 
                 resetGlobalVenueState(positionsOf(speakers));
                 finalizePlaybackPipeline(sessionUUID, speakers, power, inputGain, startImmediately);
@@ -588,9 +575,9 @@ final class AudioPlaybackController {
                                     DynamicVenueCandidate candidate = scannedCandidates.get(i);
                                     if (candidate.session().isPlaying()
                                             && candidate
-                                                    .session()
-                                                    .getEmitterGroups()
-                                                    .contains(candidate.group())) {
+                                                     .session()
+                                                     .getEmitterGroups()
+                                                     .contains(candidate.group())) {
                                         candidate.group().applyAcousticProfile(profiles.get(i));
                                     }
                                 }
@@ -666,34 +653,23 @@ final class AudioPlaybackController {
         engine.loadPersistedEqIntoSession(session, sessionUUID);
         resetGlobalVenueState(speakers);
 
-        ShortBuffer pcmBuffer = null;
         try {
-            pcmBuffer = MemoryUtil.memAllocShort(pcmData.length);
-            pcmBuffer.put(pcmData);
-            pcmBuffer.flip();
-
-            OggDecoder.RawTrackData rawData = new OggDecoder.RawTrackData();
-            rawData.pcmData = pcmBuffer;
-            rawData.sampleRate = sampleRate;
-            rawData.channels = 1;
-            rawData.format = AL_FORMAT_MONO16;
+            short[] pcmInterleaved = new short[Math.multiplyExact(pcmData.length, 2)];
+            for (int i = 0; i < pcmData.length; i++) {
+                pcmInterleaved[i * 2] = pcmData[i];
+                pcmInterleaved[i * 2 + 1] = pcmData[i];
+            }
 
             for (AudioStreamBuffer buffer : session.getStreamBuffers().values()) {
                 buffer.cleanup();
             }
             session.getStreamBuffers().clear();
-            createStreamBufferForType(session, "url_track", rawData, AudioEngine.TYPE_SUB);
-            createStreamBufferForType(session, "url_track", rawData, AudioEngine.TYPE_MID);
-            createStreamBufferForType(session, "url_track", rawData, AudioEngine.TYPE_LINE);
-            createStreamBufferForType(session, "url_track", rawData, AudioEngine.TYPE_NORMAL);
+            installSharedStereoBuffer(
+                    session, "pcm_stream", pcmInterleaved, pcmData.length, pcmData.length, sampleRate);
 
             finalizePlaybackPipeline(sessionUUID, captureSpeakerData(speakers), power, inputGain, true);
         } catch (Exception e) {
             e.printStackTrace();
-        } finally {
-            if (pcmBuffer != null) {
-                MemoryUtil.memFree(pcmBuffer);
-            }
         }
     }
 

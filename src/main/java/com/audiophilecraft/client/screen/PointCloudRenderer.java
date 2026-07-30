@@ -21,6 +21,7 @@ public class PointCloudRenderer {
 
     // Cached projected points: [screenX, screenY, depth, color]
     private static float[][] cachedProjected = null;
+    private static List<Vec3d> cachedPointCloud = null;
     private static int cachedCount = -1;
     private static double cachedCx, cachedCy, cachedCz, cachedMaxSize;
 
@@ -31,6 +32,7 @@ public class PointCloudRenderer {
 
     public static void invalidateCache() {
         cachedProjected = null;
+        cachedPointCloud = null;
         cachedCount = -1;
     }
 
@@ -45,7 +47,7 @@ public class PointCloudRenderer {
 
         if (pointCloud == null || pointCloud.isEmpty()) return;
 
-        if (cachedProjected == null || cachedCount != pointCloud.size()) {
+        if (cachedProjected == null || cachedPointCloud != pointCloud || cachedCount != pointCloud.size()) {
             rebuildCache(pointCloud);
         }
         if (cachedProjected == null || cachedProjected.length == 0) return;
@@ -169,6 +171,7 @@ public class PointCloudRenderer {
     }
 
     private static void rebuildCache(List<Vec3d> pointCloud) {
+        cachedPointCloud = pointCloud;
         cachedCount = pointCloud.size();
 
         // Find bounds using raw positions
@@ -214,7 +217,6 @@ public class PointCloudRenderer {
         // Sort back-to-front
         java.util.Arrays.sort(cachedProjected, (a, b) -> Float.compare(a[2], b[2]));
 
-        System.out.println("PointCloudRenderer: " + pointCloud.size() + " LiDAR points cached");
     }
 
     /**

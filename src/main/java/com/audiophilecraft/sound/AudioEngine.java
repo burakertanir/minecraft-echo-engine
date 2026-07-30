@@ -90,35 +90,11 @@ public class AudioEngine {
     }
 
     public AdvancedAcousticScanner.VenuePreset getVenuePreset() {
-        AcousticProfile nearestProfile = getNearestAcousticProfile();
-        return nearestProfile != null ? nearestProfile.preset() : effects.getVenuePreset();
+        return effects.getVenuePreset();
     }
 
     public AdvancedAcousticScanner.VenueDescriptor getStoredVenueDescriptor() {
-        AcousticProfile nearestProfile = getNearestAcousticProfile();
-        return nearestProfile != null ? nearestProfile.descriptor() : effects.getStoredVenueDescriptor();
-    }
-
-    private AcousticProfile getNearestAcousticProfile() {
-        Vec3d listenerPosition = runtime.listenerPosition();
-        if (listenerPosition == null) listenerPosition = Vec3d.ZERO;
-
-        AcousticProfile nearestProfile = null;
-        double nearestDistanceSq = Double.POSITIVE_INFINITY;
-        for (PlaybackSession session : sessions.values()) {
-            if (!session.isPlaying()) continue;
-            for (EmitterGroup group : session.getEmitterGroups()) {
-                AcousticProfile profile = group.acousticProfile();
-                if (profile == null) continue;
-
-                double distanceSq = group.center().squaredDistanceTo(listenerPosition);
-                if (distanceSq < nearestDistanceSq) {
-                    nearestDistanceSq = distanceSq;
-                    nearestProfile = profile;
-                }
-            }
-        }
-        return nearestProfile;
+        return effects.getStoredVenueDescriptor();
     }
 
     public void updateListener(Vec3d position, float yaw, float pitch) {
@@ -269,10 +245,6 @@ public class AudioEngine {
 
     public void prepareStreamBuffers(PlaybackSession session, String trackId) {
         playback.prepareStreamBuffers(session, trackId);
-    }
-
-    public void applyDspForType(short[] audioData, int sampleRate, String speakerType) {
-        playback.applyDspForType(audioData, sampleRate, speakerType);
     }
 
     public void toggleManualPause(UUID sessionId) {
