@@ -49,6 +49,8 @@ public class AdvancedAcousticScanner {
 
     // ─── Constants ────────────────────────────────────────────────────
     private static final int MAX_RAY_DIST = 256; // Max ray distance for venue probe scans
+    private static final float OUTLIER_IQR_MULTIPLIER = 1.5f;
+    private static final float MIN_GEOMETRY_DISTANCE_CAP = 10.0f;
 
     // ─── Material Absorption Lookup (HashMap for O(1) performance) ────────────
     private static final Map<Block, Float> ABSORPTION_MAP = new HashMap<>();
@@ -567,12 +569,6 @@ public class AdvancedAcousticScanner {
                         hitDist = (float) t;
                         hitAbsorption = getAbsorptionCoefficient(state.getBlock());
 
-                        if (outPointCloud != null) {
-                            outPointCloud.add(new Vec3d(
-                                    probePos.x + dirX * hitDist,
-                                    probePos.y + dirY * hitDist,
-                                    probePos.z + dirZ * hitDist));
-                        }
                         break;
                     }
                 }
@@ -603,6 +599,21 @@ public class AdvancedAcousticScanner {
             absorptions[i] = hitAbsorption;
         }
 
+        float geometryDistanceCap = calculateRobustDistanceCap(distances);
+
+        if (outPointCloud != null) {
+            for (int i = 0; i < RAY_COUNT; i++) {
+                if (distances[i] >= MAX_RAY_DIST)
+                    continue;
+
+                float effectiveDistance = Math.min(distances[i], geometryDistanceCap);
+                outPointCloud.add(new Vec3d(
+                        probePos.x + RAY_DIRS_NORM[i][0] * effectiveDistance,
+                        probePos.y + RAY_DIRS_NORM[i][1] * effectiveDistance,
+                        probePos.z + RAY_DIRS_NORM[i][2] * effectiveDistance));
+            }
+        }
+
         // Classify hits
         int nearHits = 0, midHits = 0, farHits = 0, skyEscapes = 0;
         float totalAbsorption = 0, totalDist = 0;
@@ -612,10 +623,11 @@ public class AdvancedAcousticScanner {
             totalAbsorption += absorptions[i];
             if (distances[i] < MAX_RAY_DIST) {
                 wallsHit++;
-                totalDist += distances[i];
-                if (distances[i] <= 5.0f)
+                float effectiveDistance = Math.min(distances[i], geometryDistanceCap);
+                totalDist += effectiveDistance;
+                if (effectiveDistance <= 5.0f)
                     nearHits++;
-                else if (distances[i] <= 15.0f)
+                else if (effectiveDistance <= 15.0f)
                     midHits++;
                 else
                     farHits++;
@@ -631,50 +643,15 @@ public class AdvancedAcousticScanner {
         // Variance (std dev of ray distances)
         float sumSqDiff = 0;
         for (int i = 0; i < RAY_COUNT; i++) {
-            float diff = distances[i] - meanDist;
-            sumSqDiff += diff * diff;
-        }
-        float variance = (float) Math.sqrt(sumSqDiff / (float) RAY_COUNT);
-
-        // ═══════════════════════════════════════════════════════════════
-        // IQR OUTLIER CAPPING FOR VOLUME/SURFACE AREA
-        // ═══════════════════════════════════════════════════════════════
-        // Problem: A single ray escaping through a 1-block hole in a small room
-        // travels 200 blocks and hits something far away. Because volume uses dist^3,
-        // this ONE ray (200^3 = 8,000,000) dwarfs 999 rays at 5 blocks (5^3 = 125).
-        //
-        // Solution: Use IQR (Interquartile Range) to detect and cap outliers.
-        // - Small room with hole: Q1=4, Q3=6, cap=9 → 200-block ray capped to 9
-        // - Open air (Tomorrowland): Q1=80, Q3=200, cap=380 → nothing capped
-        // This preserves open-air detection while preventing hole-leak inflation.
-
-        // Collect only wall-hit distances (exclude sky escapes)
-        int wallHitCount = 0;
-        for (int i = 0; i < RAY_COUNT; i++) {
-            if (distances[i] < MAX_RAY_DIST)
-                wallHitCount++;
-        }
-
-        float volumeCap = MAX_RAY_DIST; // Default: no capping
-        if (wallHitCount >= 4) { // Need at least 4 rays for meaningful IQR
-            float[] sorted = new float[wallHitCount];
-            int idx = 0;
-            for (int i = 0; i < RAY_COUNT; i++) {
-                if (distances[i] < MAX_RAY_DIST)
-                    sorted[idx++] = distances[i];
+            if (distances[i] < MAX_RAY_DIST) {
+                float effectiveDistance = Math.min(distances[i], geometryDistanceCap);
+                float diff = effectiveDistance - meanDist;
+                sumSqDiff += diff * diff;
             }
-            java.util.Arrays.sort(sorted);
-
-            float q1 = sorted[wallHitCount / 4];
-            float q3 = sorted[(wallHitCount * 3) / 4];
-            float iqr = q3 - q1;
-            volumeCap = q3 + 1.5f * iqr;
-            // Safety floor: never cap below 10 blocks (prevents over-capping in
-            // perfectly uniform tiny rooms where IQR ≈ 0)
-            if (volumeCap < 10.0f)
-                volumeCap = Math.max(10.0f, q3 * 2.0f);
         }
+        float variance = wallsHit > 0 ? (float) Math.sqrt(sumSqDiff / (float) wallsHit) : 0.0f;
 
+        // Sky escapes still affect openness, but do not inflate enclosed-room geometry.
         float sumCubeDist = 0;
         float sumSqDist = 0;
         int validVolumeRays = 0;
@@ -683,7 +660,7 @@ public class AdvancedAcousticScanner {
             float dist = distances[i];
             // Exclude sky escapes from volume geometry
             if (dist < MAX_RAY_DIST) {
-                float capped = Math.min(dist, volumeCap);
+                float capped = Math.min(dist, geometryDistanceCap);
                 sumCubeDist += (capped * capped * capped);
                 sumSqDist += (capped * capped);
                 validVolumeRays++;
@@ -715,6 +692,32 @@ public class AdvancedAcousticScanner {
                 trueSurfaceArea,
                 distances,
                 absorptions);
+    }
+
+    private static float calculateRobustDistanceCap(float[] distances) {
+        int wallHitCount = 0;
+        for (float distance : distances) {
+            if (distance >= 0.0f && distance < MAX_RAY_DIST)
+                wallHitCount++;
+        }
+
+        if (wallHitCount < 4)
+            return MAX_RAY_DIST;
+
+        float[] sorted = new float[wallHitCount];
+        int index = 0;
+        for (float distance : distances) {
+            if (distance >= 0.0f && distance < MAX_RAY_DIST)
+                sorted[index++] = distance;
+        }
+        java.util.Arrays.sort(sorted);
+
+        float q1 = sorted[wallHitCount / 4];
+        float q3 = sorted[(wallHitCount * 3) / 4];
+        float cap = q3 + OUTLIER_IQR_MULTIPLIER * (q3 - q1);
+        if (cap < MIN_GEOMETRY_DISTANCE_CAP)
+            cap = Math.max(MIN_GEOMETRY_DISTANCE_CAP, q3 * 2.0f);
+        return Math.min(MAX_RAY_DIST, cap);
     }
 
     private static volatile java.util.List<Vec3d> lastPointCloud = java.util.List.of();
