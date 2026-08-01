@@ -26,7 +26,7 @@ final class SourceSpatialController {
     private volatile float smoothedPower;
     private volatile float smoothedInputGain;
     private float smoothedGain;
-    private float smoothedDirectGain = 1.0f;
+    private float smoothedDirectPathGain = 1.0f;
     private float targetOcclusion = 1.0f;
     private float currentOcclusion = 1.0f;
     private float pendingEchoSendGain;
@@ -93,12 +93,12 @@ final class SourceSpatialController {
         targetOcclusion = occlusionTracker.target();
         currentOcclusion = occlusionTracker.current();
 
-        calculateDistanceResponse(power, config);
+        calculateDistanceResponse(config);
         openAlResources.updateSpatialPosition(position, listenerPosition, config.hrtf_yFlatten);
         openAlResources.setRadius(calculateSourceRadius(config));
 
         float gainOcclusion = calculateGainOcclusion(config);
-        applyMainGain(gainOcclusion, config);
+        applyMainGain(config);
         applyFiltersAndSends(smoothingTarget, gainOcclusion, config);
     }
 
@@ -195,15 +195,15 @@ final class SourceSpatialController {
         }
 
         if (isLineArray()) {
-            directionalGain = config.line_rearGain + (float) ((1.0 - config.line_rearGain) * combinedFocus);
+            directionalGain = calculateTunedAttenuation(config.line_rearGain, (float) combinedFocus);
         } else if (isMidRange()) {
-            directionalGain = config.mid_rearGain + (float) ((1.0 - config.mid_rearGain) * combinedFocus);
+            directionalGain = calculateTunedAttenuation(config.mid_rearGain, (float) combinedFocus);
         } else {
-            directionalGain = config.normal_rearGain + (float) ((1.0 - config.normal_rearGain) * combinedFocus);
+            directionalGain = calculateTunedAttenuation(config.normal_rearGain, (float) combinedFocus);
         }
     }
 
-    private void calculateDistanceResponse(float power, LiveTuningConfig config) {
+    private void calculateDistanceResponse(LiveTuningConfig config) {
         float arrayMultiplier = 1.0f + 0.5f * (float) Math.log10(Math.max(1.0, speakerCount));
         effectiveReferenceDistance = referenceDistance;
         float baseMaxDistance = 60.0f;
@@ -218,8 +218,8 @@ final class SourceSpatialController {
             baseMaxDistance = config.line_baseMaxDist * arrayMultiplier;
         }
 
-        effectiveReferenceDistance *= (float) Math.max(1.0, Math.sqrt(power));
-        dynamicMaxDistance = baseMaxDistance * (float) Math.max(0.2, Math.sqrt(power));
+        effectiveReferenceDistance *= (float) Math.max(1.0, Math.sqrt(smoothedPower));
+        dynamicMaxDistance = baseMaxDistance * (float) Math.max(0.2, Math.sqrt(smoothedPower));
 
         double rolloffExponent = config.mid_rolloffExponent;
         if (isSubwoofer()) rolloffExponent = config.sub_rolloffExponent;
@@ -230,13 +230,23 @@ final class SourceSpatialController {
         } else if (distance > dynamicMaxDistance) {
             attenuation = 0.0f;
         } else {
-            double inverseSquare = Math.pow(effectiveReferenceDistance / distance, rolloffExponent);
+            double inversePower = Math.pow(effectiveReferenceDistance / distance, rolloffExponent);
             double fadeStart = dynamicMaxDistance * config.fadeStartPercent;
+
+            float kneeRatio = Math.max(0.0f, Math.min(2.0f, config.distance_softKneeRatio));
+            double kneeEnd = Math.min(effectiveReferenceDistance * (1.0 + kneeRatio), fadeStart);
+            if (kneeEnd > effectiveReferenceDistance && distance < kneeEnd) {
+                float kneeProgress =
+                        (float) ((distance - effectiveReferenceDistance) / (kneeEnd - effectiveReferenceDistance));
+                float smoothProgress = kneeProgress * kneeProgress * (3.0f - 2.0f * kneeProgress);
+                inversePower = 1.0 + (inversePower - 1.0) * smoothProgress;
+            }
+
             if (distance > fadeStart) {
                 double fadeRatio = (distance - fadeStart) / (dynamicMaxDistance - fadeStart);
-                inverseSquare *= 0.5 * (1.0 + Math.cos(fadeRatio * Math.PI));
+                inversePower *= 0.5 * (1.0 + Math.cos(fadeRatio * Math.PI));
             }
-            attenuation = (float) Math.max(0.0, Math.min(1.0, inverseSquare));
+            attenuation = (float) Math.max(0.0, Math.min(1.0, inversePower));
         }
 
         proximityBoost = 1.0f;
@@ -260,21 +270,28 @@ final class SourceSpatialController {
 
     private float calculateGainOcclusion(LiveTuningConfig config) {
         if (isSubwoofer()) {
-            return config.occ_sub_floor + (1.0f - config.occ_sub_floor) * currentOcclusion;
+            return calculateTunedAttenuation(config.occ_sub_floor, currentOcclusion);
         }
         if (isMidRange()) {
-            return config.occ_mid_floor + (1.0f - config.occ_mid_floor) * currentOcclusion;
+            return calculateTunedAttenuation(config.occ_mid_floor, currentOcclusion);
         }
         if (isLineArray()) {
-            return config.occ_line_floor + (1.0f - config.occ_line_floor) * currentOcclusion;
+            return calculateTunedAttenuation(config.occ_line_floor, currentOcclusion);
         }
         return currentOcclusion;
     }
 
-    private void applyMainGain(float gainOcclusion, LiveTuningConfig config) {
-        float targetGain = smoothedPower * attenuation * directionalGain * proximityBoost;
-        targetGain = Math.max(0.0f, Math.min(2.0f, targetGain));
-        targetGain *= gainOcclusion;
+    private static float calculateTunedAttenuation(float minimumGain, float openness) {
+        // The floor is now the final one-pass level; this keeps the old transition shape.
+        float finalFloor = Math.max(0.0f, Math.min(1.0f, minimumGain));
+        float clampedOpenness = Math.max(0.0f, Math.min(1.0f, openness));
+        float curveFloor = (float) Math.sqrt(finalFloor);
+        float curveGain = curveFloor + (1.0f - curveFloor) * clampedOpenness;
+        return curveGain * curveGain;
+    }
+
+    private void applyMainGain(LiveTuningConfig config) {
+        float targetGain = smoothedPower * attenuation * proximityBoost;
         targetGain = Math.max(0.0f, Math.min(2.0f, targetGain));
 
         float gainDelta = targetGain - smoothedGain;
@@ -305,9 +322,10 @@ final class SourceSpatialController {
                 * underwaterHighFrequencyGain
                 * directionHighFrequencyGain
                 * airHighFrequencyGain;
-        float directGain = smoothDirectGain(gainOcclusion);
+        float directGain = smoothDirectPathGain(directionalGain * gainOcclusion);
+        float wetSpatialTransmission = (float) Math.sqrt(directGain);
         directHighFrequencyGain = Math.max(0.01f, directHighFrequencyGain);
-        directHighFrequencyGain = Math.min(directHighFrequencyGain, directGain);
+        directHighFrequencyGain = Math.min(directHighFrequencyGain, wetSpatialTransmission);
         if (isSubwoofer()) {
             directHighFrequencyGain = Math.min(directHighFrequencyGain, 0.05f);
         }
@@ -329,7 +347,7 @@ final class SourceSpatialController {
             openAlResources.applyDirectFilter(directGain, directHighFrequencyGain);
         }
 
-        applyRoomAndEchoSends(reverbHighFrequencyGain, config);
+        applyRoomAndEchoSends(reverbHighFrequencyGain, wetSpatialTransmission, config);
     }
 
     private float calculateDistanceHighFrequencyGain() {
@@ -377,13 +395,9 @@ final class SourceSpatialController {
         return (float) (floor + (1.0 - floor) * directionalFocus);
     }
 
-    private float smoothDirectGain(float gainOcclusion) {
-        float rawGain = gainOcclusion * Math.min(proximityBoost, 2.0f);
-        if (!isSubwoofer()) {
-            rawGain *= directionalGain;
-        }
-
-        float delta = rawGain - smoothedDirectGain;
+    private float smoothDirectPathGain(float targetGain) {
+        float clampedTarget = Math.max(0.0f, Math.min(1.0f, targetGain));
+        float delta = clampedTarget - smoothedDirectPathGain;
         float lerp = 0.40f;
         float absoluteDelta = Math.abs(delta);
         if (absoluteDelta > 0.60f) {
@@ -391,14 +405,15 @@ final class SourceSpatialController {
         } else if (absoluteDelta > 0.25f) {
             lerp = 0.65f;
         }
-        smoothedDirectGain += delta * lerp;
+        smoothedDirectPathGain += delta * lerp;
         if (smoothedInputGain < 0.001f) {
-            smoothedDirectGain = 0.0f;
+            smoothedDirectPathGain = 0.0f;
         }
-        return smoothedDirectGain;
+        return smoothedDirectPathGain;
     }
 
-    private void applyRoomAndEchoSends(float reverbHighFrequencyGain, LiveTuningConfig config) {
+    private void applyRoomAndEchoSends(
+            float reverbHighFrequencyGain, float wetSpatialTransmission, LiveTuningConfig config) {
         AudioEngine engine = AudioEngine.getInstance();
         pendingEchoSendGain = 0.0f;
         pendingEchoHighFrequencyGain = 1.0f;
@@ -424,6 +439,7 @@ final class SourceSpatialController {
         float wetFloor = 0.04f * reverbOcclusion * rangeFade;
         if (sendGain < wetFloor) sendGain = wetFloor;
         if (sendGain > 0.60f) sendGain = 0.60f;
+        sendGain *= wetSpatialTransmission;
         if (engine.isSideMuted()) sendGain = 0.0f;
 
         float roomSendGain = sendGain / (float) Math.max(1.0, Math.sqrt(clusterSize));
