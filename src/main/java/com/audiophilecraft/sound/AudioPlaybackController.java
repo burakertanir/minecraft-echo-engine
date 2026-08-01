@@ -510,11 +510,10 @@ final class AudioPlaybackController {
 
     private void applyGroupProfiles(List<EmitterGroup> groups, AcousticSceneScanResult sceneResult) {
         List<AcousticProfile> profiles = sceneResult.groupProfiles();
-        List<List<Vec3d>> reflectionPoints = sceneResult.groupReflectionPoints();
-        int count = Math.min(groups.size(), Math.min(profiles.size(), reflectionPoints.size()));
+        int count = Math.min(groups.size(), profiles.size());
         for (int i = 0; i < count; i++) {
             EmitterGroup group = groups.get(i);
-            group.applyAcousticProfile(profiles.get(i), reflectionPoints.get(i));
+            group.applyAcousticProfile(profiles.get(i));
             group.activateRoomSendImmediately();
         }
     }
@@ -571,9 +570,7 @@ final class AudioPlaybackController {
                             try {
                                 if (generation != trackGeneration || sceneResult == null) return;
                                 List<AcousticProfile> profiles = sceneResult.groupProfiles();
-                                List<List<Vec3d>> reflectionPoints = sceneResult.groupReflectionPoints();
-                                int count = Math.min(
-                                        scannedCandidates.size(), Math.min(profiles.size(), reflectionPoints.size()));
+                                int count = Math.min(scannedCandidates.size(), profiles.size());
                                 for (int i = 0; i < count; i++) {
                                     DynamicVenueCandidate candidate = scannedCandidates.get(i);
                                     if (candidate.session().isPlaying()
@@ -581,7 +578,7 @@ final class AudioPlaybackController {
                                                      .session()
                                                      .getEmitterGroups()
                                                      .contains(candidate.group())) {
-                                        candidate.group().applyAcousticProfile(profiles.get(i), reflectionPoints.get(i));
+                                        candidate.group().applyAcousticProfile(profiles.get(i));
                                     }
                                 }
                                 if (effects.getVenuePreset() == null) {

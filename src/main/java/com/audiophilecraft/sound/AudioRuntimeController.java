@@ -4,7 +4,6 @@ import java.nio.IntBuffer;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.HashMap;
-import java.util.IdentityHashMap;
 import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
@@ -41,8 +40,7 @@ final class AudioRuntimeController {
     private final ReverbBusAllocator reverbBusAllocator;
     private final AudioPlaybackController playback;
     private final IntBuffer reusableRestartBuffer = BufferUtils.createIntBuffer(1024);
-    private final Map<PlaybackSession, IdentityHashMap<EmitterGroup, EchoNormalizationState>>
-            echoNormalizationStates = new HashMap<>();
+    private final Map<PlaybackSession, float[]> echoNormalizationFactors = new HashMap<>();
 
     private volatile Vec3d listenerPosition = Vec3d.ZERO;
     private volatile Vec3d smoothedListenerPosition = Vec3d.ZERO;
@@ -125,7 +123,6 @@ final class AudioRuntimeController {
         }
 
         playback.refreshNearbyVenueProfiles(sessions.values(), world, listenerPosition);
-        updateReflectionTransmissions(world);
         reverbBusAllocator.update(sessions.values(), listenerPosition);
 
         boolean removedSession = updatePlayingSessions(world);
@@ -136,20 +133,9 @@ final class AudioRuntimeController {
 
         updateListenerAcoustics(world);
         clearFinishedVenueState();
-        effects.updateRoomBusTransmission(calculateRoomBusTransmission());
+        effects.updateRoomBusOcclusion(calculateRoomBusOcclusion());
         effects.ensureVenueReverb();
         lastTickTime = System.nanoTime();
-    }
-
-    private void updateReflectionTransmissions(World world) {
-        for (PlaybackSession session : sessions.values()) {
-            if (!session.isPlaying()) continue;
-            for (EmitterGroup emitterGroup : session.getEmitterGroups()) {
-                if (emitterGroup.acousticProfile() != null) {
-                    emitterGroup.updateReflectionTransmission(world, listenerPosition);
-                }
-            }
-        }
     }
 
     private void updatePauseStates(boolean gamePaused) {
@@ -196,7 +182,7 @@ final class AudioRuntimeController {
             session.getStreamSources().removeAll(sourcesToRemove);
 
             if (session.getStreamSources().isEmpty()) {
-                echoNormalizationStates.remove(session);
+                echoNormalizationFactors.remove(session);
                 playback.cancelUrlRequest(entry.getKey());
                 synchronized (lifecycleLock) {
                     session.stopAll();
@@ -211,77 +197,48 @@ final class AudioRuntimeController {
     }
 
     private void normalizeEchoSends(PlaybackSession session) {
-        IdentityHashMap<EmitterGroup, EchoNormalizationState> groupStates =
-                echoNormalizationStates.computeIfAbsent(session, ignored -> new IdentityHashMap<>());
-        for (EchoNormalizationState state : groupStates.values()) {
-            state.resetMeasurements();
-        }
+        float[] totalContributions = new float[ECHO_GROUP_COUNT];
+        float[] strongestContributions = new float[ECHO_GROUP_COUNT];
+        boolean[] activeGroups = new boolean[ECHO_GROUP_COUNT];
 
         for (StreamSource source : session.getStreamSources()) {
             if (!source.isValid) continue;
 
-            EchoNormalizationState state = groupStates.computeIfAbsent(
-                    source.getEmitterGroup(), ignored -> new EchoNormalizationState());
+            int groupIndex = echoGroupIndex(source);
             float contribution = Math.max(0.0f, source.getPendingEchoContribution());
-            state.add(echoGroupIndex(source), contribution);
+            totalContributions[groupIndex] += contribution;
+            strongestContributions[groupIndex] = Math.max(strongestContributions[groupIndex], contribution);
+            activeGroups[groupIndex] = true;
         }
 
-        for (EchoNormalizationState state : groupStates.values()) {
-            state.updateFactors();
+        float[] normalizationFactors = echoNormalizationFactors.computeIfAbsent(session, ignored -> {
+            float[] factors = new float[ECHO_GROUP_COUNT];
+            Arrays.fill(factors, 1.0f);
+            return factors;
+        });
+        for (int groupIndex = 0; groupIndex < ECHO_GROUP_COUNT; groupIndex++) {
+            if (!activeGroups[groupIndex]) {
+                normalizationFactors[groupIndex] = 1.0f;
+                continue;
+            }
+
+            float totalContribution = totalContributions[groupIndex];
+            float targetFactor = 1.0f;
+            if (totalContribution > ECHO_NORMALIZATION_EPSILON) {
+                targetFactor = strongestContributions[groupIndex] / totalContribution;
+            }
+
+            float previousFactor = normalizationFactors[groupIndex];
+            float normalizedFactor = targetFactor;
+            if (targetFactor > previousFactor) {
+                normalizedFactor = previousFactor + (targetFactor - previousFactor) * ECHO_NORMALIZATION_RECOVERY;
+            }
+            normalizationFactors[groupIndex] = normalizedFactor;
         }
 
         for (StreamSource source : session.getStreamSources()) {
             if (!source.isValid) continue;
-            EchoNormalizationState state = groupStates.get(source.getEmitterGroup());
-            source.applyEchoNormalization(state != null ? state.factor(echoGroupIndex(source)) : 1.0f);
-        }
-    }
-
-    private static final class EchoNormalizationState {
-        private final float[] energySums = new float[ECHO_GROUP_COUNT];
-        private final float[] strongestContributions = new float[ECHO_GROUP_COUNT];
-        private final boolean[] activeChannels = new boolean[ECHO_GROUP_COUNT];
-        private final float[] factors = new float[ECHO_GROUP_COUNT];
-
-        private EchoNormalizationState() {
-            Arrays.fill(factors, 1.0f);
-        }
-
-        private void resetMeasurements() {
-            Arrays.fill(energySums, 0.0f);
-            Arrays.fill(strongestContributions, 0.0f);
-            Arrays.fill(activeChannels, false);
-        }
-
-        private void add(int channelIndex, float contribution) {
-            energySums[channelIndex] += contribution * contribution;
-            strongestContributions[channelIndex] =
-                    Math.max(strongestContributions[channelIndex], contribution);
-            activeChannels[channelIndex] = true;
-        }
-
-        private void updateFactors() {
-            for (int channelIndex = 0; channelIndex < ECHO_GROUP_COUNT; channelIndex++) {
-                if (!activeChannels[channelIndex]) {
-                    factors[channelIndex] = 1.0f;
-                    continue;
-                }
-
-                float targetFactor = 1.0f;
-                float totalEnergy = energySums[channelIndex];
-                if (totalEnergy > ECHO_NORMALIZATION_EPSILON) {
-                    targetFactor = strongestContributions[channelIndex] / (float) Math.sqrt(totalEnergy);
-                }
-
-                float previousFactor = factors[channelIndex];
-                factors[channelIndex] = targetFactor > previousFactor
-                        ? previousFactor + (targetFactor - previousFactor) * ECHO_NORMALIZATION_RECOVERY
-                        : targetFactor;
-            }
-        }
-
-        private float factor(int channelIndex) {
-            return factors[channelIndex];
+            source.applyEchoNormalization(normalizationFactors[echoGroupIndex(source)]);
         }
     }
 
@@ -317,33 +274,27 @@ final class AudioRuntimeController {
         }
     }
 
-    private float[] calculateRoomBusTransmission() {
-        double[] weightedEnergy = {0.0, 0.0};
-        double[] totalWeight = {0.0, 0.0};
+    private float[] calculateRoomBusOcclusion() {
+        float[] roomBusOcclusion = {0.0f, 0.0f};
+        boolean[] roomBusHasSources = {false, false};
         for (PlaybackSession session : sessions.values()) {
-            if (!session.isPlaying()) continue;
-            for (EmitterGroup emitterGroup : session.getEmitterGroups()) {
-                if (emitterGroup.acousticProfile() == null) continue;
+            for (StreamSource source : session.getStreamSources()) {
+                EmitterGroup emitterGroup = source.getEmitterGroup();
+                if (!source.isValid || emitterGroup == null) continue;
+
                 int busIndex = emitterGroup.roomBusIndex();
-                if (busIndex < 0 || busIndex >= weightedEnergy.length) continue;
-
-                double distance = Math.sqrt(emitterGroup.center().squaredDistanceTo(listenerPosition));
-                double normalizedDistance = distance / 16.0;
-                double weight = 1.0 / (1.0 + normalizedDistance * normalizedDistance);
-                double transmission = emitterGroup.reflectionTransmission();
-                weightedEnergy[busIndex] += transmission * transmission * weight;
-                totalWeight[busIndex] += weight;
+                if (busIndex < 0 || busIndex >= roomBusOcclusion.length) continue;
+                roomBusHasSources[busIndex] = true;
+                roomBusOcclusion[busIndex] = Math.max(roomBusOcclusion[busIndex], source.currentOcclusion);
             }
         }
 
-        float[] roomBusTransmission = {1.0f, 1.0f};
-        for (int busIndex = 0; busIndex < roomBusTransmission.length; busIndex++) {
-            if (totalWeight[busIndex] > 0.0) {
-                roomBusTransmission[busIndex] =
-                        (float) Math.sqrt(weightedEnergy[busIndex] / totalWeight[busIndex]);
+        for (int busIndex = 0; busIndex < roomBusOcclusion.length; busIndex++) {
+            if (!roomBusHasSources[busIndex]) {
+                roomBusOcclusion[busIndex] = 1.0f;
             }
         }
-        return roomBusTransmission;
+        return roomBusOcclusion;
     }
 
     void pauseAll() {
@@ -366,7 +317,7 @@ final class AudioRuntimeController {
 
     void stopSessionContents(PlaybackSession session) {
         if (session == null) return;
-        echoNormalizationStates.remove(session);
+        echoNormalizationFactors.remove(session);
         session.stopAll();
         refreshReverbBusAssignments();
     }
@@ -375,7 +326,7 @@ final class AudioRuntimeController {
         playback.cancelUrlRequest(sessionId);
         PlaybackSession session = sessions.remove(sessionId);
         if (session != null) {
-            echoNormalizationStates.remove(session);
+            echoNormalizationFactors.remove(session);
             session.stopAll();
         }
         refreshReverbBusAssignments();
@@ -388,7 +339,7 @@ final class AudioRuntimeController {
             session.stopAll();
         }
         sessions.clear();
-        echoNormalizationStates.clear();
+        echoNormalizationFactors.clear();
         reverbBusAllocator.reset();
         checkAndShutdownThread();
     }
@@ -421,7 +372,7 @@ final class AudioRuntimeController {
                 session.abandonAfterAudioDeviceLoss();
             }
             sessions.clear();
-            echoNormalizationStates.clear();
+            echoNormalizationFactors.clear();
             reusableRestartBuffer.clear();
             reverbBusAllocator.abandonAssignments();
         }

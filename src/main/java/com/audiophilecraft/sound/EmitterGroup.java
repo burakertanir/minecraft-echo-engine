@@ -8,9 +8,7 @@ import net.minecraft.util.math.Vec3d;
 public final class EmitterGroup {
     private final List<BlockPos> speakerPositions;
     private final Vec3d center;
-    private final ReflectionTransmissionTracker reflectionTransmission = new ReflectionTransmissionTracker();
     private volatile AcousticProfile acousticProfile;
-    private volatile List<Vec3d> reflectionPoints = List.of();
     private volatile int roomBusIndex;
     private volatile float roomSendGain;
     private volatile float targetRoomSendGain;
@@ -35,24 +33,10 @@ public final class EmitterGroup {
         return acousticProfile;
     }
 
-    void applyAcousticProfile(AcousticProfile profile, List<Vec3d> reflectionPoints) {
+    void applyAcousticProfile(AcousticProfile profile) {
         if (profile == null) return;
         this.acousticProfile = profile;
-        this.reflectionPoints = reflectionPoints == null ? List.of() : List.copyOf(reflectionPoints);
-        reflectionTransmission.setReflectionPoints(this.reflectionPoints);
         this.targetRoomSendGain = 1.0f;
-    }
-
-    void updateReflectionTransmission(net.minecraft.world.World world, Vec3d listenerPosition) {
-        reflectionTransmission.update(world, center, reflectionPoints, listenerPosition);
-    }
-
-    float reflectionTransmission() {
-        return reflectionTransmission.gain();
-    }
-
-    float reflectionHighFrequencyTransmission() {
-        return reflectionTransmission.highFrequencyGain();
     }
 
     void activateRoomSendImmediately() {

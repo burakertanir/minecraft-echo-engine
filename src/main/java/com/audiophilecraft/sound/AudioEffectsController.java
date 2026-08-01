@@ -28,7 +28,7 @@ final class AudioEffectsController {
     private final RoomReverbBus[] roomBuses = {new RoomReverbBus(), new RoomReverbBus()};
     private final AcousticProfile[] roomBusProfiles = new AcousticProfile[2];
     private final float[] roomBusMixGains = {1.0f, 1.0f};
-    private final float[] smoothedRoomBusTransmission = {1.0f, 1.0f};
+    private final float[] smoothedRoomBusOcclusion = {1.0f, 1.0f};
     private final BlockPos.Mutable listenerScanPosition = new BlockPos.Mutable();
 
     private int slapbackEffectId;
@@ -205,12 +205,11 @@ final class AudioEffectsController {
         float density = config.reverb_densityOverride >= 0 ? config.reverb_densityOverride : preset.density;
         float diffusion = config.reverb_diffusionOverride >= 0 ? config.reverb_diffusionOverride : preset.diffusion;
 
-        float transmission = smoothedRoomBusTransmission[busIndex];
-        float transmissionGain =
-                config.masterOcc_gainFloor + (1.0f - config.masterOcc_gainFloor) * transmission;
-        float transmissionGainHF = (float) Math.pow(transmission, config.masterOcc_hfExponent);
-        gain *= transmissionGain;
-        gainHF *= transmissionGainHF;
+        float occlusion = smoothedRoomBusOcclusion[busIndex];
+        float occlusionGain = config.masterOcc_gainFloor + (1.0f - config.masterOcc_gainFloor) * occlusion;
+        float occlusionGainHF = (float) Math.pow(occlusion, config.masterOcc_hfExponent);
+        gain *= occlusionGain;
+        gainHF *= occlusionGainHF;
 
         decayTime = Math.max(0.1f, Math.min(20.0f, decayTime));
         gain = Math.max(0.0f, Math.min(1.0f, gain));
@@ -333,16 +332,16 @@ final class AudioEffectsController {
         return ECHO_PROXIMITY_KNEE_START + (ECHO_PROXIMITY_LIMIT - ECHO_PROXIMITY_KNEE_START) * smoothProgress;
     }
 
-    void updateRoomBusTransmission(float[] targetTransmission) {
+    void updateRoomBusOcclusion(float[] targetOcclusion) {
         if (!roomBuses[PRIMARY_ROOM_BUS].isAvailable() || venuePreset == null) return;
         com.audiophilecraft.config.LiveTuningConfig config = com.audiophilecraft.config.LiveTuningConfig.get();
-        for (int busIndex = 0; busIndex < smoothedRoomBusTransmission.length; busIndex++) {
-            float target = targetTransmission != null && busIndex < targetTransmission.length
-                    ? Math.max(0.0f, Math.min(1.0f, targetTransmission[busIndex]))
+        for (int busIndex = 0; busIndex < smoothedRoomBusOcclusion.length; busIndex++) {
+            float target = targetOcclusion != null && busIndex < targetOcclusion.length
+                    ? Math.max(0.0f, Math.min(1.0f, targetOcclusion[busIndex]))
                     : 1.0f;
-            float current = smoothedRoomBusTransmission[busIndex];
+            float current = smoothedRoomBusOcclusion[busIndex];
             float lerpRate = target < current ? config.masterOcc_lerpIn : config.masterOcc_lerpOut;
-            smoothedRoomBusTransmission[busIndex] += (target - current) * lerpRate;
+            smoothedRoomBusOcclusion[busIndex] += (target - current) * lerpRate;
         }
     }
 
@@ -379,7 +378,7 @@ final class AudioEffectsController {
         currentReflectionGainMultiplier = 1.0f;
         currentReflectionDelay = -1.0f;
         java.util.Arrays.fill(roomBusProfiles, null);
-        java.util.Arrays.fill(smoothedRoomBusTransmission, 1.0f);
+        java.util.Arrays.fill(smoothedRoomBusOcclusion, 1.0f);
     }
 
     void resetVenueState(List<BlockPos> speakers) {

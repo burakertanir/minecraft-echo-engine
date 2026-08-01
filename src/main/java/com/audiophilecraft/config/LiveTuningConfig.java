@@ -54,6 +54,7 @@ public class LiveTuningConfig {
     public float line_baseMaxDist = 60.0f;
     public float line_rolloffExponent = 1.6f;
     public float distance_softKneeRatio = 0.5f;
+    public float fadeStartPercent = 0.9f;
 
     // ============================================================================
     // CATEGORY 2: DIRECTIONALITY
@@ -449,6 +450,11 @@ public class LiveTuningConfig {
                         "distance_softKneeRatio",
                         c.distance_softKneeRatio,
                         "RefDist sonrasi yumusak gecis genisligi. 0.5 = etkin RefDist'in yarisi, 0 = kapali.");
+                writeParam(
+                        w,
+                        "fadeStartPercent",
+                        c.fadeStartPercent,
+                        "Son yuzde kacta ses yumusak sekilde soner. 0.80 = son %20'de kaybolur.");
                 w.println();
 
                 // CATEGORY 2
