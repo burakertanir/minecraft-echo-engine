@@ -10,6 +10,11 @@ import net.minecraft.world.World;
  * gain, filter and send values.
  */
 final class SourceSpatialController {
+    private static final float REVERB_DISTANCE_EXPONENT = 0.15f;
+    private static final float ECHO_DISTANCE_EXPONENT = 0.60f;
+    private static final float WET_DISTANCE_FADE_RATE = 0.12f;
+    private static final float WET_DISTANCE_RECOVERY_RATE = 0.06f;
+
     private final PlaybackSession session;
     private final OpenALSourceResources openAlResources;
     private final SourceOcclusionTracker occlusionTracker = new SourceOcclusionTracker();
@@ -27,6 +32,8 @@ final class SourceSpatialController {
     private volatile float smoothedInputGain;
     private float smoothedGain;
     private float smoothedDirectPathGain = 1.0f;
+    private float smoothedReverbDistanceGain = 1.0f;
+    private float smoothedEchoDistanceGain = 1.0f;
     private float targetOcclusion = 1.0f;
     private float currentOcclusion = 1.0f;
     private float pendingEchoSendGain;
@@ -231,20 +238,14 @@ final class SourceSpatialController {
             attenuation = 0.0f;
         } else {
             double inversePower = Math.pow(effectiveReferenceDistance / distance, rolloffExponent);
-            double fadeStart = dynamicMaxDistance * config.fadeStartPercent;
 
             float kneeRatio = Math.max(0.0f, Math.min(2.0f, config.distance_softKneeRatio));
-            double kneeEnd = Math.min(effectiveReferenceDistance * (1.0 + kneeRatio), fadeStart);
+            double kneeEnd = Math.min(effectiveReferenceDistance * (1.0 + kneeRatio), dynamicMaxDistance);
             if (kneeEnd > effectiveReferenceDistance && distance < kneeEnd) {
                 float kneeProgress =
                         (float) ((distance - effectiveReferenceDistance) / (kneeEnd - effectiveReferenceDistance));
                 float smoothProgress = kneeProgress * kneeProgress * (3.0f - 2.0f * kneeProgress);
                 inversePower = 1.0 + (inversePower - 1.0) * smoothProgress;
-            }
-
-            if (distance > fadeStart) {
-                double fadeRatio = (distance - fadeStart) / (dynamicMaxDistance - fadeStart);
-                inversePower *= 0.5 * (1.0 + Math.cos(fadeRatio * Math.PI));
             }
             attenuation = (float) Math.max(0.0, Math.min(1.0, inversePower));
         }
@@ -323,15 +324,14 @@ final class SourceSpatialController {
                 * directionHighFrequencyGain
                 * airHighFrequencyGain;
         float directGain = smoothDirectPathGain(directionalGain * gainOcclusion);
-        float wetSpatialTransmission = (float) Math.sqrt(directGain);
+        float directHighFrequencyLimit = (float) Math.sqrt(directGain);
         directHighFrequencyGain = Math.max(0.01f, directHighFrequencyGain);
-        directHighFrequencyGain = Math.min(directHighFrequencyGain, wetSpatialTransmission);
+        directHighFrequencyGain = Math.min(directHighFrequencyGain, directHighFrequencyLimit);
         if (isSubwoofer()) {
             directHighFrequencyGain = Math.min(directHighFrequencyGain, 0.05f);
         }
 
         float reverbHighFrequencyGain = distanceHighFrequencyGain
-                * occlusionHighFrequencyGain
                 * underwaterHighFrequencyGain
                 * airHighFrequencyGain;
         reverbHighFrequencyGain = Math.max(0.01f, Math.min(1.0f, reverbHighFrequencyGain));
@@ -347,7 +347,7 @@ final class SourceSpatialController {
             openAlResources.applyDirectFilter(directGain, directHighFrequencyGain);
         }
 
-        applyRoomAndEchoSends(reverbHighFrequencyGain, wetSpatialTransmission, config);
+        applyRoomAndEchoSends(reverbHighFrequencyGain, config);
     }
 
     private float calculateDistanceHighFrequencyGain() {
@@ -412,8 +412,7 @@ final class SourceSpatialController {
         return smoothedDirectPathGain;
     }
 
-    private void applyRoomAndEchoSends(
-            float reverbHighFrequencyGain, float wetSpatialTransmission, LiveTuningConfig config) {
+    private void applyRoomAndEchoSends(float reverbHighFrequencyGain, LiveTuningConfig config) {
         AudioEngine engine = AudioEngine.getInstance();
         pendingEchoSendGain = 0.0f;
         pendingEchoHighFrequencyGain = 1.0f;
@@ -421,41 +420,58 @@ final class SourceSpatialController {
         pendingEchoSend = false;
         if (!openAlResources.hasRoomSendFilter() || engine.getAuxSlotId() == 0) return;
 
-        float reverbOcclusion = Math.max(0.15f, currentOcclusion);
         float baseReverbVolume = (config.reverb_send_near + config.reverb_send_far) * 0.5f;
         float powerScaledSend = baseReverbVolume * smoothedPower;
-
-        float rangeFade = 1.0f;
-        float fadeStart = dynamicMaxDistance * config.fadeStartPercent;
-        if (distance >= dynamicMaxDistance || attenuation <= 0.0f) {
-            rangeFade = 0.0f;
-        } else if (distance > fadeStart) {
-            float fadeRatio = (distance - fadeStart) / (dynamicMaxDistance - fadeStart);
-            rangeFade = 0.5f * (1.0f + (float) Math.cos(fadeRatio * Math.PI));
+        updateWetDistanceGains();
+        float roomSend = calculateWetSendGain(powerScaledSend, smoothedReverbDistanceGain);
+        float echoSend = calculateWetSendGain(powerScaledSend, smoothedEchoDistanceGain);
+        if (engine.isSideMuted()) {
+            roomSend = 0.0f;
+            echoSend = 0.0f;
         }
 
-        float softDistanceFalloff = attenuation > 0.0f ? (float) Math.pow(attenuation, 0.15f) * rangeFade : 0.0f;
-        float sendGain = reverbOcclusion * powerScaledSend * softDistanceFalloff;
-        float wetFloor = 0.04f * reverbOcclusion * rangeFade;
-        if (sendGain < wetFloor) sendGain = wetFloor;
-        if (sendGain > 0.60f) sendGain = 0.60f;
-        sendGain *= wetSpatialTransmission;
-        if (engine.isSideMuted()) sendGain = 0.0f;
-
-        float roomSendGain = sendGain / (float) Math.max(1.0, Math.sqrt(clusterSize));
+        float roomSendGain = roomSend / (float) Math.max(1.0, Math.sqrt(clusterSize));
         if (emitterGroup != null) {
             roomSendGain *= emitterGroup.roomSendGain();
         }
         openAlResources.applyRoomSend(engine.getAuxSlotId(emitterGroup), roomSendGain, reverbHighFrequencyGain);
 
         if (engine.getSlapbackAuxSlotId() != 0 && openAlResources.hasEchoSendFilter()) {
-            float echoDistanceFalloff = (float) Math.pow(Math.max(0.001f, attenuation), 0.3f);
-            pendingEchoSendGain = sendGain * engine.getSlapbackGain() * echoDistanceFalloff;
-            pendingEchoHighFrequencyGain = reverbHighFrequencyGain * Math.max(0.01f, 1.0f - config.echo_damping);
+            float reflectionTransmission = emitterGroup != null ? emitterGroup.reflectionTransmission() : 1.0f;
+            float reflectionHighFrequencyTransmission =
+                    emitterGroup != null ? emitterGroup.reflectionHighFrequencyTransmission() : 1.0f;
+            pendingEchoSendGain =
+                    echoSend * reflectionTransmission * engine.getSlapbackGain();
+            pendingEchoHighFrequencyGain = reverbHighFrequencyGain
+                    * reflectionHighFrequencyTransmission
+                    * Math.max(0.01f, 1.0f - config.echo_damping);
             pendingEchoContribution =
                     pendingEchoSendGain * Math.max(0.0f, smoothedGain) * Math.max(0.0f, smoothedInputGain);
             pendingEchoSend = true;
         }
+    }
+
+    private void updateWetDistanceGains() {
+        float reverbTarget = calculateWetDistanceTarget(REVERB_DISTANCE_EXPONENT);
+        float echoTarget = calculateWetDistanceTarget(ECHO_DISTANCE_EXPONENT);
+        smoothedReverbDistanceGain = smoothWetDistanceGain(smoothedReverbDistanceGain, reverbTarget);
+        smoothedEchoDistanceGain = smoothWetDistanceGain(smoothedEchoDistanceGain, echoTarget);
+    }
+
+    private float calculateWetDistanceTarget(float exponent) {
+        return attenuation > 0.0f ? (float) Math.pow(attenuation, exponent) : 0.0f;
+    }
+
+    private static float smoothWetDistanceGain(float currentGain, float targetGain) {
+        float rate = targetGain < currentGain ? WET_DISTANCE_FADE_RATE : WET_DISTANCE_RECOVERY_RATE;
+        float smoothedGain = currentGain + (targetGain - currentGain) * rate;
+        return targetGain == 0.0f && smoothedGain < 0.0001f ? 0.0f : smoothedGain;
+    }
+
+    private static float calculateWetSendGain(float powerScaledSend, float distanceGain) {
+        float sendGain = powerScaledSend * distanceGain;
+        float wetFloor = 0.04f * distanceGain;
+        return Math.max(wetFloor, Math.min(0.60f, sendGain));
     }
 
     private boolean isSubwoofer() {

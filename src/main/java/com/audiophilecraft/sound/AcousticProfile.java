@@ -28,10 +28,14 @@ record AcousticScanResult(AcousticProfile profile, List<Vec3d> pointCloud, Set<B
     }
 }
 
-/** Combined scene result plus the individual emitter-group profiles. */
-record AcousticSceneScanResult(AcousticScanResult combinedResult, List<AcousticProfile> groupProfiles) {
+/** Combined scene result plus the individual emitter-group profiles and reflection probes. */
+record AcousticSceneScanResult(
+        AcousticScanResult combinedResult,
+        List<AcousticProfile> groupProfiles,
+        List<List<Vec3d>> groupReflectionPoints) {
     AcousticSceneScanResult {
         Objects.requireNonNull(combinedResult, "combinedResult");
         groupProfiles = List.copyOf(groupProfiles);
+        groupReflectionPoints = groupReflectionPoints.stream().map(List::copyOf).toList();
     }
 }

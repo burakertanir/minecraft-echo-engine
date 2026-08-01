@@ -290,6 +290,7 @@ public class AdvancedAcousticScanner {
         List<Vec3d> currentCloud = new ArrayList<>();
         List<ProbeResult> probes = new ArrayList<>();
         List<AcousticProfile> groupProfiles = new ArrayList<>();
+        List<List<Vec3d>> groupReflectionPoints = new ArrayList<>();
 
         // Limit the number of clusters we scan to prevent lag spikes if a user builds
         // 100 isolated speakers
@@ -304,6 +305,7 @@ public class AdvancedAcousticScanner {
 
             VenueDescriptor groupDescriptor = mergeProbes(List.of(probe));
             groupProfiles.add(createProfile(groupDescriptor, centerPos, groupCloud));
+            groupReflectionPoints.add(selectReflectionPoints(centerPos, groupCloud));
         }
 
         VenueDescriptor desc = mergeProbes(probes);
@@ -315,7 +317,56 @@ public class AdvancedAcousticScanner {
         Vec3d referencePos = clusterCenters.get(0);
         AcousticProfile combinedProfile = createProfile(desc, referencePos, currentCloud);
         AcousticScanResult combinedResult = createScanResult(combinedProfile, currentCloud);
-        return new AcousticSceneScanResult(combinedResult, groupProfiles);
+        return new AcousticSceneScanResult(combinedResult, groupProfiles, groupReflectionPoints);
+    }
+
+    /**
+     * Keeps one nearby wall point for each axis direction. Six well-spread
+     * probes are enough for runtime wet-path visibility without retaining the
+     * full thousand-ray point cloud for every emitter group.
+     */
+    private static List<Vec3d> selectReflectionPoints(Vec3d center, List<Vec3d> pointCloud) {
+        Vec3d[] nearestByDirection = new Vec3d[6];
+        double[] nearestDistanceSq = {
+            Double.POSITIVE_INFINITY,
+            Double.POSITIVE_INFINITY,
+            Double.POSITIVE_INFINITY,
+            Double.POSITIVE_INFINITY,
+            Double.POSITIVE_INFINITY,
+            Double.POSITIVE_INFINITY
+        };
+        double maximumDistanceSq = 160.0 * 160.0;
+
+        for (Vec3d point : pointCloud) {
+            double deltaX = point.x - center.x;
+            double deltaY = point.y - center.y;
+            double deltaZ = point.z - center.z;
+            double distanceSq = deltaX * deltaX + deltaY * deltaY + deltaZ * deltaZ;
+            if (distanceSq < 0.25 || distanceSq > maximumDistanceSq) continue;
+
+            double absoluteX = Math.abs(deltaX);
+            double absoluteY = Math.abs(deltaY);
+            double absoluteZ = Math.abs(deltaZ);
+            int directionIndex;
+            if (absoluteX >= absoluteY && absoluteX >= absoluteZ) {
+                directionIndex = deltaX >= 0.0 ? 0 : 1;
+            } else if (absoluteY >= absoluteZ) {
+                directionIndex = deltaY >= 0.0 ? 2 : 3;
+            } else {
+                directionIndex = deltaZ >= 0.0 ? 4 : 5;
+            }
+
+            if (distanceSq < nearestDistanceSq[directionIndex]) {
+                nearestDistanceSq[directionIndex] = distanceSq;
+                nearestByDirection[directionIndex] = point;
+            }
+        }
+
+        List<Vec3d> result = new ArrayList<>(6);
+        for (Vec3d point : nearestByDirection) {
+            if (point != null) result.add(point);
+        }
+        return List.copyOf(result);
     }
 
     public AcousticScanResult scanProfile(World world, List<Vec3d> clusterCenters) {
