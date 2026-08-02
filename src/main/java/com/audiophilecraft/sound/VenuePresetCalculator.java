@@ -150,9 +150,9 @@ final class VenuePresetCalculator {
 
         int opennessPct = (int) Math.min(100, vOpenness * 200.0f);
         if (vOpenness > 0.25f) {
-            tierName += String.format(" [AÇIK HAVA: %%%d]", opennessPct);
+            tierName += String.format(" [OPEN AIR: %d%%]", opennessPct);
         } else if (opennessPct > 2) {
-            tierName += String.format(" [Yarı Açık: %%%d]", opennessPct);
+            tierName += String.format(" [SEMI-OPEN: %d%%]", opennessPct);
         }
 
         float tailRetention = (float) Math.pow(effectiveEnclosure, cfg.openAir_enclosure_penalty_exponent);

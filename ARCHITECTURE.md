@@ -119,7 +119,10 @@ src/main/java/com/audiophilecraft/
 |-- block/entity/
 |   `-- SpeakerBlockEntity.java           Tilt, shift, kanal ve owner kaliciligi
 |-- client/screen/
-|   |-- AmplifierScreen.java             Tablet UI, transport, mixer, EQ, heatmap
+|   |-- AmplifierScreen.java             Tablet view gecisleri ve heatmap koordinatoru
+|   |-- AmplifierPlaybackPanel.java      Arama, transport, seek, power ve input gain
+|   |-- AmplifierMixerPanel.java         Mixer gain, EQ/Q, mid-side ve peak meter
+|   |-- AmplifierTheme.java              Thumbnail paleti ve adaptif tablet temasi
 |   |-- SpeakerScreen.java               Tek hoparlor ayarlari
 |   `-- PointCloudRenderer.java           Gercek tarama debug/heatmap cizimi
 |-- client/util/
@@ -651,32 +654,31 @@ Yeni tuning degeri eklerken:
 
 ### AmplifierScreen
 
-Tablet ekraninin su anki sorumluluklari:
+Tablet UI dort anlamli sinira ayrilmistir:
 
-- URL girisi, YouTube aramasi ve thumbnail rengi.
-- Play/pause/stop ve seek.
-- Power ve input gain.
-- Speaker type mixer gainleri.
-- 5-band EQ ve Q.
-- Mid/side dinleme kontrolleri.
-- Peak meter.
-- Venue tier ve heatmap gorunumu.
-- Network paketlerinin UI tarafindan gonderilmesi.
+- `AmplifierScreen`: Main/mixer/map gorunum gecisleri, widget olay yonlendirmesi
+  ve venue heatmap.
+- `AmplifierPlaybackPanel`: URL/YouTube aramasi, track metadata, play/pause/stop,
+  seek, power ve input gain. Bu kontrollere ait network paketlerinin sahibidir.
+- `AmplifierMixerPanel`: Speaker type gainleri, 5-band EQ/Q, mid/side kontrolleri
+  ve peak meter. Mixer paketlerinin sahibidir.
+- `AmplifierTheme`: Kalici thumbnail paleti, renk analizi, adaptif arka plan ve
+  ortak temali button cizimi.
 
-Bu sinif kalan en belirgin buyuk UI sinifidir. Bolunecekse satir sayisina gore
-degil su sinirlara gore bolunmelidir:
+Akis su sekildedir:
 
 ```text
 AmplifierScreen
-|-- transport/search state ve widgetlari
-|-- mixer/EQ paneli
-|-- heatmap/venue paneli
-`-- tema/thumbnail renk hesaplari
+|-- AmplifierPlaybackPanel
+|-- AmplifierMixerPanel
+|-- AmplifierTheme
+`-- PointCloudRenderer
 ```
 
-Ilk refaktor tercihi, ekrana bagli state'i kaybetmeden package-private yardimci
-component/controller cikarmaktir. Packet semantigi veya audio davranisi UI
-refaktoruyle ayni committe degistirilmemelidir.
+Yardimci paneller package-private tutulur. `AmplifierScreen` disindan gelen
+power/input network callback API'sini korur ve ilgili playback paneline iletir.
+Audio state bu UI siniflarinin hicbirinde sahiplenilmez; gercek state
+`AudioEngine` ve server tarafindadir.
 
 ### SpeakerScreen
 
@@ -803,25 +805,23 @@ clientta global active session yerine hedef session'a uygula.
 Bu liste "hemen yeniden yaz" listesi degildir. Degisiklik yaparken dikkat
 edilecek alanlari gosterir.
 
-1. `AmplifierScreen` cok fazla UI sorumlulugu tasiyor. Davranis korunarak panel
-   sinirlarinda bolunebilir.
-2. `LiveTuningConfig` buyuk, fakat schema ve writer sirasi birbirine bagli.
+1. `LiveTuningConfig` buyuk, fakat schema ve writer sirasi birbirine bagli.
    Refaktor ancak migration ve yorumlu JSON cikisi test edilerek yapilmali.
-3. Venue world taramasi thread-safe olmak icin client ana akisinda. En fazla 8 x
+2. Venue world taramasi thread-safe olmak icin client ana akisinda. En fazla 8 x
    1000 ray ayni geciste frame hitch uretebilir. Gelecekte snapshot/chunk-safe
    saf veri katmani dusunulebilir.
-4. Projede otomatik Java test source'u yok; `gradle test` su an daha cok derleme
+3. Projede otomatik Java test source'u yok; `gradle test` su an daha cok derleme
    ve task graph dogrulamasi yapar. Kritik saf hesaplar unit test kazanmali.
-5. Bazi OpenAL hata yollarinda hala `System.err.println` bulunuyor. Bunlar
+4. Bazi OpenAL hata yollarinda hala `System.err.println` bulunuyor. Bunlar
    SLF4J ve rate-limited diagnostige tasinabilir.
-6. `AudioPlaybackController` ve `AudioRuntimeController` buyuk ama gercek
+5. `AudioPlaybackController` ve `AudioRuntimeController` buyuk ama gercek
    workflow sinirlarina sahip. Yalnizca satir sayisi icin bolunmemeli.
-7. `PlaybackSession.playTrack()` global stop davranisi yeni multi-session kodu
+6. `PlaybackSession.playTrack()` global stop davranisi yeni multi-session kodu
    icin tehlikelidir. Backward compatibility bitince kaldirilmasi veya UUID-safe
    hale getirilmesi degerlendirilebilir.
-8. Replay Mod reflection API degisimine hassastir. Hata durumunda entegrasyonun
+7. Replay Mod reflection API degisimine hassastir. Hata durumunda entegrasyonun
    graceful disable davranisi korunmalidir.
-9. Native OpenAL temizligi cihaz kaybi ile normal stop yolunda farklidir. Bu iki
+8. Native OpenAL temizligi cihaz kaybi ile normal stop yolunda farklidir. Bu iki
    yol ortaklastirilirken gecersiz context'te delete cagrisi yapilmamalidir.
 
 ## 20. Test Matrisi
@@ -887,7 +887,7 @@ Mevcut kararlar:
 - `AdvancedAcousticScanner`: Facade; ray ve preset hesaplari ayrildi.
 - `AudioPlaybackController`: Cohesive playback workflow, simdilik koru.
 - `AudioRuntimeController`: Thread/lifecycle workflow, simdilik koru.
-- `AmplifierScreen`: Gercek bir sonraki UI refaktor adayi.
+- `AmplifierScreen`: Koordinator + playback/mixer/theme collaborator ayrimi tamamlandi.
 - `LiveTuningConfig`: Gercek schema/writer/migration tasarimi olmadan bolme.
 
 ## 22. Gelistirme Yol Haritasi
@@ -908,7 +908,6 @@ Yayin guvenligi
 |   |-- Gerekiyorsa immutable chunk snapshot taramasi
 |   `-- Buyuk setup source/EFX kapasite telemetrisi
 |-- Okunabilirlik
-|   |-- AmplifierScreen panel ayrimi
 |   `-- LiveTuningConfig schema/writer tasarimi
 `-- Sonraki ses ozellikleri
     |-- Mevcut send limitini koruyan virtual DSP bus arastirmasi
