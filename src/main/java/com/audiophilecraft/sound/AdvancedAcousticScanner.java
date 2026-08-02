@@ -46,6 +46,8 @@ public class AdvancedAcousticScanner {
         public final float reflectionsDelay;
         public final float lateReverbGain;
         public final float lateReverbDelay;
+        public final float echoTime;
+        public final float echoDepth;
         public final float density;
         public final float diffusion;
         public final float decayHFRatio;
@@ -65,6 +67,8 @@ public class AdvancedAcousticScanner {
                 float reflectionsDelay,
                 float lateReverbGain,
                 float lateReverbDelay,
+                float echoTime,
+                float echoDepth,
                 float density,
                 float diffusion,
                 float decayHFRatio,
@@ -82,6 +86,8 @@ public class AdvancedAcousticScanner {
             this.reflectionsDelay = reflectionsDelay;
             this.lateReverbGain = lateReverbGain;
             this.lateReverbDelay = lateReverbDelay;
+            this.echoTime = echoTime;
+            this.echoDepth = echoDepth;
             this.density = density;
             this.diffusion = diffusion;
             this.decayHFRatio = decayHFRatio;

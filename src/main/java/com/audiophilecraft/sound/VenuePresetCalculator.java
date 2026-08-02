@@ -44,6 +44,8 @@ final class VenuePresetCalculator {
         float lateReverbMultiplier;
         float vLateGain;
         float vLateDelay;
+        float vEchoTime;
+        float vEchoDepth;
 
         float reflectionMaterialFactor = 1.0f - vAvgAbsorption;
         float effectiveVolume = vVolume * effectiveEnclosure;
@@ -201,6 +203,8 @@ final class VenuePresetCalculator {
         vReflDelay = Math.max(0.001f, Math.min(vMeanDist * 2.0f / 4000.0f, 0.3f));
         vLateGain = vReflGain * lateReverbMultiplier;
         vLateDelay = Math.min(vReflDelay + 0.02f, 0.1f);
+        vEchoTime = Math.max(0.075f, Math.min(vMeanDist * 2.0f / 343.0f, 0.25f));
+        vEchoDepth = distantEchoDepthForTier(tierName);
 
         float vDensity = (0.7f + effectiveEnclosure * 0.3f) - roomFactor * 0.15f;
         vDensity = Math.max(0.4f, Math.min(1.0f, vDensity));
@@ -267,6 +271,8 @@ final class VenuePresetCalculator {
                 vReflDelay,
                 vLateGain,
                 vLateDelay,
+                vEchoTime,
+                vEchoDepth,
                 vDensity,
                 vDiffusion,
                 vHFRatio,
@@ -276,6 +282,16 @@ final class VenuePresetCalculator {
                 effectiveEnclosure,
                 probePos,
                 tierName);
+    }
+
+    private static float distantEchoDepthForTier(String tierName) {
+        if (tierName.contains("TIER 10")) return 0.32f;
+        if (tierName.contains("TIER 9")) return 0.28f;
+        if (tierName.contains("TIER 8")) return 0.24f;
+        if (tierName.contains("TIER 7")) return 0.18f;
+        if (tierName.contains("TIER 6")) return 0.10f;
+        if (tierName.contains("TIER 5")) return 0.04f;
+        return 0.0f;
     }
 
     private static float lerp(float a, float b, float t) {

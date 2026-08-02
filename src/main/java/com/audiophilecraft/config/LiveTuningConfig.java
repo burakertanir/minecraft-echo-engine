@@ -112,6 +112,8 @@ public class LiveTuningConfig {
     public float reverb_lateGainMultiplier = 1.0f;
     public float reverb_densityOverride = 1.0f;
     public float reverb_diffusionOverride = 1.0f;
+    public float reverb_distantEchoTimeMultiplier = 1.0f;
+    public float reverb_distantEchoDepthMultiplier = 1.2f;
 
     // Master reverb occlusion
     public float masterOcc_gainFloor = 0.7f;
@@ -649,6 +651,16 @@ public class LiveTuningConfig {
                         "reverb_diffusionOverride",
                         c.reverb_diffusionOverride,
                         "Yanki dagilimi. -1=otomatik. 0.0=belirgin eko, 1.0=yumusak dagilan yanki.");
+                writeParam(
+                        w,
+                        "reverb_distantEchoTimeMultiplier",
+                        c.reverb_distantEchoTimeMultiplier,
+                        "Buyuk mekanlardaki uzak yansima araligi carpani. EAX siniri 75-250ms.");
+                writeParam(
+                        w,
+                        "reverb_distantEchoDepthMultiplier",
+                        c.reverb_distantEchoDepthMultiplier,
+                        "Buyuk mekanlardaki uzak yansima belirginligi carpani. 0.0 tamamen kapatir.");
                 w.println();
 
                 w.println("  // --- Duvar Arkasi Yanki Okluzyon ---");

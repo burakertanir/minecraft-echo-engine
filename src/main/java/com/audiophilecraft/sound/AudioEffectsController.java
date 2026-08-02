@@ -202,6 +202,8 @@ final class AudioEffectsController {
         float reflectionGain = preset.reflectionsGain * config.reverb_reflGainMultiplier;
         reflectionGain *= currentReflectionGainMultiplier;
         float lateGain = preset.lateReverbGain * config.reverb_lateGainMultiplier;
+        float echoTime = preset.echoTime * config.reverb_distantEchoTimeMultiplier;
+        float echoDepth = preset.echoDepth * config.reverb_distantEchoDepthMultiplier;
         float density = config.reverb_densityOverride >= 0 ? config.reverb_densityOverride : preset.density;
         float diffusion = config.reverb_diffusionOverride >= 0 ? config.reverb_diffusionOverride : preset.diffusion;
 
@@ -216,6 +218,8 @@ final class AudioEffectsController {
         gainHF = Math.max(0.0f, Math.min(1.0f, gainHF));
         reflectionGain = Math.max(0.0f, Math.min(3.16f, reflectionGain));
         lateGain = Math.max(0.0f, Math.min(10.0f, lateGain));
+        echoTime = Math.max(0.075f, Math.min(0.25f, echoTime));
+        echoDepth = Math.max(0.0f, Math.min(1.0f, echoDepth));
         density = Math.max(0.0f, Math.min(1.0f, density));
         diffusion = Math.max(0.0f, Math.min(1.0f, diffusion));
 
@@ -230,6 +234,8 @@ final class AudioEffectsController {
         roomBus.setFloat(AL_EAXREVERB_LATE_REVERB_GAIN, AL_REVERB_LATE_REVERB_GAIN, lateGain);
         roomBus.setFloat(AL_EAXREVERB_LATE_REVERB_DELAY, AL_REVERB_LATE_REVERB_DELAY, preset.lateReverbDelay);
         roomBus.setPan(AL_EAXREVERB_LATE_REVERB_PAN, ZERO_PAN);
+        roomBus.setFloat(AL_EAXREVERB_ECHO_TIME, -1, echoTime);
+        roomBus.setFloat(AL_EAXREVERB_ECHO_DEPTH, -1, echoDepth);
         roomBus.setFloat(AL_EAXREVERB_DENSITY, AL_REVERB_DENSITY, density);
         roomBus.setFloat(AL_EAXREVERB_DIFFUSION, AL_REVERB_DIFFUSION, diffusion);
         roomBus.setFloat(AL_EAXREVERB_GAIN, AL_REVERB_GAIN, gain);
