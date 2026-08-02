@@ -174,6 +174,10 @@ public class StreamSource {
         return spatialController.pendingEchoContribution();
     }
 
+    StreamSource getEchoNormalizationCluster() {
+        return !isLeader && clusterLeader != null && clusterLeader.isValid ? clusterLeader : this;
+    }
+
     void applyEchoNormalization(float normalization) {
         spatialController.applyPendingEchoSend(normalization);
     }

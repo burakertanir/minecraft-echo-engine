@@ -4,6 +4,7 @@ import java.nio.IntBuffer;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.HashMap;
+import java.util.IdentityHashMap;
 import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
@@ -32,6 +33,7 @@ final class AudioRuntimeController {
     private static final int ECHO_GROUP_COUNT = 9;
     private static final float ECHO_NORMALIZATION_EPSILON = 0.000001f;
     private static final float ECHO_NORMALIZATION_RECOVERY = 0.25f;
+    private static final float ECHO_NORMALIZATION_TARGET = 0.75f;
 
     private final Object lifecycleLock;
     private final Map<UUID, PlaybackSession> sessions;
@@ -225,8 +227,9 @@ final class AudioRuntimeController {
     }
 
     private void normalizeEchoSends(PlaybackSession session) {
-        float[] totalContributions = new float[ECHO_GROUP_COUNT];
-        float[] strongestContributions = new float[ECHO_GROUP_COUNT];
+        Map<StreamSource, float[]> clusterContributions = new IdentityHashMap<>();
+        float[] sourceEnergySquared = new float[ECHO_GROUP_COUNT];
+        float[] clusterEnergySquared = new float[ECHO_GROUP_COUNT];
         boolean[] activeGroups = new boolean[ECHO_GROUP_COUNT];
 
         for (StreamSource source : session.getStreamSources()) {
@@ -234,9 +237,20 @@ final class AudioRuntimeController {
 
             int groupIndex = echoGroupIndex(source);
             float contribution = Math.max(0.0f, source.getPendingEchoContribution());
-            totalContributions[groupIndex] += contribution;
-            strongestContributions[groupIndex] = Math.max(strongestContributions[groupIndex], contribution);
+            float[] groupContributions = clusterContributions.computeIfAbsent(
+                    source.getEchoNormalizationCluster(), ignored -> new float[ECHO_GROUP_COUNT]);
+            groupContributions[groupIndex] += contribution;
+            sourceEnergySquared[groupIndex] += contribution * contribution;
             activeGroups[groupIndex] = true;
+        }
+
+        // Sources in one cluster share propagation timing and add coherently. The target
+        // remains equal-power, so larger systems gain energy without over-summing arrays.
+        for (float[] groupContributions : clusterContributions.values()) {
+            for (int groupIndex = 0; groupIndex < ECHO_GROUP_COUNT; groupIndex++) {
+                float clusterContribution = groupContributions[groupIndex];
+                clusterEnergySquared[groupIndex] += clusterContribution * clusterContribution;
+            }
         }
 
         float[] normalizationFactors = echoNormalizationFactors.computeIfAbsent(session, ignored -> {
@@ -250,11 +264,13 @@ final class AudioRuntimeController {
                 continue;
             }
 
-            float totalContribution = totalContributions[groupIndex];
-            float targetFactor = 1.0f;
-            if (totalContribution > ECHO_NORMALIZATION_EPSILON) {
-                targetFactor = strongestContributions[groupIndex] / totalContribution;
+            float sourceEnergy = (float) Math.sqrt(sourceEnergySquared[groupIndex]);
+            float clusterEnergy = (float) Math.sqrt(clusterEnergySquared[groupIndex]);
+            float targetFactor = ECHO_NORMALIZATION_TARGET;
+            if (clusterEnergy > ECHO_NORMALIZATION_EPSILON) {
+                targetFactor = ECHO_NORMALIZATION_TARGET * sourceEnergy / clusterEnergy;
             }
+            targetFactor = Math.max(0.0f, Math.min(1.0f, targetFactor));
 
             float previousFactor = normalizationFactors[groupIndex];
             float normalizedFactor = targetFactor;
