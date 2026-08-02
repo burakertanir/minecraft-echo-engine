@@ -440,8 +440,7 @@ public class LiveTuningConfig {
         }
     }
 
-    private static boolean migrateConfig(
-            LiveTuningConfig config, JsonObject sourceJson, int sourceVersion) {
+    private static boolean migrateConfig(LiveTuningConfig config, JsonObject sourceJson, int sourceVersion) {
         if (sourceVersion > CURRENT_CONFIG_VERSION) {
             AudiophileCraft.LOGGER.warn(
                     "Tuning config version {} is newer than supported version {}; preserving it unchanged.",

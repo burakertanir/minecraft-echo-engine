@@ -216,7 +216,6 @@ public class PointCloudRenderer {
 
         // Sort back-to-front
         java.util.Arrays.sort(cachedProjected, (a, b) -> Float.compare(a[2], b[2]));
-
     }
 
     /**

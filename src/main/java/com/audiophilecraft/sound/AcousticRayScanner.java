@@ -41,15 +41,9 @@ final class AcousticRayScanner {
             int stepY = dirY > 0 ? 1 : (dirY < 0 ? -1 : 0);
             int stepZ = dirZ > 0 ? 1 : (dirZ < 0 ? -1 : 0);
 
-            double tMaxX = dirX != 0
-                    ? ((dirX > 0 ? x + 1 : x) - startX) / dirX
-                    : Double.POSITIVE_INFINITY;
-            double tMaxY = dirY != 0
-                    ? ((dirY > 0 ? y + 1 : y) - startY) / dirY
-                    : Double.POSITIVE_INFINITY;
-            double tMaxZ = dirZ != 0
-                    ? ((dirZ > 0 ? z + 1 : z) - startZ) / dirZ
-                    : Double.POSITIVE_INFINITY;
+            double tMaxX = dirX != 0 ? ((dirX > 0 ? x + 1 : x) - startX) / dirX : Double.POSITIVE_INFINITY;
+            double tMaxY = dirY != 0 ? ((dirY > 0 ? y + 1 : y) - startY) / dirY : Double.POSITIVE_INFINITY;
+            double tMaxZ = dirZ != 0 ? ((dirZ > 0 ? z + 1 : z) - startZ) / dirZ : Double.POSITIVE_INFINITY;
 
             double tDeltaX = dirX != 0 ? Math.abs(1.0 / dirX) : Double.POSITIVE_INFINITY;
             double tDeltaY = dirY != 0 ? Math.abs(1.0 / dirY) : Double.POSITIVE_INFINITY;
@@ -208,5 +202,4 @@ final class AcousticRayScanner {
 
         return !state.getCollisionShape(world, pos).isEmpty();
     }
-
 }

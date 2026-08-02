@@ -4,9 +4,7 @@ import com.audiophilecraft.config.LiveTuningConfig;
 import net.minecraft.util.math.Vec3d;
 
 final class VenuePresetCalculator {
-    AdvancedAcousticScanner.VenuePreset calculate(
-            AdvancedAcousticScanner.VenueDescriptor descriptor,
-            Vec3d probePos) {
+    AdvancedAcousticScanner.VenuePreset calculate(AdvancedAcousticScanner.VenueDescriptor descriptor, Vec3d probePos) {
         LiveTuningConfig cfg = LiveTuningConfig.get();
         float vAvgAbsorption = descriptor.avgAbsorption;
         float vMeanDist = descriptor.scale;
@@ -15,9 +13,8 @@ final class VenuePresetCalculator {
 
         float openAirBlend = Math.max(0.0f, Math.min(1.0f, vOpenness));
 
-        float opennessPenalty = (float) Math.pow(
-                Math.max(0.0f, 1.0f - vOpenness),
-                cfg.openAir_enclosure_penalty_exponent);
+        float opennessPenalty =
+                (float) Math.pow(Math.max(0.0f, 1.0f - vOpenness), cfg.openAir_enclosure_penalty_exponent);
         float effectiveEnclosure = vEnclosure * opennessPenalty;
         effectiveEnclosure = Math.max(0.0f, Math.min(1.0f, effectiveEnclosure));
 
@@ -51,14 +48,10 @@ final class VenuePresetCalculator {
         float effectiveVolume = vVolume * effectiveEnclosure;
         float effectiveMeanDist = vMeanDist * (float) Math.sqrt(effectiveEnclosure);
 
-        boolean tier10 = effectiveVolume > cfg.tier10_volumeThreshold
-                || effectiveMeanDist > cfg.tier10_distThreshold;
-        boolean tier9 = effectiveVolume > cfg.tier9_volumeThreshold
-                || effectiveMeanDist > cfg.tier9_distThreshold;
-        boolean tier8 = effectiveVolume > cfg.tier8_volumeThreshold
-                || effectiveMeanDist > cfg.tier8_distThreshold;
-        boolean tier7 = effectiveVolume > cfg.tier7_volumeThreshold
-                || effectiveMeanDist > cfg.tier7_distThreshold;
+        boolean tier10 = effectiveVolume > cfg.tier10_volumeThreshold || effectiveMeanDist > cfg.tier10_distThreshold;
+        boolean tier9 = effectiveVolume > cfg.tier9_volumeThreshold || effectiveMeanDist > cfg.tier9_distThreshold;
+        boolean tier8 = effectiveVolume > cfg.tier8_volumeThreshold || effectiveMeanDist > cfg.tier8_distThreshold;
+        boolean tier7 = effectiveVolume > cfg.tier7_volumeThreshold || effectiveMeanDist > cfg.tier7_distThreshold;
 
         float enclBlend = Math.max(0.0f, Math.min(1.0f, (effectiveEnclosure - 0.4f) / 0.4f));
 
@@ -68,13 +61,10 @@ final class VenuePresetCalculator {
             vDecay *= cfg.tier10_decayMul;
             vGain = Math.max(cfg.tier10_minGain, baseEnclosureMultiplier * cfg.tier10_gainMul);
             vReflGain = Math.max(0.0f, reflectionMaterialFactor * cfg.tier10_reflGainMul);
-            float maxLate10 = lerp(
-                    cfg.tier10_maxLateMultiplier_lowEncl,
-                    cfg.tier10_maxLateMultiplier_highEncl,
-                    enclBlend);
-            lateReverbMultiplier = Math.min(
-                    cfg.tier10_lateReverbMul + roomFactor * cfg.tier10_lateReverbRoomScale,
-                    maxLate10);
+            float maxLate10 =
+                    lerp(cfg.tier10_maxLateMultiplier_lowEncl, cfg.tier10_maxLateMultiplier_highEncl, enclBlend);
+            lateReverbMultiplier =
+                    Math.min(cfg.tier10_lateReverbMul + roomFactor * cfg.tier10_lateReverbRoomScale, maxLate10);
             vGainHF *= cfg.tier10_hfMul;
             vGainLF *= cfg.tier10_lfMul;
         } else if (tier9) {
@@ -82,13 +72,9 @@ final class VenuePresetCalculator {
             vDecay *= cfg.tier9_decayMul;
             vGain = Math.max(cfg.tier9_minGain, baseEnclosureMultiplier * cfg.tier9_gainMul);
             vReflGain = Math.max(0.0f, reflectionMaterialFactor * cfg.tier9_reflGainMul);
-            float maxLate9 = lerp(
-                    cfg.tier9_maxLateMultiplier_lowEncl,
-                    cfg.tier9_maxLateMultiplier_highEncl,
-                    enclBlend);
-            lateReverbMultiplier = Math.min(
-                    cfg.tier9_lateReverbMul + roomFactor * cfg.tier9_lateReverbRoomScale,
-                    maxLate9);
+            float maxLate9 = lerp(cfg.tier9_maxLateMultiplier_lowEncl, cfg.tier9_maxLateMultiplier_highEncl, enclBlend);
+            lateReverbMultiplier =
+                    Math.min(cfg.tier9_lateReverbMul + roomFactor * cfg.tier9_lateReverbRoomScale, maxLate9);
             vGainHF *= cfg.tier9_hfMul;
             vGainLF *= cfg.tier9_lfMul;
         } else if (tier8) {
@@ -96,13 +82,9 @@ final class VenuePresetCalculator {
             vDecay *= cfg.tier8_decayMul;
             vGain = Math.max(cfg.tier8_minGain, baseEnclosureMultiplier * cfg.tier8_gainMul);
             vReflGain = Math.max(0.0f, reflectionMaterialFactor * cfg.tier8_reflGainMul);
-            float maxLate8 = lerp(
-                    cfg.tier8_maxLateMultiplier_lowEncl,
-                    cfg.tier8_maxLateMultiplier_highEncl,
-                    enclBlend);
-            lateReverbMultiplier = Math.min(
-                    cfg.tier8_lateReverbMul + roomFactor * cfg.tier8_lateReverbRoomScale,
-                    maxLate8);
+            float maxLate8 = lerp(cfg.tier8_maxLateMultiplier_lowEncl, cfg.tier8_maxLateMultiplier_highEncl, enclBlend);
+            lateReverbMultiplier =
+                    Math.min(cfg.tier8_lateReverbMul + roomFactor * cfg.tier8_lateReverbRoomScale, maxLate8);
             vGainHF *= cfg.tier8_hfMul;
             vGainLF *= cfg.tier8_lfMul;
         } else if (tier7) {
@@ -110,17 +92,13 @@ final class VenuePresetCalculator {
             vDecay *= cfg.tier7_decayMul;
             vGain = Math.max(cfg.tier7_minGain, baseEnclosureMultiplier * cfg.tier7_gainMul);
             vReflGain = Math.max(0.0f, reflectionMaterialFactor * cfg.tier7_reflGainMul);
-            float maxLateMultiplier = lerp(
-                    cfg.tier7_maxLateMultiplier_lowEncl,
-                    cfg.tier7_maxLateMultiplier_highEncl,
-                    enclBlend);
-            lateReverbMultiplier = Math.min(
-                    cfg.tier7_lateReverbMul + roomFactor * cfg.tier7_lateReverbRoomScale,
-                    maxLateMultiplier);
+            float maxLateMultiplier =
+                    lerp(cfg.tier7_maxLateMultiplier_lowEncl, cfg.tier7_maxLateMultiplier_highEncl, enclBlend);
+            lateReverbMultiplier =
+                    Math.min(cfg.tier7_lateReverbMul + roomFactor * cfg.tier7_lateReverbRoomScale, maxLateMultiplier);
             vGainHF *= cfg.tier7_hfMul;
             vGainLF *= cfg.tier7_lfMul;
-        } else if (effectiveVolume > cfg.tier6_volumeThreshold
-                || effectiveMeanDist > cfg.tier6_distThreshold) {
+        } else if (effectiveVolume > cfg.tier6_volumeThreshold || effectiveMeanDist > cfg.tier6_distThreshold) {
             tierName = "TIER 6 (ARENA / CONCERT HALL)";
             vDecay *= cfg.tier6_decayMul;
             vGain = Math.max(cfg.tier6_minGain, baseEnclosureMultiplier * cfg.tier6_gainMul);
@@ -128,8 +106,7 @@ final class VenuePresetCalculator {
             lateReverbMultiplier = cfg.tier6_lateReverbMul + roomFactor * cfg.tier6_lateReverbRoomScale;
             vGainHF *= cfg.tier6_hfMul;
             vGainLF *= cfg.tier6_lfMul;
-        } else if (effectiveVolume > cfg.tier5_volumeThreshold
-                || effectiveMeanDist > cfg.tier5_distThreshold) {
+        } else if (effectiveVolume > cfg.tier5_volumeThreshold || effectiveMeanDist > cfg.tier5_distThreshold) {
             tierName = "TIER 5 (LARGE CLUB / GYMNASIUM)";
             vDecay *= cfg.tier5_decayMul;
             vGain = Math.max(cfg.tier5_minGain, baseEnclosureMultiplier * cfg.tier5_gainMul);
@@ -137,8 +114,7 @@ final class VenuePresetCalculator {
             lateReverbMultiplier = cfg.tier5_lateReverbMul + roomFactor * cfg.tier5_lateReverbRoomScale;
             vGainHF *= cfg.tier5_hfMul;
             vGainLF *= cfg.tier5_lfMul;
-        } else if (effectiveVolume > cfg.tier4_volumeThreshold
-                || effectiveMeanDist > cfg.tier4_distThreshold) {
+        } else if (effectiveVolume > cfg.tier4_volumeThreshold || effectiveMeanDist > cfg.tier4_distThreshold) {
             tierName = "TIER 4 (LARGE ROOM / SMALL HALL)";
             vDecay *= cfg.tier4_decayMul;
             vGain = Math.max(cfg.tier4_minGain, baseEnclosureMultiplier * cfg.tier4_gainMul);
@@ -146,8 +122,7 @@ final class VenuePresetCalculator {
             lateReverbMultiplier = cfg.tier4_lateReverbMul + roomFactor * cfg.tier4_lateReverbRoomScale;
             vGainHF *= cfg.tier4_hfMul;
             vGainLF *= cfg.tier4_lfMul;
-        } else if (effectiveVolume > cfg.tier3_volumeThreshold
-                || effectiveMeanDist > cfg.tier3_distThreshold) {
+        } else if (effectiveVolume > cfg.tier3_volumeThreshold || effectiveMeanDist > cfg.tier3_distThreshold) {
             tierName = "TIER 3 (MEDIUM ROOM / STUDIO)";
             vDecay *= cfg.tier3_decayMul;
             vGain = Math.max(cfg.tier3_minGain, baseEnclosureMultiplier * cfg.tier3_gainMul);
@@ -155,8 +130,7 @@ final class VenuePresetCalculator {
             lateReverbMultiplier = cfg.tier3_lateReverbMul;
             vGainHF *= cfg.tier3_hfMul;
             vGainLF *= cfg.tier3_lfMul;
-        } else if (effectiveVolume > cfg.tier2_volumeThreshold
-                || effectiveMeanDist > cfg.tier2_distThreshold) {
+        } else if (effectiveVolume > cfg.tier2_volumeThreshold || effectiveMeanDist > cfg.tier2_distThreshold) {
             tierName = "TIER 2 (SMALL ROOM)";
             vDecay *= cfg.tier2_decayMul;
             vGain = Math.max(cfg.tier2_minGain, baseEnclosureMultiplier * cfg.tier2_gainMul);
@@ -181,11 +155,9 @@ final class VenuePresetCalculator {
             tierName += String.format(" [Yarı Açık: %%%d]", opennessPct);
         }
 
-        float tailRetention = (float) Math.pow(
-                effectiveEnclosure,
-                cfg.openAir_enclosure_penalty_exponent);
-        float openAirTailMultiplier = cfg.openAir_dynamic_lateReverbMul
-                + tailRetention * (1.0f - cfg.openAir_dynamic_lateReverbMul);
+        float tailRetention = (float) Math.pow(effectiveEnclosure, cfg.openAir_enclosure_penalty_exponent);
+        float openAirTailMultiplier =
+                cfg.openAir_dynamic_lateReverbMul + tailRetention * (1.0f - cfg.openAir_dynamic_lateReverbMul);
         lateReverbMultiplier *= openAirTailMultiplier;
         vGainHF *= cfg.openAir_dynamic_hfMul;
         vGainLF *= cfg.openAir_dynamic_lfMul;

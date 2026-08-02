@@ -229,8 +229,7 @@ public class AdvancedAcousticScanner {
     }
 
     public VenueDescriptor mergeProbes(List<ProbeResult> probes) {
-        if (probes.isEmpty())
-            return null;
+        if (probes.isEmpty()) return null;
 
         float totalWeight = probes.size();
         float wEnclosure = 0, wAbsorption = 0;
@@ -290,8 +289,7 @@ public class AdvancedAcousticScanner {
      * @return Combined and per-group acoustic profiles
      */
     public AcousticSceneScanResult scanEmitterGroups(World world, List<Vec3d> clusterCenters) {
-        if (world == null || clusterCenters == null || clusterCenters.isEmpty())
-            return null;
+        if (world == null || clusterCenters == null || clusterCenters.isEmpty()) return null;
 
         List<Vec3d> currentCloud = new ArrayList<>();
         List<ProbeResult> probes = new ArrayList<>();
@@ -313,8 +311,7 @@ public class AdvancedAcousticScanner {
         }
 
         VenueDescriptor desc = mergeProbes(probes);
-        if (desc == null)
-            return null;
+        if (desc == null) return null;
 
         // Use the first cluster's position as the reference probe position for the
         // preset
@@ -364,8 +361,7 @@ public class AdvancedAcousticScanner {
      */
     public VenuePreset scanVenue(World world, List<Vec3d> clusterCenters) {
         AcousticScanResult result = scanProfile(world, clusterCenters);
-        if (result == null)
-            return null;
+        if (result == null) return null;
         publishDebugResult(result);
         return result.profile().preset();
     }
@@ -377,25 +373,18 @@ public class AdvancedAcousticScanner {
      * The point cloud already captures all surfaces hit by rays across all probes.
      */
     private static float computeBoundingBoxVolume(List<Vec3d> pointCloud) {
-        if (pointCloud == null || pointCloud.isEmpty())
-            return 1000.0f;
+        if (pointCloud == null || pointCloud.isEmpty()) return 1000.0f;
 
         float minX = Float.MAX_VALUE, minY = Float.MAX_VALUE, minZ = Float.MAX_VALUE;
         float maxX = -Float.MAX_VALUE, maxY = -Float.MAX_VALUE, maxZ = -Float.MAX_VALUE;
 
         for (Vec3d pt : pointCloud) {
-            if (pt.x < minX)
-                minX = (float) pt.x;
-            if (pt.y < minY)
-                minY = (float) pt.y;
-            if (pt.z < minZ)
-                minZ = (float) pt.z;
-            if (pt.x > maxX)
-                maxX = (float) pt.x;
-            if (pt.y > maxY)
-                maxY = (float) pt.y;
-            if (pt.z > maxZ)
-                maxZ = (float) pt.z;
+            if (pt.x < minX) minX = (float) pt.x;
+            if (pt.y < minY) minY = (float) pt.y;
+            if (pt.z < minZ) minZ = (float) pt.z;
+            if (pt.x > maxX) maxX = (float) pt.x;
+            if (pt.y > maxY) maxY = (float) pt.y;
+            if (pt.z > maxZ) maxZ = (float) pt.z;
         }
 
         float dx = Math.max(0.1f, maxX - minX);

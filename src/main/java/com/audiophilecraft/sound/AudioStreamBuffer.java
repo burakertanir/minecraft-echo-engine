@@ -209,7 +209,7 @@ public class AudioStreamBuffer {
         // Catmull-Rom spline: C1 continuous (tangent continuity), eliminates
         // the overshoot and metallic harmonics of Lagrange interpolation.
         double a = -0.5 * y0 + 1.5 * y1 - 1.5 * y2 + 0.5 * y3;
-        double b =  y0 - 2.5 * y1 + 2.0 * y2 - 0.5 * y3;
+        double b = y0 - 2.5 * y1 + 2.0 * y2 - 0.5 * y3;
         double c = -0.5 * y0 + 0.5 * y2;
         double d = y1;
         double out = ((a * f + b) * f + c) * f + d;
