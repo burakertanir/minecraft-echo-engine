@@ -7,6 +7,7 @@ import static org.lwjgl.openal.EXTEfx.*;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Comparator;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -34,7 +35,8 @@ final class AudioPlaybackController {
     private final Map<UUID, PlaybackSession> sessions;
     private final AudioEffectsController effects;
     private final AcousticZoneResolver acousticZoneResolver = new AcousticZoneResolver();
-    private List<AcousticZoneResolver.AcousticZone> acousticZones = List.of();
+    private volatile List<AcousticZoneResolver.AcousticZone> acousticZones = List.of();
+    private volatile Long requestedAcousticZoneId;
     private Long publishedAcousticZoneId;
     private final ConcurrentHashMap<UUID, Long> activeUrlRequestIds = new ConcurrentHashMap<>();
 
@@ -602,7 +604,7 @@ final class AudioPlaybackController {
     }
 
     void refreshAcousticZones(Vec3d listenerPosition) {
-        acousticZones = acousticZoneResolver.resolve(sessions.values());
+        reconcileAcousticZones(acousticZoneResolver.resolve(sessions.values()));
         publishAcousticZoneSelection(listenerPosition, true);
     }
 
@@ -610,11 +612,67 @@ final class AudioPlaybackController {
         publishAcousticZoneSelection(listenerPosition, false);
     }
 
+    int getAcousticDebugZoneCount() {
+        return acousticZones.size();
+    }
+
+    int getSelectedAcousticDebugZoneIndex() {
+        Long requestedZoneId = requestedAcousticZoneId;
+        if (requestedZoneId == null) return -1;
+        List<AcousticZoneResolver.AcousticZone> zones = acousticZones;
+        for (int index = 0; index < zones.size(); index++) {
+            if (zones.get(index).id() == requestedZoneId) return index;
+        }
+        return -1;
+    }
+
+    void selectAcousticDebugZone(int zoneIndex, Vec3d listenerPosition) {
+        List<AcousticZoneResolver.AcousticZone> zones = acousticZones;
+        if (zoneIndex < 0) {
+            requestedAcousticZoneId = null;
+        } else {
+            if (zoneIndex >= zones.size()) return;
+            requestedAcousticZoneId = zones.get(zoneIndex).id();
+        }
+        publishAcousticZoneSelection(listenerPosition, true);
+    }
+
+    private void reconcileAcousticZones(List<AcousticZoneResolver.AcousticZone> resolvedZones) {
+        Map<Long, AcousticZoneResolver.AcousticZone> remainingZones = new HashMap<>();
+        for (AcousticZoneResolver.AcousticZone zone : resolvedZones) {
+            remainingZones.put(zone.id(), zone);
+        }
+
+        List<AcousticZoneResolver.AcousticZone> orderedZones = new ArrayList<>(resolvedZones.size());
+        for (AcousticZoneResolver.AcousticZone previousZone : acousticZones) {
+            AcousticZoneResolver.AcousticZone currentZone = remainingZones.remove(previousZone.id());
+            if (currentZone != null) orderedZones.add(currentZone);
+        }
+        for (AcousticZoneResolver.AcousticZone zone : resolvedZones) {
+            if (remainingZones.remove(zone.id()) != null) orderedZones.add(zone);
+        }
+        acousticZones = List.copyOf(orderedZones);
+
+        Long requestedZoneId = requestedAcousticZoneId;
+        if (requestedZoneId != null && !containsZone(requestedZoneId)) {
+            requestedAcousticZoneId = null;
+        }
+    }
+
+    private boolean containsZone(long zoneId) {
+        for (AcousticZoneResolver.AcousticZone zone : acousticZones) {
+            if (zone.id() == zoneId) return true;
+        }
+        return false;
+    }
+
     private void publishAcousticZoneSelection(Vec3d listenerPosition, boolean forcePublish) {
         MinecraftClient client = MinecraftClient.getInstance();
         PlaybackSession activeSession = client.player != null ? sessions.get(client.player.getUuid()) : null;
-        AcousticZoneResolver.AcousticZone selectedZone =
-                acousticZoneResolver.selectDebugZone(acousticZones, activeSession, listenerPosition);
+        AcousticZoneResolver.AcousticZone selectedZone = findRequestedAcousticZone();
+        if (selectedZone == null) {
+            selectedZone = acousticZoneResolver.selectDebugZone(acousticZones, activeSession, listenerPosition);
+        }
         Long selectedZoneId = selectedZone != null ? selectedZone.id() : null;
         AdvancedAcousticScanner.VenuePreset expectedPreset =
                 selectedZone != null ? selectedZone.debugResult().profile().preset() : null;
@@ -629,6 +687,16 @@ final class AudioPlaybackController {
             AdvancedAcousticScanner.publishDebugResult(selectedZone.debugResult(), selectedZone.speakerPositions());
         }
         com.audiophilecraft.client.screen.PointCloudRenderer.invalidateCache();
+    }
+
+    private AcousticZoneResolver.AcousticZone findRequestedAcousticZone() {
+        Long requestedZoneId = requestedAcousticZoneId;
+        if (requestedZoneId == null) return null;
+        for (AcousticZoneResolver.AcousticZone zone : acousticZones) {
+            if (zone.id() == requestedZoneId) return zone;
+        }
+        requestedAcousticZoneId = null;
+        return null;
     }
 
     private static boolean isEmitterGroupScanReady(World world, EmitterGroup group, Vec3d listenerPosition) {

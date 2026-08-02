@@ -1,23 +1,20 @@
 package com.audiophilecraft.client.screen;
 
 import com.audiophilecraft.screen.AmplifierScreenHandler;
-import com.audiophilecraft.sound.AdvancedAcousticScanner;
 import com.audiophilecraft.sound.AudioEngine;
 import com.audiophilecraft.sound.PeakMeter;
-import java.util.List;
 import net.minecraft.client.gui.DrawContext;
 import net.minecraft.client.gui.screen.ingame.HandledScreen;
 import net.minecraft.client.gui.widget.ClickableWidget;
 import net.minecraft.entity.player.PlayerInventory;
 import net.minecraft.text.Text;
-import net.minecraft.util.math.BlockPos;
-import net.minecraft.util.math.Vec3d;
 
 /** Coordinates the tablet's playback, mixer and acoustic-map views. */
 public class AmplifierScreen extends HandledScreen<AmplifierScreenHandler> {
     private final AmplifierTheme theme;
     private AmplifierPlaybackPanel playbackPanel;
     private AmplifierMixerPanel mixerPanel;
+    private AmplifierAcousticMapPanel acousticMapPanel;
 
     private AmplifierTheme.ThemedButton mixerButton;
     private AmplifierTheme.ThemedButton mapButton;
@@ -45,6 +42,9 @@ public class AmplifierScreen extends HandledScreen<AmplifierScreenHandler> {
         }
         if (mixerPanel == null) {
             mixerPanel = new AmplifierMixerPanel(theme, textRenderer);
+        }
+        if (acousticMapPanel == null) {
+            acousticMapPanel = new AmplifierAcousticMapPanel(textRenderer);
         }
 
         if (client != null && client.player != null) {
@@ -110,7 +110,7 @@ public class AmplifierScreen extends HandledScreen<AmplifierScreenHandler> {
         int screenX = (width - backgroundWidth) / 2;
         int screenY = (height - backgroundHeight) / 2;
         if (mapOpen) {
-            renderAcousticMap(context, screenX, screenY);
+            acousticMapPanel.render(context, screenX, screenY, backgroundWidth, backgroundHeight, mouseX, mouseY);
         } else if (mixerOpen) {
             mixerPanel.render(context, screenX, screenY, backgroundWidth);
         } else {
@@ -122,6 +122,14 @@ public class AmplifierScreen extends HandledScreen<AmplifierScreenHandler> {
 
     @Override
     public boolean mouseClicked(double mouseX, double mouseY, int button) {
+        if (mapOpen) {
+            int screenX = (width - backgroundWidth) / 2;
+            int screenY = (height - backgroundHeight) / 2;
+            if (button == 0 && acousticMapPanel.mouseClicked(mouseX, mouseY, screenX, screenY, backgroundWidth)) {
+                return true;
+            }
+            return super.mouseClicked(mouseX, mouseY, button);
+        }
         if (mixerOpen && button == 0) {
             if (mixerPanel.mouseClicked(mouseX, mouseY, button)) return true;
             if (mixerButton.visible && mixerButton.isMouseOver(mouseX, mouseY)) {
@@ -187,56 +195,5 @@ public class AmplifierScreen extends HandledScreen<AmplifierScreenHandler> {
             mapButton.setY(clusterY + 85);
         }
         mixerPanel.setVisible(mixerOpen);
-    }
-
-    private void renderAcousticMap(DrawContext context, int screenX, int screenY) {
-        List<Vec3d> pointCloud = AdvancedAcousticScanner.getLastPointCloud();
-        if (pointCloud == null || pointCloud.isEmpty()) {
-            context.drawText(
-                    textRenderer,
-                    "NO SCAN DATA. PLAY A TRACK FIRST.",
-                    screenX + 20,
-                    screenY + backgroundHeight / 2,
-                    0xFFFF5555,
-                    false);
-            return;
-        }
-
-        context.fill(
-                screenX + 10,
-                screenY + 30,
-                screenX + backgroundWidth - 10,
-                screenY + backgroundHeight - 30,
-                0xCC000000);
-        List<BlockPos> speakers = AdvancedAcousticScanner.getLastSpeakers();
-        PointCloudRenderer.render(context, screenX, screenY, backgroundWidth, backgroundHeight, pointCloud, speakers);
-        context.drawText(textRenderer, "REVERB HEATMAP", screenX + 15, screenY + 35, 0xFF00FF88, false);
-        context.drawText(textRenderer, "RAYS: " + pointCloud.size(), screenX + 15, screenY + 45, 0xFFFFFFFF, false);
-
-        AdvancedAcousticScanner.VenuePreset preset = AdvancedAcousticScanner.getLastDebugPreset();
-        if (preset == null) preset = AudioEngine.getInstance().getVenuePreset();
-        if (preset != null && preset.tierName != null) {
-            String tier = preset.tierName;
-            context.drawText(
-                    textRenderer,
-                    tier,
-                    screenX + backgroundWidth - 15 - textRenderer.getWidth(tier),
-                    screenY + 35,
-                    0xFFFFDD00,
-                    false);
-        }
-
-        AdvancedAcousticScanner.VenueDescriptor descriptor = AdvancedAcousticScanner.getLastDebugDescriptor();
-        if (descriptor == null) descriptor = AudioEngine.getInstance().getStoredVenueDescriptor();
-        if (descriptor != null) {
-            String volume = "VOLUME: " + (int) descriptor.trueVolume + " m3";
-            context.drawText(
-                    textRenderer,
-                    volume,
-                    screenX + backgroundWidth - 15 - textRenderer.getWidth(volume),
-                    screenY + backgroundHeight - 45,
-                    0xFF00FFFF,
-                    false);
-        }
     }
 }

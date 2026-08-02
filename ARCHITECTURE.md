@@ -131,6 +131,7 @@ src/main/java/com/audiophilecraft/
 |   |-- AmplifierScreen.java             Tablet view gecisleri ve heatmap koordinatoru
 |   |-- AmplifierPlaybackPanel.java      Arama, transport, seek, power ve input gain
 |   |-- AmplifierMixerPanel.java         Mixer gain, EQ/Q, mid-side ve peak meter
+|   |-- AmplifierAcousticMapPanel.java   Heatmap ve sayfali AcousticZone secimi
 |   |-- AmplifierTheme.java              Thumbnail paleti ve adaptif tablet temasi
 |   |-- SpeakerScreen.java               Tek hoparlor ayarlari
 |   `-- PointCloudRenderer.java           Gercek tarama debug/heatmap cizimi
@@ -494,6 +495,12 @@ yayinlar:
 `PointCloudRenderer` ve `AmplifierScreen` bunlari okur. Heatmap'te daha guzel
 gorunsun diye ray mesafesi, merkez veya tier sonucu ayri hesaplanirsa kullanici
 gercek reverb ile farkli bir harita gorur. Bu kesinlikle yapilmamalidir.
+
+`AmplifierAcousticMapPanel`, `AUTO` modunda listener'a gore secilen zone'u
+gosterir. Numarali segmentler yalnizca heatmap/debug secimini sabitler; reverb
+routing'ini degistirmez. Bir sayfada dort zone vardir, daha fazlasi oklarla
+gezilir. Manuel secim zone ID'siyle tutulur ve secilen zone kalkarsa `AUTO`
+moduna doner.
 
 `AcousticZoneResolver`, profil uyumu, gercek ray hacmi ortusmesi ve iki probe
 arasindaki acik akustik yolu birlikte kontrol eder. Yol kontrolu yeni world
@@ -929,6 +936,7 @@ Mevcut kararlar:
 - `AudioPlaybackController`: Cohesive playback workflow, simdilik koru.
 - `AudioRuntimeController`: Thread/lifecycle workflow, simdilik koru.
 - `AmplifierScreen`: Koordinator + playback/mixer/theme collaborator ayrimi tamamlandi.
+- `AmplifierAcousticMapPanel`: Heatmap render'i ve AcousticZone secimi burada tutulur.
 - `LiveTuningConfig`: Gercek schema/writer/migration tasarimi olmadan bolme.
 
 ## 22. Gelistirme Yol Haritasi

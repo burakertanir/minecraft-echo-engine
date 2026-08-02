@@ -97,6 +97,18 @@ public class AudioEngine {
         return effects.getStoredVenueDescriptor();
     }
 
+    public int getAcousticDebugZoneCount() {
+        return playback.getAcousticDebugZoneCount();
+    }
+
+    public int getSelectedAcousticDebugZoneIndex() {
+        return playback.getSelectedAcousticDebugZoneIndex();
+    }
+
+    public void selectAcousticDebugZone(int zoneIndex) {
+        playback.selectAcousticDebugZone(zoneIndex, captureCurrentListenerPosition());
+    }
+
     public void updateListener(Vec3d position, float yaw, float pitch) {
         if (getActiveSession() == null) return;
         runtime.updateListenerPosition(position);
