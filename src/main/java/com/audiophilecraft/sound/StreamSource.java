@@ -27,12 +27,12 @@ public class StreamSource {
     private final OpenALSourceResources openAlResources;
     private final SourceSpatialController spatialController;
 
-    // Written by the audio thread and read by the main thread for spatial physics.
+    // Updated under the audio lifecycle lock and read by both runtime threads.
     private volatile float currentDistanceSnapshot;
 
     // Followers use their leader's distance for propagation delay synchronization.
-    // The audio thread is the sole writer.
     private volatile float delayDistanceSnapshot;
+    private float pausedPropagationTarget = Float.NaN;
 
     // Public metadata retained for AudioEngine and tablet controls.
     public final BlockPos pos;
@@ -259,6 +259,24 @@ public class StreamSource {
     }
 
     private void updateDistanceSnapshots(Vec3d listenerPosition) {
+        updateOwnDistanceSnapshot(listenerPosition);
+        updateDelayDistanceSnapshot();
+    }
+
+    synchronized void updatePausedDistanceSnapshot(Vec3d listenerPosition) {
+        if (!isValid) return;
+
+        updateOwnDistanceSnapshot(listenerPosition);
+    }
+
+    synchronized void capturePausedPropagationTarget() {
+        if (!isValid) return;
+
+        updateDelayDistanceSnapshot();
+        pausedPropagationTarget = delayDistanceSnapshot;
+    }
+
+    private void updateOwnDistanceSnapshot(Vec3d listenerPosition) {
         if (listenerPosition == null) return;
 
         double deltaX = pos.getX() + 0.5 - listenerPosition.x;
@@ -266,11 +284,13 @@ public class StreamSource {
         double deltaZ = pos.getZ() + 0.5 - listenerPosition.z;
         float ownDistance = (float) Math.sqrt(deltaX * deltaX + deltaY * deltaY + deltaZ * deltaZ);
         currentDistanceSnapshot = ownDistance;
+    }
 
+    private void updateDelayDistanceSnapshot() {
         if (!isLeader && clusterLeader != null && clusterLeader.isValid) {
             delayDistanceSnapshot = clusterLeader.currentDistanceSnapshot;
         } else {
-            delayDistanceSnapshot = ownDistance;
+            delayDistanceSnapshot = currentDistanceSnapshot;
         }
     }
 
@@ -278,8 +298,12 @@ public class StreamSource {
         openAlResources.pause();
     }
 
-    public void resume() {
+    public synchronized void resume() {
         if (isValid) {
+            if (!Float.isNaN(pausedPropagationTarget)) {
+                audioRenderer.snapPropagationDelay(pausedPropagationTarget);
+                pausedPropagationTarget = Float.NaN;
+            }
             openAlResources.resume();
         }
     }

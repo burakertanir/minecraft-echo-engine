@@ -98,6 +98,13 @@ final class StreamAudioRenderer {
         return channelMask;
     }
 
+    void snapPropagationDelay(float delayDistance) {
+        double targetDelaySamples = calculateTargetDelaySamples(delayDistance);
+        lastRenderedDelaySamples = targetDelaySamples;
+        prevTargetDelaySamples = targetDelaySamples;
+        delayVelocity = 0.0;
+    }
+
     boolean seekToTime(double timeSeconds, float delayDistance, float smoothedInputGain) {
         dspPipeline.reset();
         resetDelaySmoothing();
@@ -207,9 +214,7 @@ final class StreamAudioRenderer {
         double sampleRate = streamBuffer.sampleRate;
         if (sampleRate <= 0) return false;
 
-        double speedOfSound = LiveTuningConfig.get().speedOfSound;
-        double targetDelaySeconds = (delayDistance / speedOfSound) + (sampleShiftMs / 1000.0);
-        double targetDelaySamples = targetDelaySeconds * sampleRate;
+        double targetDelaySamples = calculateTargetDelaySamples(delayDistance);
 
         if (lastRenderedDelaySamples < 0) {
             lastRenderedDelaySamples = targetDelaySamples;
@@ -265,6 +270,13 @@ final class StreamAudioRenderer {
         }
 
         return finished;
+    }
+
+    private double calculateTargetDelaySamples(float delayDistance) {
+        double sampleRate = streamBuffer.sampleRate;
+        double speedOfSound = LiveTuningConfig.get().speedOfSound;
+        double targetDelaySeconds = (delayDistance / speedOfSound) + (sampleShiftMs / 1000.0);
+        return targetDelaySeconds * sampleRate;
     }
 
     private void resetDelaySmoothing() {

@@ -149,6 +149,9 @@ final class AudioRuntimeController {
         synchronized (lifecycleLock) {
             for (PlaybackSession session : sessions.values()) {
                 boolean shouldPause = gamePaused || session.isManuallyPaused();
+                if (shouldPause || session.isPaused()) {
+                    capturePausedPropagationTarget(session);
+                }
                 if (shouldPause == session.isPaused()) continue;
 
                 if (shouldPause) {
@@ -168,6 +171,16 @@ final class AudioRuntimeController {
                     }
                 }
             }
+        }
+    }
+
+    private void capturePausedPropagationTarget(PlaybackSession session) {
+        Vec3d currentPosition = smoothedListenerPosition;
+        for (StreamSource source : session.getStreamSources()) {
+            source.updatePausedDistanceSnapshot(currentPosition);
+        }
+        for (StreamSource source : session.getStreamSources()) {
+            source.capturePausedPropagationTarget();
         }
     }
 
