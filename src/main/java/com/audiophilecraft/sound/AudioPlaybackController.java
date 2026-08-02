@@ -41,10 +41,6 @@ final class AudioPlaybackController {
     private volatile boolean dynamicVenueScanInProgress;
     private long lastDynamicVenueCheckNanos;
 
-    // Incremented whenever a new playback pipeline is prepared. Async venue callbacks
-    // must match this generation before applying global effects or starting sources.
-    private volatile int trackGeneration;
-
     AudioPlaybackController(AudioEngine engine, Map<UUID, PlaybackSession> sessions, AudioEffectsController effects) {
         this.engine = engine;
         this.sessions = sessions;
@@ -132,7 +128,6 @@ final class AudioPlaybackController {
     }
 
     void abandonAfterAudioDeviceLoss() {
-        trackGeneration++;
         dynamicVenueScanInProgress = false;
         lastDynamicVenueCheckNanos = 0L;
         cancelAllUrlRequests();
@@ -477,7 +472,7 @@ final class AudioPlaybackController {
             }
 
             List<EmitterGroup> scannedGroups = List.copyOf(emitterGroups);
-            int generation = trackGeneration;
+            int generation = session.getTrackGeneration();
             CompletableFuture.supplyAsync(
                             () -> {
                                 try {
@@ -494,7 +489,7 @@ final class AudioPlaybackController {
                     })
                     .thenAcceptAsync(
                             sceneResult -> {
-                                if (generation != trackGeneration) return;
+                                if (generation != session.getTrackGeneration()) return;
                                 if (sceneResult != null) {
                                     applyGroupProfiles(scannedGroups, sceneResult);
                                     effects.applyScannedVenuePreset(sceneResult.combinedResult());
@@ -533,7 +528,7 @@ final class AudioPlaybackController {
                     continue;
                 double distanceSq = group.center().squaredDistanceTo(listenerPosition);
                 if (distanceSq <= DYNAMIC_VENUE_SCAN_RADIUS_SQ) {
-                    candidates.add(new DynamicVenueCandidate(session, group, distanceSq));
+                    candidates.add(new DynamicVenueCandidate(session, group, distanceSq, session.getTrackGeneration()));
                 }
             }
         }
@@ -550,7 +545,6 @@ final class AudioPlaybackController {
         }
 
         dynamicVenueScanInProgress = true;
-        int generation = trackGeneration;
         CompletableFuture.supplyAsync(
                         () -> {
                             try {
@@ -568,23 +562,32 @@ final class AudioPlaybackController {
                 .thenAcceptAsync(
                         sceneResult -> {
                             try {
-                                if (generation != trackGeneration || sceneResult == null) return;
+                                if (sceneResult == null) return;
                                 List<AcousticProfile> profiles = sceneResult.groupProfiles();
                                 int count = Math.min(scannedCandidates.size(), profiles.size());
+                                boolean appliedCurrentProfile = false;
+                                boolean allCandidatesCurrent = true;
                                 for (int i = 0; i < count; i++) {
                                     DynamicVenueCandidate candidate = scannedCandidates.get(i);
-                                    if (candidate.session().isPlaying()
+                                    boolean candidateCurrent = candidate.generation()
+                                            == candidate.session().getTrackGeneration();
+                                    allCandidatesCurrent &= candidateCurrent;
+                                    if (candidateCurrent
+                                            && candidate.session().isPlaying()
                                             && candidate
-                                                     .session()
-                                                     .getEmitterGroups()
-                                                     .contains(candidate.group())) {
+                                                    .session()
+                                                    .getEmitterGroups()
+                                                    .contains(candidate.group())) {
                                         candidate.group().applyAcousticProfile(profiles.get(i));
+                                        appliedCurrentProfile = true;
                                     }
                                 }
-                                if (effects.getVenuePreset() == null) {
+                                if (appliedCurrentProfile && allCandidatesCurrent && effects.getVenuePreset() == null) {
                                     effects.applyScannedVenuePreset(sceneResult.combinedResult());
                                 }
-                                engine.refreshReverbBusAssignments();
+                                if (appliedCurrentProfile) {
+                                    engine.refreshReverbBusAssignments();
+                                }
                             } finally {
                                 dynamicVenueScanInProgress = false;
                             }
@@ -615,7 +618,8 @@ final class AudioPlaybackController {
         return true;
     }
 
-    private record DynamicVenueCandidate(PlaybackSession session, EmitterGroup group, double distanceSq) {}
+    private record DynamicVenueCandidate(
+            PlaybackSession session, EmitterGroup group, double distanceSq, int generation) {}
 
     void startPreparedSession(PlaybackSession session) {
         if (session == null) return;
@@ -674,7 +678,6 @@ final class AudioPlaybackController {
     }
 
     private void resetGlobalVenueState(List<BlockPos> speakers) {
-        trackGeneration++;
         dynamicVenueScanInProgress = false;
         lastDynamicVenueCheckNanos = 0L;
         effects.resetVenueState(speakers);

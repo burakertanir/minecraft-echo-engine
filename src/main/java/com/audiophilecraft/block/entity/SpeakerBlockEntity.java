@@ -1,6 +1,7 @@
 package com.audiophilecraft.block.entity;
 
 import com.audiophilecraft.registry.ModBlockEntities;
+import com.audiophilecraft.registry.SpeakerRegistry;
 import com.audiophilecraft.screen.SpeakerScreenHandler;
 import java.util.UUID;
 import net.fabricmc.fabric.api.screenhandler.v1.ExtendedScreenHandlerFactory;
@@ -17,6 +18,7 @@ import net.minecraft.screen.ScreenHandler;
 import net.minecraft.server.network.ServerPlayerEntity;
 import net.minecraft.text.Text;
 import net.minecraft.util.math.BlockPos;
+import net.minecraft.world.World;
 import org.jetbrains.annotations.Nullable;
 
 public class SpeakerBlockEntity extends BlockEntity implements ExtendedScreenHandlerFactory {
@@ -32,6 +34,14 @@ public class SpeakerBlockEntity extends BlockEntity implements ExtendedScreenHan
     public SpeakerBlockEntity(BlockPos pos, BlockState state) {
 
         super(ModBlockEntities.SPEAKER_BE, pos, state);
+    }
+
+    @Override
+    public void setWorld(World world) {
+        super.setWorld(world);
+        if (world != null && !world.isClient) {
+            SpeakerRegistry.registerSpeaker(world.getRegistryKey(), pos, ownerUUID);
+        }
     }
 
     public int getSampleShift() {
@@ -138,8 +148,8 @@ public class SpeakerBlockEntity extends BlockEntity implements ExtendedScreenHan
         if (nbt.containsUuid("OwnerUUID")) {
             ownerUUID = nbt.getUuid("OwnerUUID");
         }
-        if (world != null) {
-            com.audiophilecraft.registry.SpeakerRegistry.registerSpeaker(world, pos, ownerUUID);
+        if (world != null && !world.isClient) {
+            SpeakerRegistry.registerSpeaker(world.getRegistryKey(), pos, ownerUUID);
         }
     }
 

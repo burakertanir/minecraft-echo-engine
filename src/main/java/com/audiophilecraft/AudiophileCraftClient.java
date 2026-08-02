@@ -66,9 +66,6 @@ public class AudiophileCraftClient implements ClientModInitializer {
                 com.audiophilecraft.sound.AudioEngine.getInstance()
                         .updateListener(mc.player.getEyePos(), mc.player.getYaw(), mc.player.getPitch());
             }
-            if (mc.player != null) {
-                com.audiophilecraft.sound.AudioEngine.getInstance().updateGains();
-            }
         });
 
         // Stop ALL audio on Disconnect (Main Menu) — prevents audio leaking after server crash/disconnect

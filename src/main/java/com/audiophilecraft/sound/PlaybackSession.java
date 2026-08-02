@@ -201,7 +201,7 @@ public class PlaybackSession {
     }
 
     public int incrementTrackGeneration() {
-        return trackGeneration.getAndIncrement();
+        return trackGeneration.incrementAndGet();
     }
 
     // --- Mixer ---
@@ -305,6 +305,7 @@ public class PlaybackSession {
     // --- Cleanup ---
 
     public void stopAll() {
+        incrementTrackGeneration();
         isPlaying = false;
         isPaused = false;
         isManuallyPaused = false;
@@ -328,6 +329,7 @@ public class PlaybackSession {
     }
 
     void abandonAfterAudioDeviceLoss() {
+        incrementTrackGeneration();
         isPlaying = false;
         isPaused = false;
         isManuallyPaused = false;

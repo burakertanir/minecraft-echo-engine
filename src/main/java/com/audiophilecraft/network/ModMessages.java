@@ -19,7 +19,10 @@ import net.minecraft.util.math.BlockPos;
 public class ModMessages {
     private static final int MAX_SPEAKERS_PER_PACKET = 4096;
     private static final int EQ_BAND_COUNT = 5;
+    private static final long SYNC_TIMEOUT_MS = 30_000L;
+    private static final int SYNC_MAINTENANCE_INTERVAL_TICKS = 20;
     private static final java.util.Set<String> VALID_SPEAKER_TYPES = java.util.Set.of("normal", "sub", "mid", "line");
+    private static int syncMaintenanceTicks;
 
     public static final Identifier C2S_REQUEST_PLAY = new Identifier(AudiophileCraft.MOD_ID, "c2s_request_play");
     public static final Identifier C2S_UPDATE_POWER = new Identifier(AudiophileCraft.MOD_ID, "c2s_update_power");
@@ -143,7 +146,33 @@ public class ModMessages {
     /** Check if timeout has passed for a pending sync (30s) */
     private static boolean isSyncTimedOut(
             java.util.AbstractMap.SimpleEntry<java.util.Set<java.util.UUID>, Long> entry) {
-        return System.currentTimeMillis() - entry.getValue() > 30_000;
+        return System.currentTimeMillis() - entry.getValue() > SYNC_TIMEOUT_MS;
+    }
+
+    /** Advances pending playback handshakes even when no further READY packet arrives. */
+    public static void tickPendingSyncs(net.minecraft.server.MinecraftServer server) {
+        syncMaintenanceTicks++;
+        if (syncMaintenanceTicks < SYNC_MAINTENANCE_INTERVAL_TICKS) return;
+        syncMaintenanceTicks = 0;
+
+        long now = System.currentTimeMillis();
+        for (var pending : pendingPlayReady.entrySet()) {
+            var state = pending.getValue();
+            if (now - state.getValue() <= SYNC_TIMEOUT_MS) continue;
+            if (!pendingPlayReady.remove(pending.getKey(), state)) continue;
+
+            AudiophileCraft.LOGGER.warn(
+                    "Playback sync timed out for session {}; starting without {} client(s).",
+                    pending.getKey(),
+                    state.getKey().size());
+            broadcastToAll(server, S2C_START_PLAYBACK, buf -> buf.writeUuid(pending.getKey()));
+        }
+    }
+
+    public static void clearPendingSyncs() {
+        pendingPlayReady.clear();
+        pendingSeekReady.clear();
+        syncMaintenanceTicks = 0;
     }
 
     /** Clean up pending sync entries when a player disconnects */
@@ -155,14 +184,14 @@ public class ModMessages {
         // If a set became empty or timed out, trigger immediately
         long now = System.currentTimeMillis();
         pendingPlayReady.entrySet().removeIf(e -> {
-            if (e.getValue().getKey().isEmpty() || now - e.getValue().getValue() > 30_000) {
+            if (e.getValue().getKey().isEmpty() || now - e.getValue().getValue() > SYNC_TIMEOUT_MS) {
                 broadcastToAll(server, S2C_START_PLAYBACK, buf -> buf.writeUuid(e.getKey()));
                 return true;
             }
             return false;
         });
         pendingSeekReady.entrySet().removeIf(e -> {
-            if (e.getValue().getKey().isEmpty() || now - e.getValue().getValue() > 30_000) {
+            if (e.getValue().getKey().isEmpty() || now - e.getValue().getValue() > SYNC_TIMEOUT_MS) {
                 broadcastToAll(server, S2C_SYNC_SEEK, buf -> buf.writeUuid(e.getKey()));
                 return true;
             }

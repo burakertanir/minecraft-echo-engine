@@ -77,18 +77,20 @@ final class AudioRuntimeController {
     }
 
     void refreshReverbBusAssignments() {
-        boolean hasSources = false;
-        for (PlaybackSession session : sessions.values()) {
-            if (!session.getStreamSources().isEmpty()) {
-                hasSources = true;
-                break;
+        synchronized (lifecycleLock) {
+            boolean hasSources = false;
+            for (PlaybackSession session : sessions.values()) {
+                if (!session.getStreamSources().isEmpty()) {
+                    hasSources = true;
+                    break;
+                }
             }
-        }
 
-        if (hasSources) {
-            reverbBusAllocator.allocate(sessions.values(), listenerPosition);
-        } else {
-            reverbBusAllocator.reset();
+            if (hasSources) {
+                reverbBusAllocator.allocate(sessions.values(), listenerPosition);
+            } else {
+                reverbBusAllocator.reset();
+            }
         }
     }
 
@@ -144,24 +146,26 @@ final class AudioRuntimeController {
     }
 
     private void updatePauseStates(boolean gamePaused) {
-        for (PlaybackSession session : sessions.values()) {
-            boolean shouldPause = gamePaused || session.isManuallyPaused();
-            if (shouldPause == session.isPaused()) continue;
+        synchronized (lifecycleLock) {
+            for (PlaybackSession session : sessions.values()) {
+                boolean shouldPause = gamePaused || session.isManuallyPaused();
+                if (shouldPause == session.isPaused()) continue;
 
-            if (shouldPause) {
-                session.setPaused(true);
-                session.setPauseStartTimestamp(System.nanoTime());
-                for (StreamSource source : session.getStreamSources()) {
-                    source.pause();
-                }
-            } else {
-                if (session.getPauseStartTimestamp() > 0 && session.getStreamStartTime() > 0) {
-                    long pauseDuration = System.nanoTime() - session.getPauseStartTimestamp();
-                    session.setStreamStartTime(session.getStreamStartTime() + pauseDuration);
-                }
-                session.setPaused(false);
-                for (StreamSource source : session.getStreamSources()) {
-                    source.resume();
+                if (shouldPause) {
+                    session.setPaused(true);
+                    session.setPauseStartTimestamp(System.nanoTime());
+                    for (StreamSource source : session.getStreamSources()) {
+                        source.pause();
+                    }
+                } else {
+                    if (session.getPauseStartTimestamp() > 0 && session.getStreamStartTime() > 0) {
+                        long pauseDuration = System.nanoTime() - session.getPauseStartTimestamp();
+                        session.setStreamStartTime(session.getStreamStartTime() + pauseDuration);
+                    }
+                    session.setPaused(false);
+                    for (StreamSource source : session.getStreamSources()) {
+                        source.resume();
+                    }
                 }
             }
         }
@@ -180,11 +184,17 @@ final class AudioRuntimeController {
             List<StreamSource> sourcesToRemove = new ArrayList<>();
             for (StreamSource source : session.getStreamSources()) {
                 if (!source.update(world, listenerPosition, timeSinceStart)) {
-                    source.cleanup();
                     sourcesToRemove.add(source);
                 }
             }
-            session.getStreamSources().removeAll(sourcesToRemove);
+            if (!sourcesToRemove.isEmpty()) {
+                synchronized (lifecycleLock) {
+                    for (StreamSource source : sourcesToRemove) {
+                        source.cleanup();
+                    }
+                    session.getStreamSources().removeAll(sourcesToRemove);
+                }
+            }
 
             if (session.getStreamSources().isEmpty()) {
                 echoNormalizationFactors.remove(session);
@@ -303,49 +313,59 @@ final class AudioRuntimeController {
     }
 
     void pauseAll() {
-        for (PlaybackSession session : sessions.values()) {
-            for (StreamSource source : session.getStreamSources()) {
-                source.pause();
+        synchronized (lifecycleLock) {
+            for (PlaybackSession session : sessions.values()) {
+                for (StreamSource source : session.getStreamSources()) {
+                    source.pause();
+                }
             }
+            effects.muteEffectSlots();
         }
-        effects.muteEffectSlots();
     }
 
     void resumeAll() {
-        for (PlaybackSession session : sessions.values()) {
-            for (StreamSource source : session.getStreamSources()) {
-                source.resume();
+        synchronized (lifecycleLock) {
+            for (PlaybackSession session : sessions.values()) {
+                for (StreamSource source : session.getStreamSources()) {
+                    source.resume();
+                }
             }
+            effects.resumeEffectSlots();
         }
-        effects.resumeEffectSlots();
     }
 
     void stopSessionContents(PlaybackSession session) {
         if (session == null) return;
-        echoNormalizationFactors.remove(session);
-        session.stopAll();
-        refreshReverbBusAssignments();
+        synchronized (lifecycleLock) {
+            echoNormalizationFactors.remove(session);
+            session.stopAll();
+            refreshReverbBusAssignments();
+        }
     }
 
     void stopSession(UUID sessionId) {
-        playback.cancelUrlRequest(sessionId);
-        PlaybackSession session = sessions.remove(sessionId);
-        if (session != null) {
-            echoNormalizationFactors.remove(session);
-            session.stopAll();
+        synchronized (lifecycleLock) {
+            playback.cancelUrlRequest(sessionId);
+            PlaybackSession session = sessions.remove(sessionId);
+            if (session != null) {
+                echoNormalizationFactors.remove(session);
+                session.stopAll();
+            }
+            refreshReverbBusAssignments();
         }
-        refreshReverbBusAssignments();
         checkAndShutdownThread();
     }
 
     void stopAll() {
-        playback.cancelAllUrlRequests();
-        for (PlaybackSession session : sessions.values()) {
-            session.stopAll();
+        synchronized (lifecycleLock) {
+            playback.cancelAllUrlRequests();
+            for (PlaybackSession session : sessions.values()) {
+                session.stopAll();
+            }
+            sessions.clear();
+            echoNormalizationFactors.clear();
+            reverbBusAllocator.reset();
         }
-        sessions.clear();
-        echoNormalizationFactors.clear();
-        reverbBusAllocator.reset();
         checkAndShutdownThread();
     }
 
@@ -552,6 +572,12 @@ final class AudioRuntimeController {
     }
 
     void seek(PlaybackSession session, double timeSeconds) {
+        synchronized (lifecycleLock) {
+            seekLocked(session, timeSeconds);
+        }
+    }
+
+    private void seekLocked(PlaybackSession session, double timeSeconds) {
         if (session == null || !session.isPlaying()) return;
 
         double totalDuration = getTotalPlaybackDuration(session);

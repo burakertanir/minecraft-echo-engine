@@ -25,11 +25,14 @@ public class AudiophileCraft implements ModInitializer {
         ModItemGroups.registerItemGroups();
         ModScreenHandlers.registerScreenHandlers();
         ModMessages.registerC2SPackets();
+        net.fabricmc.fabric.api.event.lifecycle.v1.ServerTickEvents.END_SERVER_TICK.register(
+                ModMessages::tickPendingSyncs);
         TestFacilityCommand.register();
 
         // Clear speaker registry per-dimension when a world unloads (server-side).
         // Prevents stale positions from World A leaking into World B.
         net.fabricmc.fabric.api.event.lifecycle.v1.ServerLifecycleEvents.SERVER_STOPPED.register((server) -> {
+            ModMessages.clearPendingSyncs();
             com.audiophilecraft.registry.SpeakerRegistry.clear();
             LOGGER.info("AudiophileCraft: Speaker registry cleared (server stopped).");
         });

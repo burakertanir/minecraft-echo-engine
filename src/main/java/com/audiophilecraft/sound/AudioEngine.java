@@ -166,11 +166,6 @@ public class AudioEngine {
         mixer.setEqQ(speakerType, band, q);
     }
 
-    public void updateGains() {
-        if (getActiveSession() == null || runtime.listenerPosition() == null) return;
-        effects.ensureVenueReverb();
-    }
-
     public double getTimeSinceStart() {
         return runtime.getTimeSinceStart();
     }
