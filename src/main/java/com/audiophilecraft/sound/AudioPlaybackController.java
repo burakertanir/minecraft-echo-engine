@@ -9,6 +9,7 @@ import java.util.Collection;
 import java.util.Comparator;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
@@ -32,6 +33,9 @@ final class AudioPlaybackController {
     private final AudioEngine engine;
     private final Map<UUID, PlaybackSession> sessions;
     private final AudioEffectsController effects;
+    private final AcousticZoneResolver acousticZoneResolver = new AcousticZoneResolver();
+    private List<AcousticZoneResolver.AcousticZone> acousticZones = List.of();
+    private Long publishedAcousticZoneId;
     private final ConcurrentHashMap<UUID, Long> activeUrlRequestIds = new ConcurrentHashMap<>();
 
     private static final long DYNAMIC_VENUE_CHECK_INTERVAL_NANOS = 500_000_000L;
@@ -491,8 +495,9 @@ final class AudioPlaybackController {
                             sceneResult -> {
                                 if (generation != session.getTrackGeneration()) return;
                                 if (sceneResult != null) {
-                                    applyGroupProfiles(scannedGroups, sceneResult);
+                                    applyGroupScans(scannedGroups, sceneResult);
                                     effects.applyScannedVenuePreset(sceneResult.combinedResult());
+                                    refreshAcousticZones(listenerPosition);
                                     engine.refreshReverbBusAssignments();
                                 }
                                 startPlayback.run();
@@ -503,12 +508,12 @@ final class AudioPlaybackController {
         }
     }
 
-    private void applyGroupProfiles(List<EmitterGroup> groups, AcousticSceneScanResult sceneResult) {
-        List<AcousticProfile> profiles = sceneResult.groupProfiles();
-        int count = Math.min(groups.size(), profiles.size());
+    private void applyGroupScans(List<EmitterGroup> groups, AcousticSceneScanResult sceneResult) {
+        List<AcousticScanResult> groupResults = sceneResult.groupResults();
+        int count = Math.min(groups.size(), groupResults.size());
         for (int i = 0; i < count; i++) {
             EmitterGroup group = groups.get(i);
-            group.applyAcousticProfile(profiles.get(i));
+            group.applyAcousticScan(groupResults.get(i));
             group.activateRoomSendImmediately();
         }
     }
@@ -563,8 +568,8 @@ final class AudioPlaybackController {
                         sceneResult -> {
                             try {
                                 if (sceneResult == null) return;
-                                List<AcousticProfile> profiles = sceneResult.groupProfiles();
-                                int count = Math.min(scannedCandidates.size(), profiles.size());
+                                List<AcousticScanResult> groupResults = sceneResult.groupResults();
+                                int count = Math.min(scannedCandidates.size(), groupResults.size());
                                 boolean appliedCurrentProfile = false;
                                 boolean allCandidatesCurrent = true;
                                 for (int i = 0; i < count; i++) {
@@ -578,7 +583,7 @@ final class AudioPlaybackController {
                                                     .session()
                                                     .getEmitterGroups()
                                                     .contains(candidate.group())) {
-                                        candidate.group().applyAcousticProfile(profiles.get(i));
+                                        candidate.group().applyAcousticScan(groupResults.get(i));
                                         appliedCurrentProfile = true;
                                     }
                                 }
@@ -586,6 +591,7 @@ final class AudioPlaybackController {
                                     effects.applyScannedVenuePreset(sceneResult.combinedResult());
                                 }
                                 if (appliedCurrentProfile) {
+                                    refreshAcousticZones(listenerPosition);
                                     engine.refreshReverbBusAssignments();
                                 }
                             } finally {
@@ -593,6 +599,36 @@ final class AudioPlaybackController {
                             }
                         },
                         MinecraftClient.getInstance()::execute);
+    }
+
+    void refreshAcousticZones(Vec3d listenerPosition) {
+        acousticZones = acousticZoneResolver.resolve(sessions.values());
+        publishAcousticZoneSelection(listenerPosition, true);
+    }
+
+    void refreshAcousticZoneSelection(Vec3d listenerPosition) {
+        publishAcousticZoneSelection(listenerPosition, false);
+    }
+
+    private void publishAcousticZoneSelection(Vec3d listenerPosition, boolean forcePublish) {
+        MinecraftClient client = MinecraftClient.getInstance();
+        PlaybackSession activeSession = client.player != null ? sessions.get(client.player.getUuid()) : null;
+        AcousticZoneResolver.AcousticZone selectedZone =
+                acousticZoneResolver.selectDebugZone(acousticZones, activeSession, listenerPosition);
+        Long selectedZoneId = selectedZone != null ? selectedZone.id() : null;
+        AdvancedAcousticScanner.VenuePreset expectedPreset =
+                selectedZone != null ? selectedZone.debugResult().profile().preset() : null;
+        boolean selectionAlreadyPublished = Objects.equals(publishedAcousticZoneId, selectedZoneId)
+                && AdvancedAcousticScanner.getLastDebugPreset() == expectedPreset;
+        if (!forcePublish && selectionAlreadyPublished) return;
+
+        publishedAcousticZoneId = selectedZoneId;
+        if (selectedZone == null) {
+            AdvancedAcousticScanner.resetDebugState(List.of());
+        } else {
+            AdvancedAcousticScanner.publishDebugResult(selectedZone.debugResult(), selectedZone.speakerPositions());
+        }
+        com.audiophilecraft.client.screen.PointCloudRenderer.invalidateCache();
     }
 
     private static boolean isEmitterGroupScanReady(World world, EmitterGroup group, Vec3d listenerPosition) {

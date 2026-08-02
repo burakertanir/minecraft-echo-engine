@@ -195,6 +195,7 @@ public class AdvancedAcousticScanner {
     private static volatile List<Vec3d> lastPointCloud = List.of();
     private static volatile Set<BlockPos> lastVenueBlocks = Set.of();
     private static volatile List<BlockPos> lastSpeakers = List.of();
+    private static volatile AcousticProfile lastDebugProfile;
 
     public static List<Vec3d> getLastPointCloud() {
         return lastPointCloud;
@@ -208,6 +209,16 @@ public class AdvancedAcousticScanner {
         return lastSpeakers;
     }
 
+    public static VenuePreset getLastDebugPreset() {
+        AcousticProfile profile = lastDebugProfile;
+        return profile != null ? profile.preset() : null;
+    }
+
+    public static VenueDescriptor getLastDebugDescriptor() {
+        AcousticProfile profile = lastDebugProfile;
+        return profile != null ? profile.descriptor() : null;
+    }
+
     public static void publishDebugResult(AcousticScanResult result) {
         if (result == null) {
             clearDebugGeometry();
@@ -215,17 +226,25 @@ public class AdvancedAcousticScanner {
         }
         lastPointCloud = result.pointCloud();
         lastVenueBlocks = result.venueBlocks();
+        lastDebugProfile = result.profile();
+    }
+
+    public static void publishDebugResult(AcousticScanResult result, List<BlockPos> speakers) {
+        publishDebugResult(result);
+        lastSpeakers = speakers == null ? List.of() : List.copyOf(speakers);
     }
 
     public static void resetDebugState(List<BlockPos> speakers) {
         lastPointCloud = List.of();
         lastVenueBlocks = Set.of();
         lastSpeakers = speakers == null ? List.of() : List.copyOf(speakers);
+        lastDebugProfile = null;
     }
 
     public static void clearDebugGeometry() {
         lastPointCloud = List.of();
         lastVenueBlocks = Set.of();
+        lastDebugProfile = null;
     }
 
     public VenueDescriptor mergeProbes(List<ProbeResult> probes) {
@@ -293,7 +312,7 @@ public class AdvancedAcousticScanner {
 
         List<Vec3d> currentCloud = new ArrayList<>();
         List<ProbeResult> probes = new ArrayList<>();
-        List<AcousticProfile> groupProfiles = new ArrayList<>();
+        List<AcousticScanResult> groupResults = new ArrayList<>();
 
         // Limit the number of clusters we scan to prevent lag spikes if a user builds
         // 100 isolated speakers
@@ -307,7 +326,8 @@ public class AdvancedAcousticScanner {
             currentCloud.addAll(groupCloud);
 
             VenueDescriptor groupDescriptor = mergeProbes(List.of(probe));
-            groupProfiles.add(createProfile(groupDescriptor, centerPos, groupCloud));
+            AcousticProfile groupProfile = createProfile(groupDescriptor, centerPos, groupCloud);
+            groupResults.add(createScanResult(groupProfile, groupCloud, probe));
         }
 
         VenueDescriptor desc = mergeProbes(probes);
@@ -317,8 +337,8 @@ public class AdvancedAcousticScanner {
         // preset
         Vec3d referencePos = clusterCenters.get(0);
         AcousticProfile combinedProfile = createProfile(desc, referencePos, currentCloud);
-        AcousticScanResult combinedResult = createScanResult(combinedProfile, currentCloud);
-        return new AcousticSceneScanResult(combinedResult, groupProfiles);
+        AcousticScanResult combinedResult = createScanResult(combinedProfile, currentCloud, null);
+        return new AcousticSceneScanResult(combinedResult, groupResults);
     }
 
     public AcousticScanResult scanProfile(World world, List<Vec3d> clusterCenters) {
@@ -347,13 +367,14 @@ public class AdvancedAcousticScanner {
         return new AcousticProfile(profileDescriptor, preset);
     }
 
-    private AcousticScanResult createScanResult(AcousticProfile profile, List<Vec3d> pointCloud) {
+    private AcousticScanResult createScanResult(
+            AcousticProfile profile, List<Vec3d> pointCloud, ProbeResult probeResult) {
         Set<BlockPos> hitBlocks = new HashSet<>();
         for (Vec3d point : pointCloud) {
             hitBlocks.add(
                     new BlockPos((int) Math.floor(point.x), (int) Math.floor(point.y), (int) Math.floor(point.z)));
         }
-        return new AcousticScanResult(profile, pointCloud, hitBlocks);
+        return new AcousticScanResult(profile, pointCloud, hitBlocks, probeResult);
     }
 
     /**

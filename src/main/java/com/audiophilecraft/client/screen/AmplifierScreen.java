@@ -213,7 +213,8 @@ public class AmplifierScreen extends HandledScreen<AmplifierScreenHandler> {
         context.drawText(textRenderer, "REVERB HEATMAP", screenX + 15, screenY + 35, 0xFF00FF88, false);
         context.drawText(textRenderer, "RAYS: " + pointCloud.size(), screenX + 15, screenY + 45, 0xFFFFFFFF, false);
 
-        AdvancedAcousticScanner.VenuePreset preset = AudioEngine.getInstance().getVenuePreset();
+        AdvancedAcousticScanner.VenuePreset preset = AdvancedAcousticScanner.getLastDebugPreset();
+        if (preset == null) preset = AudioEngine.getInstance().getVenuePreset();
         if (preset != null && preset.tierName != null) {
             String tier = preset.tierName;
             context.drawText(
@@ -225,8 +226,8 @@ public class AmplifierScreen extends HandledScreen<AmplifierScreenHandler> {
                     false);
         }
 
-        AdvancedAcousticScanner.VenueDescriptor descriptor =
-                AudioEngine.getInstance().getStoredVenueDescriptor();
+        AdvancedAcousticScanner.VenueDescriptor descriptor = AdvancedAcousticScanner.getLastDebugDescriptor();
+        if (descriptor == null) descriptor = AudioEngine.getInstance().getStoredVenueDescriptor();
         if (descriptor != null) {
             String volume = "VOLUME: " + (int) descriptor.trueVolume + " m3";
             context.drawText(

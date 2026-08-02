@@ -16,6 +16,34 @@ final class AcousticRayScanner {
     private static final int MAX_RAY_DIST = 256;
     private static final float[][] RAY_DIRS_NORM = createRayDirections();
 
+    static boolean hasClearPath(AdvancedAcousticScanner.ProbeResult probeResult, Vec3d from, Vec3d to) {
+        if (probeResult == null || probeResult.distances == null || from == null || to == null) return false;
+
+        double deltaX = to.x - from.x;
+        double deltaY = to.y - from.y;
+        double deltaZ = to.z - from.z;
+        double targetDistance = Math.sqrt(deltaX * deltaX + deltaY * deltaY + deltaZ * deltaZ);
+        if (targetDistance <= 2.0) return true;
+
+        double directionX = deltaX / targetDistance;
+        double directionY = deltaY / targetDistance;
+        double directionZ = deltaZ / targetDistance;
+        double minimumDot = Math.cos(Math.toRadians(8.0));
+        double bestDot = -1.0;
+        float bestRayDistance = 0.0f;
+        int rayCount = Math.min(probeResult.distances.length, RAY_DIRS_NORM.length);
+        for (int index = 0; index < rayCount; index++) {
+            float[] ray = RAY_DIRS_NORM[index];
+            double dot = ray[0] * directionX + ray[1] * directionY + ray[2] * directionZ;
+            if (dot > bestDot) {
+                bestDot = dot;
+                bestRayDistance = probeResult.distances[index];
+            }
+            if (dot >= minimumDot && probeResult.distances[index] + 2.0f >= targetDistance) return true;
+        }
+        return bestRayDistance + 2.0f >= targetDistance;
+    }
+
     AdvancedAcousticScanner.ProbeResult scan(World world, Vec3d probePos, List<Vec3d> outPointCloud) {
         float[] distances = new float[RAY_COUNT];
         float[] absorptions = new float[RAY_COUNT];

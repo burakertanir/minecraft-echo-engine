@@ -6,9 +6,13 @@ import net.minecraft.util.math.Vec3d;
 
 /** Runtime grouping of nearby speakers that share one acoustic profile. */
 public final class EmitterGroup {
+    static final long NO_ACOUSTIC_ZONE = Long.MIN_VALUE;
+
     private final List<BlockPos> speakerPositions;
     private final Vec3d center;
     private volatile AcousticProfile acousticProfile;
+    private volatile AcousticScanResult acousticScanResult;
+    private volatile long acousticZoneId = NO_ACOUSTIC_ZONE;
     private volatile int roomBusIndex;
     private volatile float roomSendGain;
     private volatile float targetRoomSendGain;
@@ -33,10 +37,23 @@ public final class EmitterGroup {
         return acousticProfile;
     }
 
-    void applyAcousticProfile(AcousticProfile profile) {
-        if (profile == null) return;
-        this.acousticProfile = profile;
+    AcousticScanResult acousticScanResult() {
+        return acousticScanResult;
+    }
+
+    long acousticZoneId() {
+        return acousticZoneId;
+    }
+
+    void applyAcousticScan(AcousticScanResult scanResult) {
+        if (scanResult == null) return;
+        this.acousticScanResult = scanResult;
+        this.acousticProfile = scanResult.profile();
         this.targetRoomSendGain = 1.0f;
+    }
+
+    void assignAcousticZone(long zoneId) {
+        acousticZoneId = zoneId;
     }
 
     void activateRoomSendImmediately() {

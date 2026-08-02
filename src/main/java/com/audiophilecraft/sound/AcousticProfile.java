@@ -20,18 +20,26 @@ public record AcousticProfile(
 }
 
 /** Self-contained output produced for one acoustic profile scan. */
-record AcousticScanResult(AcousticProfile profile, List<Vec3d> pointCloud, Set<BlockPos> venueBlocks) {
+record AcousticScanResult(
+        AcousticProfile profile,
+        List<Vec3d> pointCloud,
+        Set<BlockPos> venueBlocks,
+        AdvancedAcousticScanner.ProbeResult probeResult) {
     AcousticScanResult {
         Objects.requireNonNull(profile, "profile");
         pointCloud = List.copyOf(pointCloud);
         venueBlocks = Set.copyOf(venueBlocks);
     }
+
+    AcousticScanResult(AcousticProfile profile, List<Vec3d> pointCloud, Set<BlockPos> venueBlocks) {
+        this(profile, pointCloud, venueBlocks, null);
+    }
 }
 
-/** Combined scene result plus the individual emitter-group profiles. */
-record AcousticSceneScanResult(AcousticScanResult combinedResult, List<AcousticProfile> groupProfiles) {
+/** Combined scene result plus the complete scan result for each emitter group. */
+record AcousticSceneScanResult(AcousticScanResult combinedResult, List<AcousticScanResult> groupResults) {
     AcousticSceneScanResult {
         Objects.requireNonNull(combinedResult, "combinedResult");
-        groupProfiles = List.copyOf(groupProfiles);
+        groupResults = List.copyOf(groupResults);
     }
 }

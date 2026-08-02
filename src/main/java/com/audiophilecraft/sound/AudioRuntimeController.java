@@ -128,11 +128,13 @@ final class AudioRuntimeController {
         }
 
         playback.refreshNearbyVenueProfiles(sessions.values(), world, listenerPosition);
+        playback.refreshAcousticZoneSelection(listenerPosition);
         reverbBusAllocator.update(sessions.values(), listenerPosition);
 
         boolean removedSession = updatePlayingSessions(world);
         if (removedSession) {
             refreshReverbBusAssignments();
+            playback.refreshAcousticZones(listenerPosition);
             checkAndShutdownThread();
         }
 
@@ -369,6 +371,7 @@ final class AudioRuntimeController {
             echoNormalizationFactors.remove(session);
             session.stopAll();
             refreshReverbBusAssignments();
+            playback.refreshAcousticZones(listenerPosition);
         }
     }
 
@@ -381,6 +384,7 @@ final class AudioRuntimeController {
                 session.stopAll();
             }
             refreshReverbBusAssignments();
+            playback.refreshAcousticZones(listenerPosition);
         }
         checkAndShutdownThread();
     }
@@ -394,6 +398,7 @@ final class AudioRuntimeController {
             sessions.clear();
             echoNormalizationFactors.clear();
             reverbBusAllocator.reset();
+            playback.refreshAcousticZones(listenerPosition);
         }
         checkAndShutdownThread();
     }
@@ -429,6 +434,7 @@ final class AudioRuntimeController {
             echoNormalizationFactors.clear();
             reusableRestartBuffer.clear();
             reverbBusAllocator.abandonAssignments();
+            playback.refreshAcousticZones(listenerPosition);
         }
     }
 

@@ -41,6 +41,12 @@ mantiksal mekan profili olabilir, fakat bunlar performans ve donanim uyumlulugu
 icin iki fiziksel room-reverb bus uzerine sanallastirilir. Slapback echo ayri bir
 fiziksel send kullanir.
 
+Birbirinden ayri fiziksel cluster'lar ayni gercek mekani tarif ediyorsa
+`AcousticZoneResolver` bunlari ortak bir `AcousticZone` kimligi altinda toplar.
+Zone, session sahibiyle sinirli degildir; ayni mekandaki farkli kullanicilarin
+scan-ready gruplari da ayni zone'a girebilir. Zone su anda ses routing'ini degil,
+mekan kimligini ve gercek taramaya dayali heatmap/debug gorunumunu yonetir.
+
 ## 2. Degismez Kurallar
 
 Bu kurallar ihlal edilirse kod derlense bile ses bozulabilir, multiplayer
@@ -89,6 +95,7 @@ flowchart LR
     PLAYBACK --> SESSION["PlaybackSession"]
     PLAYBACK --> LOADER["OggDecoder / InternetAudioLoader"]
     PLAYBACK --> SCANNER["AdvancedAcousticScanner"]
+    PLAYBACK --> ZONE["AcousticZoneResolver"]
     SESSION --> GROUP["EmitterGroup"]
     GROUP --> SOURCE["StreamSource"]
 
@@ -98,6 +105,8 @@ flowchart LR
     SOURCE --> NATIVE["OpenALSourceResources"]
 
     SCANNER --> PROFILE["AcousticProfile"]
+    SCANNER --> ZONE
+    GROUP --> ZONE
     PROFILE --> ALLOCATOR["ReverbBusAllocator"]
     ALLOCATOR --> EFFECTS
     EFFECTS --> BUS0["RoomReverbBus 0"]
@@ -170,6 +179,7 @@ src/main/java/com/audiophilecraft/
 |   |-- SpeakerPlaybackData.java          Stabil hoparlor metadata record'u
 |   |-- SpeakerClusterer.java             Yakin hoparlorleri fiziksel gruplama
 |   |-- EmitterGroup.java                 Runtime acoustic cluster modeli
+|   |-- AcousticZoneResolver.java         Ayni mekandaki gruplari sessionlar arasi esleme
 |   |-- AdvancedAcousticScanner.java      Akustik tarama facade'i ve sonuc modelleri
 |   |-- AcousticRayScanner.java           1000-ray voxel DDA tarayici
 |   |-- AcousticMaterialTable.java        Blok absorption/transmission tablosu
@@ -435,7 +445,8 @@ EmitterGroup center
   -> VenuePresetCalculator
      -> VenueDescriptor
      -> Sabine tabanli decay ve EAX parametreleri
-  -> AcousticProfile
+  -> AcousticScanResult
+     -> AcousticProfile + gercek ray nokta bulutu
 ```
 
 `ProbeResult` yakin/orta/uzak hit oranlari, sky escape, ortalama absorption,
@@ -448,6 +459,10 @@ potential.
 `VenuePresetCalculator`, descriptor'u tier 1-10 etiketi ve OpenAL EAX reverb
 parametrelerine cevirir. Acik hava orani decay/wet davranisina ceza uygular.
 
+Scene taramasi combined sonucun yaninda her `EmitterGroup` icin tam
+`AcousticScanResult` saklar. Boylece zone esleme, tier etiketi ve heatmap ayni
+ray geometrisi ile ayni profilden uretilir; ikinci bir tahmini tarama yapilmaz.
+
 ### 10.2 Ne zaman taranir
 
 - Session ilk kurulurken listener'a yakin ve scan-ready gruplar taranir.
@@ -456,6 +471,10 @@ parametrelerine cevirir. Acik hava orani decay/wet davranisina ceza uygular.
 - Dinamik tarama yaricapi 192 bloktur.
 - Uzak cluster icin gerekli chunk'lar hazir degilse tarama ertelenir.
 - Callback sonucu ancak session `trackGeneration` hala ayniysa uygulanir.
+- Yeni scan sonucu veya session lifecycle degisimi sonrasi zone'lar tekrar
+  eslenir; bu islem yeni raycast yapmaz.
+- Listener hareket ederken yalnizca mevcut zone listesinde en yakin secim 20 Hz
+  guncellenir. Profil esleme ve nokta bulutu birlestirme her tick tekrarlanmaz.
 
 Kodda `CompletableFuture.supplyAsync` gorulmesi taramanin worker thread'de
 oldugu anlamina gelmez. Verilen executor `MinecraftClient.getInstance()::execute`
@@ -476,6 +495,19 @@ yayinlar:
 gorunsun diye ray mesafesi, merkez veya tier sonucu ayri hesaplanirsa kullanici
 gercek reverb ile farkli bir harita gorur. Bu kesinlikle yapilmamalidir.
 
+`AcousticZoneResolver`, profil uyumu, gercek ray hacmi ortusmesi ve iki probe
+arasindaki acik akustik yolu birlikte kontrol eder. Yol kontrolu yeni world
+raycast'i yapmaz; tarama sirasinda zaten uretilen 1000 rayin mesafelerini
+kullanir. Bu kosul, ayni duvari goren iki komsu odayi yanlislikla tek zone yapma
+riskini azaltir. Tek bir uzaga kacmis ray zone sinirini buyutmesin diye nokta
+bulutunun yuzde 5-95 araligi kullanilir. Secili zone'un grup taramalari birlesip
+mevcut `lastPointCloud`, `lastVenueBlocks`, `lastSpeakers` ve tier alanlarina
+yayinlanir. Tablet layout'u, renkleri ve kontrolleri bundan etkilenmez.
+
+Zone esleme konservatiftir: supheli durumda iki mekani birlestirmek yerine ayri
+tutar. Ayni zone icindeki farkli session'lar heatmap'te gorulebilir; henuz
+taranmamis veya chunk'i hazir olmayan gruplar geometri uretmez.
+
 ## 11. Reverb ve Echo Routing
 
 ### 11.1 Neden iki room bus var
@@ -494,6 +526,11 @@ seklinde sanallastirma yapar.
 `RoomReverbBus`, bir EAX reverb effect ve bir auxiliary slot'un native
 sahibidir. `AudioEffectsController` iki room bus ile bir slapback echo effect ve
 slot'unu yonetir.
+
+`AcousticZone` bu routing zincirine girmez. Her `EmitterGroup` kendi
+`AcousticProfile` degeriyle `ReverbBusAllocator` tarafindan eskisi gibi
+degerlendirilir; bu sayede zone eklemek reverb karakterini veya gecislerini
+degistirmez.
 
 ### 11.2 Bus secimi
 
@@ -738,13 +775,15 @@ Gorev neyi degistiriyor?
 |   |-- Material emilimi -> AcousticMaterialTable
 |   |-- Tier/EAX donusumu -> VenuePresetCalculator
 |   |-- Tarama orkestrasyonu -> AdvancedAcousticScanner / AudioPlaybackController
+|   |-- Sessionlar arasi mekan kimligi -> AcousticZoneResolver
 |   `-- Gorsellestirme -> PointCloudRenderer / AmplifierScreen
 |-- Iki reverb bus gecisi
 |   `-- ReverbBusAllocator
 |-- Hoparlor gruplama
 |   |-- Fiziksel cluster -> SpeakerClusterer
 |   |-- Stabil blok metadata -> SpeakerRegistry / SpeakerPlaybackData
-|   `-- Runtime mekan grubu -> EmitterGroup
+|   |-- Runtime fiziksel grup -> EmitterGroup
+|   `-- Ortak akustik mekan -> AcousticZoneResolver.AcousticZone
 |-- Multiplayer
 |   |-- Paket kimligi -> ModMessages
 |   |-- Server validation/barrier -> ServerAudioNetworkHandler
@@ -885,6 +924,8 @@ Mevcut kararlar:
 - `AudioEngine`: Facade olarak dogru boyutta, algoritma ekleme.
 - `StreamSource`: Basariyla koordinator + 3 collaborator olarak ayrildi.
 - `AdvancedAcousticScanner`: Facade; ray ve preset hesaplari ayrildi.
+- `AcousticZoneResolver`: Yeni ray taramasi yapmadan fiziksel gruplari ortak
+  mekan kimliginde birlestiren ayri resolver.
 - `AudioPlaybackController`: Cohesive playback workflow, simdilik koru.
 - `AudioRuntimeController`: Thread/lifecycle workflow, simdilik koru.
 - `AmplifierScreen`: Koordinator + playback/mixer/theme collaborator ayrimi tamamlandi.
