@@ -1,0 +1,104 @@
+ECHO Sound Engine - Third-Party Software Notices
+================================================
+
+This distribution bundles the third-party components listed below. ECHO Sound
+Engine remains licensed under the MIT License in the repository root. Nothing
+in that license replaces or changes the licenses of these components.
+
+Bundled components
+------------------
+
+1. LavaPlayer
+   Artifacts: dev.arbjerg:lavaplayer:2.2.6,
+              dev.arbjerg:lava-common:2.2.6,
+              dev.arbjerg:lavaplayer-natives:2.2.6
+   Project: https://github.com/lavalink-devs/lavaplayer
+   License: Apache License 2.0
+
+2. YouTube Source for LavaPlayer
+   Artifacts: dev.lavalink.youtube:common:1.18.1,
+              dev.lavalink.youtube:v2:1.18.1
+   Project: https://github.com/lavalink-devs/youtube-source
+   Copyright (c) 2024 devoxin
+   License: MIT
+
+3. Apache and Jackson libraries
+   Artifacts: org.apache.httpcomponents:httpclient:4.5.14,
+              org.apache.httpcomponents:httpcore:4.4.16,
+              commons-logging:commons-logging:1.2,
+              commons-codec:commons-codec:1.15,
+              com.fasterxml.jackson.core:jackson-core:2.15.2,
+              com.fasterxml.jackson.core:jackson-databind:2.15.2,
+              com.fasterxml.jackson.core:jackson-annotations:2.15.2
+   Projects: https://hc.apache.org/
+             https://commons.apache.org/
+             https://github.com/FasterXML/jackson
+   License: Apache License 2.0
+
+   These artifacts are nested without modification. Their original LICENSE,
+   NOTICE, and additional attribution files remain inside their nested JARs.
+   This includes the FastDoubleParser and bigint notices bundled by
+   jackson-core.
+
+4. nanojson
+   Artifact: com.grack:nanojson:1.7
+   Project: https://github.com/mmastrac/nanojson
+   Copyright 2011 The nanojson Authors
+   License: Apache License 2.0
+
+5. Mozilla Rhino
+   Artifacts: org.mozilla:rhino:1.7.14,
+              org.mozilla:rhino-engine:1.7.14
+   Project: https://github.com/mozilla/rhino
+   License: Mozilla Public License 2.0
+   Required Rhino notices are reproduced in RHINO-NOTICE.txt.
+
+6. Native codec and sample-rate libraries
+   These components are compiled into the platform connector binaries shipped
+   by lavaplayer-natives. On Windows, mpg123 is shipped as a separate dynamic
+   library.
+
+   Opus 1.3
+   Source: https://downloads.xiph.org/releases/opus/opus-1.3.tar.gz
+   License: BSD 3-Clause
+
+   libogg 1.3.3
+   Source: https://downloads.xiph.org/releases/ogg/libogg-1.3.3.tar.gz
+   License: BSD 3-Clause
+
+   libvorbis 1.3.6
+   Source: https://downloads.xiph.org/releases/vorbis/libvorbis-1.3.6.tar.gz
+   License: BSD 3-Clause
+
+   libsamplerate 0.1.9
+   Source: https://github.com/libsndfile/libsamplerate/tree/0.1.9
+   License: BSD 2-Clause
+
+   Fraunhofer FDK AAC 2.0.0
+   Source: https://github.com/mstorsjo/fdk-aac/tree/v2.0.0
+   License: Software License for the Fraunhofer FDK AAC Codec Library for
+            Android
+
+   mpg123 1.25.10
+   Source: https://www.mpg123.de/download/mpg123-1.25.10.tar.bz2
+   License: GNU Lesser General Public License 2.1
+
+License texts
+-------------
+
+The complete applicable license texts and notices are distributed next to
+this file under META-INF/licenses/audiophilecraft/:
+
+- APACHE-2.0.txt
+- MIT-YOUTUBE-SOURCE.txt
+- MPL-2.0.txt
+- LGPL-2.1.txt
+- RHINO-NOTICE.txt
+- OPUS-1.3.txt
+- LIBOGG-1.3.3.txt
+- LIBVORBIS-1.3.6.txt
+- LIBSAMPLERATE-0.1.9.txt
+- FDK-AAC-2.0.0.txt
+
+The original metadata embedded in each unchanged nested dependency is also
+preserved in the distribution.

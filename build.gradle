@@ -133,6 +133,13 @@ jar {
 	from("LICENSE") {
 		rename { "${it}_${project.base.archivesName.get()}" }
 	}
+	from("THIRD_PARTY_NOTICES") {
+		into "META-INF"
+		rename { "THIRD_PARTY_NOTICES_${project.base.archivesName.get()}" }
+	}
+	from("third-party-licenses") {
+		into "META-INF/licenses/${project.base.archivesName.get()}"
+	}
 }
 
 spotless {
