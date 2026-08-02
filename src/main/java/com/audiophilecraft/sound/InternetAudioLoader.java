@@ -303,7 +303,7 @@ public class InternetAudioLoader {
             }
             prebufferTarget = 10 * sampleRate;
             long durMs = track.getDuration();
-            if (durMs <= 0 || durMs > 5 * 60 * 1000) durMs = 5 * 60 * 1000;
+            if (durMs <= 0 || durMs > 10 * 60 * 1000) durMs = 10 * 60 * 1000;
             int totalExpected = (int) (durMs / 1000.0 * sampleRate);
             // Interleaved stereo: [L0,R0, L1,R1, L2,R2, ...], length = frames * 2
             pcmInterleaved = new short[totalExpected * 2];
