@@ -442,7 +442,9 @@ final class SourceSpatialController {
         sendGain *= wetSpatialTransmission;
         if (engine.isSideMuted()) sendGain = 0.0f;
 
-        float roomSendGain = sendGain / (float) Math.max(1.0, Math.sqrt(clusterSize));
+        // Normalize each frequency band independently so unrelated speaker types
+        // cannot suppress this source's contribution to the room bus.
+        float roomSendGain = sendGain / (float) Math.max(1.0, Math.sqrt(speakerCount));
         if (emitterGroup != null) {
             roomSendGain *= emitterGroup.roomSendGain();
         }
