@@ -1,21 +1,22 @@
-MIT License
+ECHO Sound Engine — All Rights Reserved
+========================================
 
-Copyright (c) 2026 Burak
+Copyright (c) 2026 Burak. All rights reserved.
 
-Permission is hereby granted, free of charge, to any person obtaining a copy
-of this software and associated documentation files (the "Software"), to deal
-in the Software without restriction, including without limitation the rights
-to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-copies of the Software, and to permit persons to whom the Software is
-furnished to do so, subject to the following conditions:
+The source code of this project is published for viewing purposes only.
+Unless the copyright holder (Burak) grants written permission, no person or
+entity is allowed to:
 
-The above copyright notice and this permission notice shall be included in all
-copies or substantial portions of the Software.
+- copy, redistribute, or republish this code, in whole or in part
+- modify this code or create derivative works from it
+- use this mod or its code in any product, service, or other project
+- use this code commercially or non-commercially
 
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-SOFTWARE.
+Anyone who copies or uses this code without permission may be subject to
+copyright infringement claims.
+
+For permission to use, distribute, or collaborate on this project, contact
+the copyright holder.
+
+Note: Third-party components bundled in this distribution remain under
+their own licenses. See THIRD_PARTY_NOTICES and META-INF/licenses/.

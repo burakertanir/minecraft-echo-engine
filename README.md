@@ -106,6 +106,8 @@ dosyasındadır.
 
 ## Lisans
 
-ECHO Sound Engine, [MIT Lisansı](LICENSE) ile yayımlanır.
+ECHO Sound Engine, [All Rights Reserved](LICENSE) lisansıyla yayımlanır:
+kaynak kod görüntüleme amaçlıdır; kopyalama, dağıtım, değiştirme ve kullanım
+için yazarın (Burak) yazılı izni gerekir.
 
-Copyright (c) 2026 Burak
+Copyright (c) 2026 Burak. Tüm hakları saklıdır.
