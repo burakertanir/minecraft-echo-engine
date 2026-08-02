@@ -183,6 +183,10 @@ public class AudioEngine {
         runtime.updateSourcesTick(world);
     }
 
+    public void setExternalPlaybackPaused(boolean paused) {
+        runtime.setExternalPlaybackPaused(paused);
+    }
+
     public void updateAudioDeviceFallback() {
         audioDeviceFallback.tick();
     }

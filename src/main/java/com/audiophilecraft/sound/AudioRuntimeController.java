@@ -44,6 +44,7 @@ final class AudioRuntimeController {
 
     private volatile Vec3d listenerPosition = Vec3d.ZERO;
     private volatile Vec3d smoothedListenerPosition = Vec3d.ZERO;
+    private volatile boolean externalPlaybackPaused;
     private ScheduledExecutorService audioThread;
     private long lastTickTime = System.nanoTime();
 
@@ -113,7 +114,7 @@ final class AudioRuntimeController {
 
     void updateSourcesTick(World world) {
         MinecraftClient client = MinecraftClient.getInstance();
-        boolean gamePaused = client.isPaused();
+        boolean gamePaused = client.isPaused() || externalPlaybackPaused;
 
         updatePauseStates(gamePaused);
         effects.setGamePaused(gamePaused);
@@ -136,6 +137,10 @@ final class AudioRuntimeController {
         effects.updateRoomBusOcclusion(calculateRoomBusOcclusion());
         effects.ensureVenueReverb();
         lastTickTime = System.nanoTime();
+    }
+
+    void setExternalPlaybackPaused(boolean paused) {
+        externalPlaybackPaused = paused;
     }
 
     private void updatePauseStates(boolean gamePaused) {
