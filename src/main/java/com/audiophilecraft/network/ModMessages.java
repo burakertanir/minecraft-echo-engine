@@ -15,7 +15,6 @@ public final class ModMessages {
     private static final int EQ_BAND_COUNT = 5;
     private static final Set<String> VALID_SPEAKER_TYPES = Set.of("normal", "sub", "mid", "line");
 
-    public static final Identifier C2S_REQUEST_PLAY = id("c2s_request_play");
     public static final Identifier C2S_UPDATE_POWER = id("c2s_update_power");
     public static final Identifier S2C_SYNC_POWER = id("s2c_sync_power");
     public static final Identifier C2S_UPDATE_INPUT_GAIN = id("c2s_update_input_gain");

@@ -337,12 +337,8 @@ final class AmplifierPlaybackPanel {
         long lockTime = 2500;
         PlaybackSession activeSession = AudioEngine.getInstance().getActiveSession();
         boolean sameUrl = activeSession != null && !url.isEmpty() && url.equals(activeSession.getPlayUrl());
-        boolean playingLocal = activeSession != null
-                && url.isEmpty()
-                && activeSession.getPlayUrl().isEmpty()
-                && activeSession.isPlaying();
 
-        if (sameUrl || playingLocal) {
+        if (sameUrl) {
             if (activeSession.isPlaying()) {
                 PacketByteBuf buffer = PacketByteBufs.create();
                 buffer.writeInt(handOrdinal.getAsInt());
@@ -377,15 +373,12 @@ final class AmplifierPlaybackPanel {
     }
 
     private long sendPlayRequest(String url) {
+        if (url.isEmpty()) return 0;
         PacketByteBuf buffer = PacketByteBufs.create();
         buffer.writeInt(handOrdinal.getAsInt());
-        if (!url.isEmpty()) {
-            buffer.writeString(url);
-            ClientPlayNetworking.send(ModMessages.C2S_PLAY_URL, buffer);
-            return 2500;
-        }
-        ClientPlayNetworking.send(ModMessages.C2S_REQUEST_PLAY, buffer);
-        return 100;
+        buffer.writeString(url);
+        ClientPlayNetworking.send(ModMessages.C2S_PLAY_URL, buffer);
+        return 2500;
     }
 
     private void renderTrackInfo(DrawContext context) {

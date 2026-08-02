@@ -3,7 +3,6 @@ package com.audiophilecraft.network;
 import static com.audiophilecraft.network.ModMessages.C2S_CHANNEL_MASK;
 import static com.audiophilecraft.network.ModMessages.C2S_PLAYBACK_READY;
 import static com.audiophilecraft.network.ModMessages.C2S_PLAY_URL;
-import static com.audiophilecraft.network.ModMessages.C2S_REQUEST_PLAY;
 import static com.audiophilecraft.network.ModMessages.C2S_SEEK_READY;
 import static com.audiophilecraft.network.ModMessages.C2S_SEEK_TRACK;
 import static com.audiophilecraft.network.ModMessages.C2S_STOP_AUDIO;
@@ -144,25 +143,6 @@ final class ServerAudioNetworkHandler {
     }
 
     private static void registerPlaybackPackets() {
-        ServerPlayNetworking.registerGlobalReceiver(
-                C2S_REQUEST_PLAY, (server, player, handler, buf, responseSender) -> {
-                    int handOrdinal = buf.readInt();
-                    server.execute(() -> {
-                        ItemStack stack = getTabletStack(player, handOrdinal);
-                        if (!(stack.getItem() instanceof AmplifierTabletItem)) return;
-
-                        UUID ownerUUID = player.getUuid();
-                        List<SpeakerPlaybackData> speakers =
-                                SpeakerRegistry.findPlaybackDataByOwner(player.getWorld(), ownerUUID);
-                        float power = AmplifierTabletItem.getSpeakerPower(stack);
-                        float inputGain = AmplifierTabletItem.getInputGain(stack);
-                        for (ServerPlayerEntity nearby :
-                                server.getPlayerManager().getPlayerList()) {
-                            sendPlayTrack(nearby, ownerUUID, "music/test_track", speakers, power, inputGain);
-                        }
-                    });
-                });
-
         ServerPlayNetworking.registerGlobalReceiver(C2S_PLAY_URL, (server, player, handler, buf, responseSender) -> {
             int handOrdinal = buf.readInt();
             String url = buf.readString(2048);
