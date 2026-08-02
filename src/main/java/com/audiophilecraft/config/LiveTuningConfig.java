@@ -1,7 +1,10 @@
 package com.audiophilecraft.config;
 
+import com.audiophilecraft.AudiophileCraft;
 import com.google.gson.Gson;
 import com.google.gson.GsonBuilder;
+import com.google.gson.JsonObject;
+import com.google.gson.JsonParser;
 import java.io.*;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -26,7 +29,9 @@ import net.fabricmc.loader.api.FabricLoader;
 public class LiveTuningConfig {
     private static volatile LiveTuningConfig INSTANCE;
     private static final Gson GSON = new GsonBuilder().setPrettyPrinting().create();
-    private static final String CONFIG_LAYOUT_MARKER = "// DOSYA DUZENI: 2";
+    private static final String CONFIG_LAYOUT_MARKER = "// DOSYA DUZENI: 3";
+    private static final int CURRENT_CONFIG_VERSION = 1;
+    private static final float MIGRATION_EPSILON = 0.0001f;
     private static Path configPath;
     private static long lastModifiedTime = 0;
     private static long lastFileSize = 0;
@@ -40,6 +45,8 @@ public class LiveTuningConfig {
     public static long getReloadGeneration() {
         return reloadGeneration;
     }
+
+    public int config_version = CURRENT_CONFIG_VERSION;
 
     // ============================================================================
     // CATEGORY 1: DISTANCE ATTENUATION
@@ -62,7 +69,7 @@ public class LiveTuningConfig {
     public float line_hzExp = 1.5f;
     public float line_vtExpBase = 1.5f;
     public float line_vtExpPerSpeaker = 0.3f;
-    public float line_rearGain = 0.25f;
+    public float line_rearGain = 0.9f;
     public float mid_hzExp = 2.2f;
     public float mid_vtExp = 2.0f;
     public float mid_rearGain = 0.1225f;
@@ -73,17 +80,18 @@ public class LiveTuningConfig {
     // ============================================================================
     // CATEGORY 3: WALL OCCLUSION
     // ============================================================================
-    public float occ_standardWall = 0.42f;
+    public float occ_standardWall = 0.7f;
     public float occ_varianceBlend = 0.25f;
-    public float occ_sub_floor = 0.3025f;
-    public float occ_mid_floor = 0.1444f;
-    public float occ_line_floor = 0.25f;
+    public float occ_sub_floor = 0.3f;
+    public float occ_mid_floor = 0.2f;
+    public float occ_line_floor = 0.2f;
     public float occ_lerpIn = 0.35f;
     public float occ_lerpOut = 0.15f;
-    public float occ_hfExp_occluding = 1.35f;
+    public float occ_hfExp_occluding = 1.5f;
     public float occ_hfExp_deoccluding = 1.1f;
+    public float occ_hf_floor = 0.01f;
     public float occ_raycast_flexOffset = 0.75f;
-    public float occ_thicknessDecay = 0.85f;
+    public float occ_thicknessDecay = 0.9f;
 
     // ============================================================================
     // CATEGORY 4: PROXIMITY BOOST
@@ -127,7 +135,7 @@ public class LiveTuningConfig {
 
     // --- TIER 1: CLOSET ---
     public float tier1_minGain = 0.28f;
-    public float tier1_gainMul = 0.4f;
+    public float tier1_gainMul = 0.3f;
     public float tier1_reflGainMul = 0.7f;
     public float tier1_lateReverbMul = 1.0f;
     public float tier1_hfMul = 1.0f;
@@ -138,7 +146,7 @@ public class LiveTuningConfig {
 
     // --- TIER 2: SMALL ROOM ---
     public float tier2_minGain = 0.25f;
-    public float tier2_gainMul = 0.35f;
+    public float tier2_gainMul = 0.3f;
     public float tier2_reflGainMul = 0.3f;
     public float tier2_lateReverbMul = 1.0f;
     public float tier2_hfMul = 1.0f;
@@ -149,7 +157,7 @@ public class LiveTuningConfig {
 
     // --- TIER 3: MEDIUM ROOM ---
     public float tier3_minGain = 0.18f;
-    public float tier3_gainMul = 0.3f;
+    public float tier3_gainMul = 0.25f;
     public float tier3_reflGainMul = 0.3f;
     public float tier3_lateReverbMul = 1.0f;
     public float tier3_hfMul = 1.0f;
@@ -160,7 +168,7 @@ public class LiveTuningConfig {
 
     // --- TIER 4: LARGE ROOM / SMALL HALL ---
     public float tier4_minGain = 0.165f;
-    public float tier4_gainMul = 0.3f;
+    public float tier4_gainMul = 0.25f;
     public float tier4_reflGainMul = 0.32f;
     public float tier4_lateReverbMul = 1.0f;
     public float tier4_hfMul = 1.0f;
@@ -172,7 +180,7 @@ public class LiveTuningConfig {
 
     // --- TIER 5: LARGE CLUB ---
     public float tier5_minGain = 0.15f;
-    public float tier5_gainMul = 0.3f;
+    public float tier5_gainMul = 0.25f;
     public float tier5_reflGainMul = 0.28f;
     public float tier5_lateReverbMul = 1.0f;
     public float tier5_hfMul = 1.0f;
@@ -184,11 +192,11 @@ public class LiveTuningConfig {
 
     // --- TIER 6: ARENA ---
     public float tier6_minGain = 0.12f;
-    public float tier6_gainMul = 0.3f;
+    public float tier6_gainMul = 0.25f;
     public float tier6_reflGainMul = 0.27f;
     public float tier6_lateReverbMul = 1.0f;
     public float tier6_hfMul = 1.0f;
-    public float tier6_lfMul = 0.8f;
+    public float tier6_lfMul = 1.0f;
     public float tier6_decayMul = 0.31f;
     public float tier6_lateReverbRoomScale = 0.4f;
     public float tier6_density = -1.0f;
@@ -196,11 +204,11 @@ public class LiveTuningConfig {
 
     // --- TIER 7: MASSIVE STADIUM ---
     public float tier7_minGain = 0.18f;
-    public float tier7_gainMul = 0.3f;
+    public float tier7_gainMul = 0.25f;
     public float tier7_reflGainMul = 0.27f;
     public float tier7_lateReverbMul = 1.0f;
     public float tier7_hfMul = 1.0f;
-    public float tier7_lfMul = 0.8f;
+    public float tier7_lfMul = 1.0f;
     public float tier7_decayMul = 0.3f;
     public float tier7_lateReverbRoomScale = 0.4f;
     public float tier7_maxLateMultiplier_highEncl = 2.0f;
@@ -210,11 +218,11 @@ public class LiveTuningConfig {
 
     // --- TIER 8: COLOSSAL DOME / HANGAR ---
     public float tier8_minGain = 0.22f;
-    public float tier8_gainMul = 0.3f;
+    public float tier8_gainMul = 0.25f;
     public float tier8_reflGainMul = 0.3f;
     public float tier8_lateReverbMul = 1.1f;
     public float tier8_hfMul = 1.0f;
-    public float tier8_lfMul = 0.8f;
+    public float tier8_lfMul = 1.0f;
     public float tier8_decayMul = 0.33f;
     public float tier8_lateReverbRoomScale = 0.5f;
     public float tier8_maxLateMultiplier_highEncl = 2.5f;
@@ -224,11 +232,11 @@ public class LiveTuningConfig {
 
     // --- TIER 9: MEGA COMPLEX / CITY BLOCK ---
     public float tier9_minGain = 0.25f;
-    public float tier9_gainMul = 0.3f;
+    public float tier9_gainMul = 0.25f;
     public float tier9_reflGainMul = 0.3f;
     public float tier9_lateReverbMul = 1.2f;
     public float tier9_hfMul = 1.0f;
-    public float tier9_lfMul = 0.9f;
+    public float tier9_lfMul = 1.0f;
     public float tier9_decayMul = 0.33f;
     public float tier9_lateReverbRoomScale = 0.6f;
     public float tier9_maxLateMultiplier_highEncl = 3.0f;
@@ -237,12 +245,12 @@ public class LiveTuningConfig {
     public float tier9_diffusion = -1.0f;
 
     // --- TIER 10: INFINITE CATHEDRAL / VOID ---
-    public float tier10_minGain = 0.28f;
-    public float tier10_gainMul = 0.32f;
+    public float tier10_minGain = 0.25f;
+    public float tier10_gainMul = 0.25f;
     public float tier10_reflGainMul = 0.35f;
     public float tier10_lateReverbMul = 1.1f;
     public float tier10_hfMul = 1.0f;
-    public float tier10_lfMul = 0.8f;
+    public float tier10_lfMul = 1.0f;
     public float tier10_decayMul = 0.35f;
     public float tier10_lateReverbRoomScale = 0.7f;
     public float tier10_maxLateMultiplier_highEncl = 3.5f;
@@ -298,9 +306,9 @@ public class LiveTuningConfig {
     // ============================================================================
     public float harmonics_master = 1.0f;
     public float harmonics_powerInfluence = 0.8f;
-    public float harmonics_subAmount = 0.9f;
-    public float harmonics_midAmount = 0.4f;
-    public float harmonics_lineAmount = 0.6f;
+    public float harmonics_subAmount = 0.7f;
+    public float harmonics_midAmount = 0.3f;
+    public float harmonics_lineAmount = 0.4f;
     public float harmonics_normalAmount = 0.012f;
 
     // ============================================================================
@@ -311,7 +319,7 @@ public class LiveTuningConfig {
     public float echo_feedback = 0.4f;
     public float echo_spread = -0.5f;
     public float echo_baseGain = 0.005f;
-    public float echo_maxGain = 0.1f;
+    public float echo_maxGain = 0.14f;
 
     // ============================================================================
     // SINGLETON & FILE MANAGEMENT
@@ -392,10 +400,26 @@ public class LiveTuningConfig {
                     })
                     .collect(Collectors.joining("\n"));
 
-            INSTANCE = GSON.fromJson(cleaned, LiveTuningConfig.class);
-            if (INSTANCE == null) {
-                INSTANCE = new LiveTuningConfig();
+            JsonObject sourceJson = JsonParser.parseString(cleaned).getAsJsonObject();
+            int sourceVersion = readConfigVersion(sourceJson);
+            LiveTuningConfig loadedConfig = GSON.fromJson(sourceJson, LiveTuningConfig.class);
+            if (loadedConfig == null) {
+                loadedConfig = new LiveTuningConfig();
             }
+
+            boolean migrated = migrateConfig(loadedConfig, sourceJson, sourceVersion);
+            if (migrated) {
+                createMigrationBackup(sourceVersion);
+            }
+
+            INSTANCE = loadedConfig;
+            if (migrated) {
+                if (saveToFile()) {
+                    AudiophileCraft.LOGGER.info(
+                            "Updated tuning config from version {} to {}.", sourceVersion, CURRENT_CONFIG_VERSION);
+                }
+            }
+
             lastModifiedTime = configPath.toFile().lastModified();
             lastFileSize = Files.size(configPath);
             reloadGeneration++;
@@ -407,10 +431,86 @@ public class LiveTuningConfig {
         }
     }
 
+    private static int readConfigVersion(JsonObject sourceJson) {
+        if (!sourceJson.has("config_version")) return 0;
+        try {
+            return Math.max(0, sourceJson.get("config_version").getAsInt());
+        } catch (RuntimeException ignored) {
+            return 0;
+        }
+    }
+
+    private static boolean migrateConfig(
+            LiveTuningConfig config, JsonObject sourceJson, int sourceVersion) {
+        if (sourceVersion > CURRENT_CONFIG_VERSION) {
+            AudiophileCraft.LOGGER.warn(
+                    "Tuning config version {} is newer than supported version {}; preserving it unchanged.",
+                    sourceVersion,
+                    CURRENT_CONFIG_VERSION);
+            return false;
+        }
+
+        int migratedVersion = sourceVersion;
+        if (migratedVersion < 1) {
+            migrateVersion0To1(config, sourceJson);
+            migratedVersion = 1;
+        }
+
+        config.config_version = migratedVersion;
+        return migratedVersion != sourceVersion;
+    }
+
+    private static void migrateVersion0To1(LiveTuningConfig config, JsonObject sourceJson) {
+        if (usesOldDefault(sourceJson, "line_rearGain", 0.25f)) config.line_rearGain = 0.9f;
+        if (usesOldDefault(sourceJson, "occ_standardWall", 0.42f)) config.occ_standardWall = 0.7f;
+        if (usesOldDefault(sourceJson, "occ_sub_floor", 0.3025f)) config.occ_sub_floor = 0.3f;
+        if (usesOldDefault(sourceJson, "occ_mid_floor", 0.1444f)) config.occ_mid_floor = 0.2f;
+        if (usesOldDefault(sourceJson, "occ_line_floor", 0.25f)) config.occ_line_floor = 0.2f;
+        if (usesOldDefault(sourceJson, "occ_hfExp_occluding", 1.35f)) config.occ_hfExp_occluding = 1.5f;
+        if (usesOldDefault(sourceJson, "occ_thicknessDecay", 0.85f)) config.occ_thicknessDecay = 0.9f;
+        if (usesOldDefault(sourceJson, "echo_maxGain", 0.1f)) config.echo_maxGain = 0.14f;
+        if (usesOldDefault(sourceJson, "tier1_gainMul", 0.4f)) config.tier1_gainMul = 0.3f;
+        if (usesOldDefault(sourceJson, "tier2_gainMul", 0.35f)) config.tier2_gainMul = 0.3f;
+        if (usesOldDefault(sourceJson, "tier3_gainMul", 0.3f)) config.tier3_gainMul = 0.25f;
+        if (usesOldDefault(sourceJson, "tier4_gainMul", 0.3f)) config.tier4_gainMul = 0.25f;
+        if (usesOldDefault(sourceJson, "tier5_gainMul", 0.3f)) config.tier5_gainMul = 0.25f;
+        if (usesOldDefault(sourceJson, "tier6_gainMul", 0.3f)) config.tier6_gainMul = 0.25f;
+        if (usesOldDefault(sourceJson, "tier6_lfMul", 0.8f)) config.tier6_lfMul = 1.0f;
+        if (usesOldDefault(sourceJson, "tier7_gainMul", 0.3f)) config.tier7_gainMul = 0.25f;
+        if (usesOldDefault(sourceJson, "tier7_lfMul", 0.8f)) config.tier7_lfMul = 1.0f;
+        if (usesOldDefault(sourceJson, "tier8_gainMul", 0.3f)) config.tier8_gainMul = 0.25f;
+        if (usesOldDefault(sourceJson, "tier8_lfMul", 0.8f)) config.tier8_lfMul = 1.0f;
+        if (usesOldDefault(sourceJson, "tier9_gainMul", 0.3f)) config.tier9_gainMul = 0.25f;
+        if (usesOldDefault(sourceJson, "tier9_lfMul", 0.9f)) config.tier9_lfMul = 1.0f;
+        if (usesOldDefault(sourceJson, "tier10_minGain", 0.28f)) config.tier10_minGain = 0.25f;
+        if (usesOldDefault(sourceJson, "tier10_gainMul", 0.32f)) config.tier10_gainMul = 0.25f;
+        if (usesOldDefault(sourceJson, "tier10_lfMul", 0.8f)) config.tier10_lfMul = 1.0f;
+        if (usesOldDefault(sourceJson, "harmonics_subAmount", 0.9f)) config.harmonics_subAmount = 0.7f;
+        if (usesOldDefault(sourceJson, "harmonics_midAmount", 0.4f)) config.harmonics_midAmount = 0.3f;
+        if (usesOldDefault(sourceJson, "harmonics_lineAmount", 0.6f)) config.harmonics_lineAmount = 0.4f;
+    }
+
+    private static boolean usesOldDefault(JsonObject sourceJson, String fieldName, float oldDefault) {
+        if (!sourceJson.has(fieldName) || sourceJson.get(fieldName).isJsonNull()) return true;
+        try {
+            return Math.abs(sourceJson.get(fieldName).getAsFloat() - oldDefault) <= MIGRATION_EPSILON;
+        } catch (RuntimeException ignored) {
+            return false;
+        }
+    }
+
+    private static void createMigrationBackup(int sourceVersion) throws IOException {
+        Path backupPath = configPath.resolveSibling(configPath.getFileName() + ".v" + sourceVersion + ".bak");
+        if (!Files.exists(backupPath)) {
+            Files.copy(configPath, backupPath);
+            AudiophileCraft.LOGGER.info("Backed up tuning config to {}.", backupPath);
+        }
+    }
+
     /**
      * Save to file with beautiful Turkish comments explaining every parameter.
      */
-    private static void saveToFile() {
+    private static boolean saveToFile() {
         try {
             Files.createDirectories(configPath.getParent());
             try (PrintWriter w = new PrintWriter(new BufferedWriter(new FileWriter(configPath.toFile())))) {
@@ -424,6 +524,9 @@ public class LiveTuningConfig {
                 w.println("  // Degisiklikler 1 saniye icinde otomatik olarak uygulanir.");
                 w.println("  // Oyundan cikmaniza gerek yoktur.");
                 w.println("  // ========================================================================");
+                w.println();
+                w.println("  \"config_version\": " + CURRENT_CONFIG_VERSION
+                        + ",  // Otomatik guncelleme surumu. Bu degeri elle degistirmeyin.");
                 w.println();
                 w.println();
 
@@ -494,7 +597,7 @@ public class LiveTuningConfig {
                         w,
                         "line_rearGain",
                         c.line_rearGain,
-                        "Line Array: Arkadaki nihai ses orani. 0.25 = arkada %25 ses duyulur.");
+                        "Line Array: Arkadaki nihai ses orani. 0.90 = arkada %90 ses duyulur.");
                 writeParam(w, "mid_hzExp", c.mid_hzExp, "Mid-Range: Yatay odaklanma keskinligi.");
                 writeParam(w, "mid_vtExp", c.mid_vtExp, "Mid-Range: Dikey odaklanma keskinligi.");
                 writeParam(w, "mid_rearGain", c.mid_rearGain, "Mid-Range: Arkadan duyulma orani.");
@@ -547,6 +650,11 @@ public class LiveTuningConfig {
                         "Duvar arkasindan cikarken tiz acilma egrisi. Dusuk=tizler daha hizli acilir.");
                 writeParam(
                         w,
+                        "occ_hf_floor",
+                        c.occ_hf_floor,
+                        "Okluzyon tiz tabani. 0.01 = tizlerin en az yuzde 1'i kalir.");
+                writeParam(
+                        w,
                         "occ_raycast_flexOffset",
                         c.occ_raycast_flexOffset,
                         "Okluzyon yuvarlama esnekligi. 0.75 = capraz gecisleri (1.5 blok mesafeyi) 1 blok sayar.");
@@ -555,7 +663,7 @@ public class LiveTuningConfig {
                         w,
                         "occ_thicknessDecay",
                         c.occ_thicknessDecay,
-                        "Her ek blokta sesin ne kadar azaldigi. 0.85 = her blokta %85 ses kalir.");
+                        "Her ek blokta sesin ne kadar azaldigi. 0.90 = her blokta %90 ses kalir.");
 
                 w.println();
 
@@ -1165,8 +1273,10 @@ public class LiveTuningConfig {
             }
             lastModifiedTime = configPath.toFile().lastModified();
             lastFileSize = Files.size(configPath);
+            return true;
         } catch (Exception e) {
             System.err.println("[LiveTuning] Failed to save config: " + e.getMessage());
+            return false;
         }
     }
 

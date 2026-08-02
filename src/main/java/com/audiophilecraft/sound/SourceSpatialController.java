@@ -372,7 +372,8 @@ final class SourceSpatialController {
             exponent = Math.min(exponent, 1.05f);
         }
         float rawGain = (float) Math.pow(currentOcclusion, exponent);
-        return 0.02f + 0.98f * rawGain;
+        float highFrequencyFloor = Math.max(0.0f, Math.min(1.0f, config.occ_hf_floor));
+        return highFrequencyFloor + (1.0f - highFrequencyFloor) * rawGain;
     }
 
     private float calculateDirectionalHighFrequencyGain(LiveTuningConfig config) {
