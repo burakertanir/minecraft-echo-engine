@@ -1,5 +1,6 @@
 package com.audiophilecraft.sound;
 
+import com.audiophilecraft.AudiophileCraft;
 import com.sedmelluq.discord.lavaplayer.format.StandardAudioDataFormats;
 import com.sedmelluq.discord.lavaplayer.player.AudioLoadResultHandler;
 import com.sedmelluq.discord.lavaplayer.player.AudioPlayer;
@@ -44,6 +45,7 @@ public class InternetAudioLoader {
     private final AudioPlayerManager playerManager;
     private final ConcurrentHashMap<Long, StreamingRequestState> streamingRequests = new ConcurrentHashMap<>();
     private final AtomicInteger nextDecoderThreadId = new AtomicInteger(1);
+    private final AtomicBoolean shutdownStarted = new AtomicBoolean(false);
     private final ExecutorService decoderExecutor;
 
     private static final class StreamingRequestState {
@@ -111,6 +113,16 @@ public class InternetAudioLoader {
             INSTANCE = new InternetAudioLoader();
         }
         return INSTANCE;
+    }
+
+    public static void shutdownIfInitialized() {
+        InternetAudioLoader loader;
+        synchronized (InternetAudioLoader.class) {
+            loader = INSTANCE;
+        }
+        if (loader != null) {
+            loader.shutdown();
+        }
     }
 
     /**
@@ -486,7 +498,8 @@ public class InternetAudioLoader {
     /**
      * Cleanup resources.
      */
-    public void shutdown() {
+    private void shutdown() {
+        if (!shutdownStarted.compareAndSet(false, true)) return;
         for (StreamingRequestState state : streamingRequests.values()) {
             state.cancel();
         }
@@ -495,7 +508,7 @@ public class InternetAudioLoader {
         playerManager.shutdown();
         try {
             if (!decoderExecutor.awaitTermination(2, TimeUnit.SECONDS)) {
-                System.err.println("InternetAudioLoader: Decoder executor did not terminate cleanly");
+                AudiophileCraft.LOGGER.warn("Internet audio decoder executor did not terminate cleanly.");
             }
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();

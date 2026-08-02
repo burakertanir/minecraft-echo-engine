@@ -6,7 +6,9 @@ import com.audiophilecraft.compat.ReplayModAudioBridge;
 import com.audiophilecraft.network.ModMessages;
 import com.audiophilecraft.registry.ModScreenHandlers;
 import com.audiophilecraft.sound.AudioEngine;
+import com.audiophilecraft.sound.InternetAudioLoader;
 import net.fabricmc.api.ClientModInitializer;
+import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientLifecycleEvents;
 import net.minecraft.client.gui.screen.ingame.HandledScreens;
 
 public class AudiophileCraftClient implements ClientModInitializer {
@@ -75,6 +77,11 @@ public class AudiophileCraftClient implements ClientModInitializer {
                     replayPlaybackActive = false;
                     cleanupClientAudio("Client disconnected");
                 });
+
+        ClientLifecycleEvents.CLIENT_STOPPING.register(client -> {
+            cleanupClientAudio("Minecraft client stopping");
+            InternetAudioLoader.shutdownIfInitialized();
+        });
     }
 
     private static void cleanupClientAudio(String reason) {
