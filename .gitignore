@@ -13,6 +13,7 @@ build/
 
 # Compiled class files
 *.class
+bin/
 
 # Minecraft run directory
 run/
