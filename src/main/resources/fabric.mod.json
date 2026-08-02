@@ -3,16 +3,11 @@
   "id": "audiophilecraft",
   "version": "${version}",
   "name": "ECHO Sound Engine",
-  "description": "High-Fidelity Acoustic Simulation Mod",
+  "description": "Physical speaker arrays, spatial audio, occlusion and venue acoustics for Minecraft.",
   "authors": [
-    "Me"
+    "Burak"
   ],
-  "contact": {
-    "homepage": "https://fabricmc.net/",
-    "sources": "https://github.com/FabricMC/fabric-example-mod"
-  },
   "license": "MIT",
-  "icon": "assets/audiophilecraft/icon.png",
   "environment": "*",
   "entrypoints": {
     "main": [
@@ -30,8 +25,5 @@
     "minecraft": "~1.20.1",
     "java": ">=17",
     "fabric-api": "*"
-  },
-  "suggests": {
-    "another-mod": "*"
   }
 }

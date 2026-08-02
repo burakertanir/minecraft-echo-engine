@@ -1,79 +1,111 @@
-<div align="center">
-  <h1>🔊 ECHO Sound Engine</h1>
-  <p><b>Dünyanın En Gelişmiş Minecraft Akustik ve Ses İşleme Modu</b></p>
-  <p>
-    <a href="#özellikler">Özellikler</a> • 
-    <a href="#nasıl-çalışır">Nasıl Çalışır?</a> • 
-    <a href="#teknik-detaylar">Teknik Detaylar</a>
-  </p>
-</div>
+# ECHO Sound Engine
 
----
+ECHO Sound Engine, Minecraft 1.20.1 için geliştirilmiş Fabric tabanlı bir fiziksel
+hoparlör ve uzamsal ses modudur. Hoparlör dizilimlerini, yönlülüğü, mesafeyi,
+duvar arkasındaki frekans kaybını ve mekân akustiğini özel bir OpenAL ses motorunda
+işler.
 
-## 🎵 Mod Hakkında
+## Gereksinimler
 
-**ECHO Sound Engine**, standart Minecraft ses motorunun sınırlarını tamamen yok eden, baştan aşağı özel yazılmış devasa bir ses ve DSP (Dijital Sinyal İşleme) altyapısıdır. Bu mod sadece oyuna bir "Hoparlör" eklemekle kalmaz; gerçek hayattaki **fiziksel ses yayılımını**, **oda akustiğini** ve **materyal yansımalarını** birebir Minecraft evrenine taşır.
+- Minecraft 1.20.1
+- Fabric Loader 0.15.7 veya üzeri
+- Fabric API
+- Java 17 veya üzeri
 
-Bu mod alanında iddialıdır: Büyük ihtimalle **dünyada bu seviyede bir akustik hesaplama ve canlı yayın entegrasyonu sunan tek Minecraft modudur.**
+Multiplayer kullanımında modun hem sunucuda hem de bağlanan istemcilerde kurulu
+olması gerekir.
 
----
+## Özellikler
 
-## 🚀 En Vurucu Özellikler
+### Hoparlör sistemi
 
-### 🧮 26-Ray Temporal Slicing & Sabine Akustiği
-Minecraft'ın bloklu dünyasında gerçek zamanlı **Işın İzlemeli (Ray-Traced) Ses!**
-Mod, dinleyicinin etrafına "Spherical Fibonacci" yöntemiyle 26 farklı akustik ışın (ray) gönderir. Bu ışınlar odanın geometrisini çıkarır ve meşhur **Sabine Denklemi**'ni kullanarak bulunduğunuz odanın akustik yankı (Reverb) değerlerini saniyesinde, sıfır gecikme ile hesaplar.
+- Subwoofer, Studio Monitor ve Line Array Module blokları
+- Yakın hoparlörleri fiziksel emitter grupları hâlinde birleştiren kümeleme
+- Büyük dizilimlerde güç ve menzil ölçekleme
+- Line Array için yatay/dikey yönlülük ve ayarlanabilir dikey açı
+- `BOTH`, `LEFT` ve `RIGHT` kanal seçimi
+- Hoparlör başına 0-30 ms sample shift
+- Sub, mid, line ve normal kanallar için bağımsız mixer ve parametrik EQ
 
-### 🧱 Blok Bazlı Gerçekçi Ses Emilimi (Material Absorption)
-Odanızın neyden yapıldığı sesi doğrudan etkiler. Tıpkı gerçek hayattaki gibi:
-* **Taş, Obsidyen, Cam:** Sesi yansıtır, güçlü yankı (Reverb) yapar.
-* **Yün, Odun, Sünger:** Sesi emer (absorbe eder), yankıyı öldürür ve sesi boğar.
-Kendi stüdyonuzu akustik süngerlerle (veya yünlerle) yalıtabilirsiniz!
+### Fiziksel ses motoru
 
-### 🌐 LavaPlayer Entegrasyonu ile İnternet Yayını
-Sadece bilgisayarınızdaki veya oyundaki sesleri değil, **internetteki sesleri doğrudan oyun içine aktarır.**
-* **YouTube**, **SoundCloud** ve doğrudan **HTTP(S)** linklerinden canlı müzik veya radyo çalabilme.
-* Müzik sunucudan istemciye milisaniyelik senkronizasyonlarla aktarılır.
-* Tamamen ham PCM (Pulse-Code Modulation) sinyaline dönüştürülüp modun özel OpenAL motoruna beslenir.
+- OpenAL tabanlı uzamsal kaynaklar ve HRTF uyumlu konumlandırma
+- Mesafe zayıflaması ve sesin yayılma süresi
+- Duvar kalınlığına ve blok geçirgenliğine bağlı occlusion
+- Yüksek frekans yönlülüğü ve hava emilimi
+- Hoparlör tipine ve gücüne bağlı kontrollü harmonikler
+- Pause, seek ve resume sırasında zaman/propagation senkronizasyonu
 
-### 🎛️ Hardcore DSP (Dijital Sinyal İşleme) ve EFX/EAX
-* **OpenAL Soft HRTF:** Kulaklık kullananlar için 3 Boyutlu (Binaural) kusursuz yönsel ses deneyimi. Sesi sadece sağdan/soldan değil, yukarıdan veya aşağıdan da hissedersiniz.
-* **EAX Reverb & Dinamik Tıkanma (Occlusion):** Ses kaynağı ile aranıza bir duvar girdiğinde ses aniden kesilmez, frekansları boğuklaşarak (low-pass filter) size ulaşmaya devam eder.
+### Mekân akustiği
 
-### 🔊 Dinamik Hoparlör Kümeleme (Speaker Clustering)
-Birden fazla hoparlörü yan yana koyduğunuzda mod bunu algılar ve bir **"Line Array" (Konser Hoparlör Dizilimi)** olarak çalıştırır. Sesi tek bir kaynaktan değil, birleştirilmiş akustik bir güç alanından duyarsınız.
+- Her prob için 1000 yönlü Spherical Fibonacci ışın taraması
+- Blok malzemelerine göre yansıma ve emilim hesabı
+- Hacim, yüzey alanı, açıklık ve enclosure analizi
+- Sabine tabanlı decay hesabı ve Tier 1-10 venue profilleri
+- Açık ve yarı açık mekânlarda dinamik reverb azaltma
+- Birden fazla emitter grubu ve iki fiziksel room bus arasında yumuşak geçiş
+- Sound Tablet üzerinde reverb heatmap ve acoustic zone görünümü
 
-### 📊 Gerçek Zamanlı Peak Meter (Ses Dalga Analizi)
-Çalınan müziğin frekans ve şiddet analizlerini (Peak Metering) saniyesi saniyesine yaparak, ekranınızdaki GUI'lere (Amplifikatör ekranlarına) veya oyun içi led bloklarına veri aktarır.
+### Oynatma ve dayanıklılık
 
----
+- Yerel OGG/PCM ve internet ses kaynakları
+- YouTube, SoundCloud ve doğrudan HTTP(S) kaynakları için LavaPlayer entegrasyonu
+- Birden fazla session ve multiplayer senkronizasyonu
+- Ses cihazı çıkarılıp takıldığında oyun yeniden başlatılmadan motoru kurtarma
+- Replay Mod için opsiyonel pause/resume ve cleanup entegrasyonu
+- Eski decode görevlerini ve stale callback'leri engelleyen request/cancellation sistemi
 
-## ⚙️ Nasıl Çalışır?
+## Kurulum
 
-ECHO Sound Engine, oyunun standart arka plan döngüsünden (main thread) bağımsız olarak, kendi `ScheduledExecutorService` altyapısında eşzamanlı (async) olarak çalışır.
+1. Fabric Loader ve Fabric API'yi Minecraft 1.20.1 için kurun.
+2. Dağıtım JAR'ını `.minecraft/mods` klasörüne yerleştirin.
+3. Oyunu Fabric profiliyle başlatın.
 
-1. **Ses Kaynağı:** LavaPlayer veya yerel OGG dosyası üzerinden ses yakalanır (`InternetAudioLoader` / `OggDecoder`).
-2. **Bufferlama:** Sinyal `AudioStreamBuffer` içine alınarak paket kayıpları (lag) engellenir.
-3. **Tarama:** `AdvancedAcousticScanner` saniyede yüzlerce hesaplama yaparak odanızın hacmini (Volume), yüzey alanını (Surface Area) ve ortalama ses emilim katsayısını hesaplar.
-4. **DSP Boru Hattı:** `StreamDSPPipeline` ve `AudioEngine` sesin üzerine HRTF, Occlusion (Duvar arkası boğuklaşma) ve hesaplanan Reverb efektlerini uygular.
-5. **Çıkış:** Kusursuz, stüdyo kalitesinde ve Minecraft ortamıyla fiziksel olarak %100 uyumlu bir ses duyarsınız!
+İnternet ses kütüphaneleri mod JAR'ına gömülüdür; ayrıca LavaPlayer kurmanız
+gerekmez.
 
----
+## Kullanım
 
-## 🛠️ Teknik Altyapı ve Bağımlılıklar
+1. Creative envanterindeki `ECHO Sound Engine` sekmesinden hoparlörleri ve
+   `Sound Tablet` öğesini alın.
+2. Subwoofer, Studio Monitor ve Line Array bloklarını istediğiniz düzende
+   yerleştirin.
+3. Bir hoparlöre sağ tıklayarak kanal, sample shift ve desteklenen bloklarda
+   dikey açı ayarlarını yapın.
+4. Sound Tablet'i kullanarak yakındaki kurulumları açın.
+5. Bir parça adı arayın veya desteklenen bir URL yapıştırın; güç, input gain,
+   mixer ve EQ ayarlarını yaptıktan sonra oynatmayı başlatın.
 
-* **Platform:** Fabric Modloader
-* **Ses Kütüphaneleri:** OpenAL (AL10, AL11, EXTEfx), LavaPlayer, JLayer.
-* **Network:** Özel C2S ve S2C (Client-to-Server, Server-to-Client) paket yapısı, boyutlar arası (Dimension) stabil senkronizasyon.
+Tablet, oyuncunun 500 blok çevresindeki uygun hoparlörleri tarar. Heatmap görünümü
+gerçek venue taramasında kullanılan akustik sonuçları gösterir.
 
----
+## Canlı tuning
 
-## 💡 Kurulum ve Kullanım
+İlk çalıştırmada aşağıdaki dosya otomatik oluşturulur:
 
-*(Bu bölüme GitHub yayınından sonra indirme linkleri ve oyun içi komut/blok kullanımları eklenebilir)*
+```text
+.minecraft/config/audiophilecraft_tuning.json
+```
 
----
+Dosya oyun açıkken düzenlenebilir ve yaklaşık bir saniye içinde yeniden yüklenir.
+Config migration sistemi eski varsayılanları günceller, kullanıcının değiştirdiği
+değerleri korur ve sürüm geçişinde `.bak` yedeği oluşturur.
 
-<p align="center">
-  <i>ECHO Sound Engine - Sesin fiziksel sınırlarını aşın.</i>
-</p>
+## Geliştirme
+
+```powershell
+.\gradlew.bat spotlessApply
+.\gradlew.bat test
+.\gradlew.bat build
+```
+
+Test paketi; stream buffer sınırlarını, speaker gruplamayı, reverb profil
+benzerliğini, venue tier eşiklerini ve config migration/yedek davranışını kapsar.
+Detaylı sahiplik ve lifecycle açıklamaları [ARCHITECTURE.md](ARCHITECTURE.md)
+dosyasındadır.
+
+## Lisans
+
+ECHO Sound Engine, [MIT Lisansı](LICENSE) ile yayımlanır.
+
+Copyright (c) 2026 Burak
