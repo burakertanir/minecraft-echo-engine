@@ -148,28 +148,25 @@ public class AudioStreamBuffer {
 
         // Streaming: interleaved source
         if (pcmInterleaved != null) {
+            int availableFrames = Math.min(Math.max(0, decodedLength), pcmInterleaved.length / 2);
+            if (framePos >= availableFrames) return 0;
             int pos = (int) framePos;
-            if (pos >= 0 && pos < decodedLength) {
-                int idx = pos * 2;
-                short l = pcmInterleaved[idx];
-                short r = pcmInterleaved[idx + 1];
-                if (channelMask == 0) return (short) ((l + r + 1) >> 1);
-                return channelMask == 1 ? l : r;
-            }
-            return 0;
+            int idx = pos * 2;
+            short l = pcmInterleaved[idx];
+            short r = pcmInterleaved[idx + 1];
+            if (channelMask == 0) return (short) ((l + r + 1) >> 1);
+            return channelMask == 1 ? l : r;
         }
 
         // Legacy: pre-decoded ShortBuffer
         if (fullPcmData != null) {
-            int maxFrames = fullPcmData.limit() / 2;
+            long maxFrames = fullPcmData.limit() / 2L;
+            if (framePos >= maxFrames) return 0;
             int pos = (int) framePos;
-            if (pos >= 0 && pos < maxFrames) {
-                int l = fullPcmData.get(pos * 2);
-                int r = fullPcmData.get(pos * 2 + 1);
-                if (channelMask == 0) return (short) ((l + r + 1) >> 1);
-                return (short) (channelMask == 1 ? l : r);
-            }
-            return 0;
+            int l = fullPcmData.get(pos * 2);
+            int r = fullPcmData.get(pos * 2 + 1);
+            if (channelMask == 0) return (short) ((l + r + 1) >> 1);
+            return (short) (channelMask == 1 ? l : r);
         }
 
         return 0;

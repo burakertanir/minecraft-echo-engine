@@ -3,6 +3,7 @@ package com.audiophilecraft.sound;
 import com.audiophilecraft.block.LineArrayBlock;
 import com.audiophilecraft.block.MidRangeBlock;
 import com.audiophilecraft.block.SubwooferBlock;
+import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Comparator;
@@ -30,23 +31,30 @@ public class SpeakerClusterer {
         Collections.sort(sorted, Comparator.comparingLong(BlockPos::asLong));
 
         List<List<BlockPos>> clusters = new ArrayList<>();
-        for (BlockPos pos : sorted) {
-            boolean added = false;
-            for (List<BlockPos> cluster : clusters) {
-                for (BlockPos cPos : cluster) {
-                    if (cPos.getSquaredDistance(pos) <= CLUSTER_DISTANCE_SQ) {
-                        cluster.add(pos);
-                        added = true;
-                        break;
+        boolean[] visited = new boolean[sorted.size()];
+        for (int start = 0; start < sorted.size(); start++) {
+            if (visited[start]) continue;
+
+            List<BlockPos> cluster = new ArrayList<>();
+            ArrayDeque<Integer> pending = new ArrayDeque<>();
+            visited[start] = true;
+            pending.add(start);
+
+            while (!pending.isEmpty()) {
+                int currentIndex = pending.removeFirst();
+                BlockPos current = sorted.get(currentIndex);
+                cluster.add(current);
+
+                for (int candidateIndex = 0; candidateIndex < sorted.size(); candidateIndex++) {
+                    if (visited[candidateIndex]) continue;
+                    if (current.getSquaredDistance(sorted.get(candidateIndex)) <= CLUSTER_DISTANCE_SQ) {
+                        visited[candidateIndex] = true;
+                        pending.addLast(candidateIndex);
                     }
                 }
-                if (added) break;
             }
-            if (!added) {
-                List<BlockPos> newCluster = new ArrayList<>();
-                newCluster.add(pos);
-                clusters.add(newCluster);
-            }
+            cluster.sort(Comparator.comparingLong(BlockPos::asLong));
+            clusters.add(cluster);
         }
         return clusters;
     }

@@ -65,6 +65,10 @@ dependencies {
 	include 'org.mozilla:rhino:1.7.14'
 	implementation 'org.mozilla:rhino-engine:1.7.14'
 	include 'org.mozilla:rhino-engine:1.7.14'
+
+	// Fast unit tests for pure audio, clustering, and acoustic calculations.
+	testImplementation platform('org.junit:junit-bom:5.10.2')
+	testImplementation 'org.junit.jupiter:junit-jupiter'
 }
 
 processResources {
@@ -77,6 +81,36 @@ processResources {
 
 tasks.withType(JavaCompile).configureEach {
 	it.options.release = 17
+}
+
+tasks.withType(Test).configureEach {
+	useJUnitPlatform()
+}
+
+// Gradle 8.6's Windows test worker can corrupt non-ASCII project paths in its
+// generated classpath argument file. A manifest classpath keeps those paths
+// URL-encoded while leaving normal project paths untouched.
+def needsTestClasspathJar = System.getProperty('os.name').toLowerCase().contains('windows') &&
+	!rootDir.absolutePath.matches('\\p{ASCII}*')
+if (needsTestClasspathJar) {
+	def testClasspathJar = tasks.register('testClasspathJar', Jar) {
+		dependsOn tasks.named('testClasses')
+		destinationDirectory = new File(gradle.gradleUserHomeDir, 'caches/audiophilecraft-test-pathing')
+		archiveFileName = "${rootProject.name}-test-classpath.jar"
+		outputs.upToDateWhen { false }
+		doFirst {
+			manifest.attributes('Class-Path': sourceSets.test.runtimeClasspath.files
+				.collect { it.toURI().toASCIIString() }
+				.join(' '))
+		}
+	}
+
+	tasks.withType(Test).configureEach {
+		dependsOn testClasspathJar
+		doFirst {
+			classpath = files(testClasspathJar.get().archiveFile.get().asFile)
+		}
+	}
 }
 
 java {

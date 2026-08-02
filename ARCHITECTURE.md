@@ -856,8 +856,9 @@ edilecek alanlari gosterir.
 2. Venue world taramasi thread-safe olmak icin client ana akisinda. En fazla 8 x
    1000 ray ayni geciste frame hitch uretebilir. Gelecekte snapshot/chunk-safe
    saf veri katmani dusunulebilir.
-3. Projede otomatik Java test source'u yok; `gradle test` su an daha cok derleme
-   ve task graph dogrulamasi yapar. Kritik saf hesaplar unit test kazanmali.
+3. JUnit 5 altyapisi vardir. Ilk regresyon paketi speaker gruplama,
+   `AudioStreamBuffer` kanal/sinir davranisi ve reverb profil benzerligini
+   kapsar. Venue tier hesaplari ile config migration henuz testlenmelidir.
 4. Bazi OpenAL hata yollarinda hala `System.err.println` bulunuyor. Bunlar
    SLF4J ve rate-limited diagnostige tasinabilir.
 5. `AudioPlaybackController` ve `AudioRuntimeController` buyuk ama gercek
@@ -943,11 +944,11 @@ Mevcut kararlar:
 
 ```text
 Yayin guvenligi
-|-- Saf hesap unit testleri
-|   |-- ReverbBusAllocator profile distance/secim
+|-- Saf hesap unit testleri (ilk paket tamamlandi)
+|   |-- [x] ReverbBusAllocator profile distance/benzerlik
 |   |-- VenuePresetCalculator tier sinirlari
-|   |-- SpeakerClusterer transitive gruplama
-|   |-- AudioStreamBuffer channel/seek/uzun frame konumlari
+|   |-- [x] SpeakerClusterer transitive gruplama
+|   |-- [x] AudioStreamBuffer channel/seek/uzun frame konumlari
 |   `-- Config migration custom-value korumasi
 |-- Diagnostik
 |   |-- Kalan System.err/System.out -> SLF4J
