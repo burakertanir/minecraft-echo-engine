@@ -222,7 +222,8 @@ final class AmplifierPlaybackPanel {
             urlField.setFocused(false);
             return true;
         }
-        return urlField.keyPressed(keyCode, scanCode, modifiers);
+        urlField.keyPressed(keyCode, scanCode, modifiers);
+        return true;
     }
 
     void updateSpeakerPower(float power) {
