@@ -1,5 +1,6 @@
 package com.audiophilecraft.client.screen;
 
+import com.audiophilecraft.AudiophileCraft;
 import com.audiophilecraft.client.util.YouTubeThumbnailCache;
 import com.mojang.blaze3d.systems.RenderSystem;
 import java.awt.Color;
@@ -190,7 +191,7 @@ final class AmplifierTheme {
                             resetTargetColors();
                         }
                     } catch (Exception exception) {
-                        exception.printStackTrace();
+                        AudiophileCraft.LOGGER.warn("Failed to derive tablet theme from YouTube thumbnail.", exception);
                     } finally {
                         fetchingThumbnail = false;
                     }

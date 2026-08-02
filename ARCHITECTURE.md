@@ -856,11 +856,12 @@ edilecek alanlari gosterir.
 2. Venue world taramasi thread-safe olmak icin client ana akisinda. En fazla 8 x
    1000 ray ayni geciste frame hitch uretebilir. Gelecekte snapshot/chunk-safe
    saf veri katmani dusunulebilir.
-3. JUnit 5 altyapisi vardir. Ilk regresyon paketi speaker gruplama,
-   `AudioStreamBuffer` kanal/sinir davranisi ve reverb profil benzerligini
-   kapsar. Venue tier hesaplari ile config migration henuz testlenmelidir.
-4. Bazi OpenAL hata yollarinda hala `System.err.println` bulunuyor. Bunlar
-   SLF4J ve rate-limited diagnostige tasinabilir.
+3. JUnit 5 altyapisi ve 34 saf regresyon testi vardir. Speaker gruplama,
+   `AudioStreamBuffer`, reverb profil benzerligi, venue tier sinirlari ve config
+   migration dosya/yedek davranisi kapsanir.
+4. Dogrudan `System.out`, `System.err` ve `printStackTrace` cagrilari SLF4J'ye
+   tasindi. Yuksek frekansli audio-thread hatasi rate-limited loglanir. OpenAL
+   mesajlarina daha ayrintili session/source baglami eklenebilir.
 5. `AudioPlaybackController` ve `AudioRuntimeController` buyuk ama gercek
    workflow sinirlarina sahip. Yalnizca satir sayisi icin bolunmemeli.
 6. `PlaybackSession.playTrack()` global stop davranisi yeni multi-session kodu
@@ -944,14 +945,14 @@ Mevcut kararlar:
 
 ```text
 Yayin guvenligi
-|-- Saf hesap unit testleri (ilk paket tamamlandi)
+|-- Saf hesap unit testleri (temel paket tamamlandi)
 |   |-- [x] ReverbBusAllocator profile distance/benzerlik
-|   |-- VenuePresetCalculator tier sinirlari
+|   |-- [x] VenuePresetCalculator tier sinirlari
 |   |-- [x] SpeakerClusterer transitive gruplama
 |   |-- [x] AudioStreamBuffer channel/seek/uzun frame konumlari
-|   `-- Config migration custom-value korumasi
+|   `-- [x] Config migration custom-value/yedek korumasi
 |-- Diagnostik
-|   |-- Kalan System.err/System.out -> SLF4J
+|   |-- [x] System.err/System.out/printStackTrace -> SLF4J
 |   `-- OpenAL error mesajlarina session/source baglami
 |-- Performans
 |   |-- Venue scan frame suresi olcumu

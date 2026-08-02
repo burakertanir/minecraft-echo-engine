@@ -1,5 +1,6 @@
 package com.audiophilecraft.registry;
 
+import com.audiophilecraft.AudiophileCraft;
 import com.audiophilecraft.item.AmplifierTabletItem;
 import net.fabricmc.fabric.api.item.v1.FabricItemSettings;
 import net.minecraft.item.Item;
@@ -15,6 +16,6 @@ public class ModItems {
             new AmplifierTabletItem(new FabricItemSettings().maxCount(1)));
 
     public static void registerModItems() {
-        System.out.println("Registering Items for AudiophileCraft");
+        AudiophileCraft.LOGGER.debug("Registered AudiophileCraft items.");
     }
 }

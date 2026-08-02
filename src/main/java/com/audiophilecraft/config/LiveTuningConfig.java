@@ -327,6 +327,11 @@ public class LiveTuningConfig {
 
     private LiveTuningConfig() {}
 
+    /** Creates an isolated config containing the current built-in defaults. */
+    public static LiveTuningConfig createDefaults() {
+        return new LiveTuningConfig();
+    }
+
     /** Quick accessor: LiveTuningConfig.get().paramName */
     public static LiveTuningConfig get() {
         if (INSTANCE == null) {
@@ -372,7 +377,7 @@ public class LiveTuningConfig {
                 loadFromFile();
             }
         } catch (Exception e) {
-            System.err.println("[LiveTuning] Reload check failed: " + e.getMessage());
+            AudiophileCraft.LOGGER.error("Live tuning reload check failed.", e);
         }
     }
 
@@ -381,36 +386,10 @@ public class LiveTuningConfig {
      */
     private static void loadFromFile() {
         try {
-            // Read all lines, strip // comments, then parse as JSON
-            String raw = Files.readString(configPath);
-            String cleaned = raw.lines()
-                    .map(line -> {
-                        // Remove // comments but preserve strings containing //
-                        int commentIdx = -1;
-                        boolean inString = false;
-                        for (int i = 0; i < line.length() - 1; i++) {
-                            char c = line.charAt(i);
-                            if (c == '"') inString = !inString;
-                            if (!inString && c == '/' && line.charAt(i + 1) == '/') {
-                                commentIdx = i;
-                                break;
-                            }
-                        }
-                        return commentIdx >= 0 ? line.substring(0, commentIdx) : line;
-                    })
-                    .collect(Collectors.joining("\n"));
-
-            JsonObject sourceJson = JsonParser.parseString(cleaned).getAsJsonObject();
-            int sourceVersion = readConfigVersion(sourceJson);
-            LiveTuningConfig loadedConfig = GSON.fromJson(sourceJson, LiveTuningConfig.class);
-            if (loadedConfig == null) {
-                loadedConfig = new LiveTuningConfig();
-            }
-
-            boolean migrated = migrateConfig(loadedConfig, sourceJson, sourceVersion);
-            if (migrated) {
-                createMigrationBackup(sourceVersion);
-            }
+            MigrationResult migration = readAndMigrate(configPath);
+            LiveTuningConfig loadedConfig = migration.config();
+            int sourceVersion = migration.sourceVersion();
+            boolean migrated = migration.migrated();
 
             INSTANCE = loadedConfig;
             if (migrated) {
@@ -424,11 +403,46 @@ public class LiveTuningConfig {
             lastFileSize = Files.size(configPath);
             reloadGeneration++;
         } catch (Exception e) {
-            System.err.println("[LiveTuning] Failed to load config: " + e.getMessage());
+            AudiophileCraft.LOGGER.error("Failed to load live tuning config from {}.", configPath, e);
             if (INSTANCE == null) {
                 INSTANCE = new LiveTuningConfig();
             }
         }
+    }
+
+    static MigrationResult readAndMigrate(Path sourcePath) throws IOException {
+        String raw = Files.readString(sourcePath);
+        String cleaned = stripLineComments(raw);
+        JsonObject sourceJson = JsonParser.parseString(cleaned).getAsJsonObject();
+        int sourceVersion = readConfigVersion(sourceJson);
+        LiveTuningConfig loadedConfig = GSON.fromJson(sourceJson, LiveTuningConfig.class);
+        if (loadedConfig == null) {
+            loadedConfig = new LiveTuningConfig();
+        }
+
+        boolean migrated = migrateConfig(loadedConfig, sourceJson, sourceVersion);
+        if (migrated) {
+            createMigrationBackup(sourcePath, sourceVersion);
+        }
+        return new MigrationResult(loadedConfig, sourceVersion, migrated);
+    }
+
+    private static String stripLineComments(String raw) {
+        return raw.lines()
+                .map(line -> {
+                    int commentIdx = -1;
+                    boolean inString = false;
+                    for (int i = 0; i < line.length() - 1; i++) {
+                        char c = line.charAt(i);
+                        if (c == '"') inString = !inString;
+                        if (!inString && c == '/' && line.charAt(i + 1) == '/') {
+                            commentIdx = i;
+                            break;
+                        }
+                    }
+                    return commentIdx >= 0 ? line.substring(0, commentIdx) : line;
+                })
+                .collect(Collectors.joining("\n"));
     }
 
     private static int readConfigVersion(JsonObject sourceJson) {
@@ -517,13 +531,15 @@ public class LiveTuningConfig {
         }
     }
 
-    private static void createMigrationBackup(int sourceVersion) throws IOException {
-        Path backupPath = configPath.resolveSibling(configPath.getFileName() + ".v" + sourceVersion + ".bak");
+    private static void createMigrationBackup(Path sourcePath, int sourceVersion) throws IOException {
+        Path backupPath = sourcePath.resolveSibling(sourcePath.getFileName() + ".v" + sourceVersion + ".bak");
         if (!Files.exists(backupPath)) {
-            Files.copy(configPath, backupPath);
+            Files.copy(sourcePath, backupPath);
             AudiophileCraft.LOGGER.info("Backed up tuning config to {}.", backupPath);
         }
     }
+
+    record MigrationResult(LiveTuningConfig config, int sourceVersion, boolean migrated) {}
 
     /**
      * Save to file with beautiful Turkish comments explaining every parameter.
@@ -1293,7 +1309,7 @@ public class LiveTuningConfig {
             lastFileSize = Files.size(configPath);
             return true;
         } catch (Exception e) {
-            System.err.println("[LiveTuning] Failed to save config: " + e.getMessage());
+            AudiophileCraft.LOGGER.error("Failed to save live tuning config to {}.", configPath, e);
             return false;
         }
     }

@@ -4,6 +4,7 @@ import static org.lwjgl.openal.AL10.*;
 import static org.lwjgl.openal.AL11.*;
 import static org.lwjgl.openal.EXTEfx.*;
 
+import com.audiophilecraft.AudiophileCraft;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Comparator;
@@ -110,7 +111,7 @@ final class AudioPlaybackController {
             prepareStreamBuffers(session, trackId);
             finalizePlaybackPipeline(sessionUUID, speakers, power, inputGain, true);
         } catch (Exception e) {
-            e.printStackTrace();
+            AudiophileCraft.LOGGER.error("Failed to start local track {} for session {}.", trackId, sessionUUID, e);
         }
     }
 
@@ -173,12 +174,12 @@ final class AudioPlaybackController {
                     int sampleRate,
                     String title) {
                 if (!isActiveUrlRequest(sessionUUID, requestId)) {
-                    System.out.println(
-                            "AudioEngine: Ignoring stale URL request #" + requestId + " for session " + sessionUUID);
+                    AudiophileCraft.LOGGER.debug(
+                            "Ignoring stale URL request {} for session {}.", requestId, sessionUUID);
                     return;
                 }
 
-                System.out.println("AudioEngine: URL request #" + requestId + " ready for session " + sessionUUID);
+                AudiophileCraft.LOGGER.debug("URL request {} is ready for session {}.", requestId, sessionUUID);
 
                 PlaybackSession session = sessions.computeIfAbsent(sessionUUID, key -> new PlaybackSession(engine));
                 engine.stopSessionContents(session);
@@ -213,13 +214,13 @@ final class AudioPlaybackController {
                     AudioStreamBuffer buffer = session.getStreamBuffers().get(AudioEngine.TYPE_NORMAL);
                     if (buffer != null) buffer.completeStreaming(totalDecodedFrames);
                 }
-                System.out.println("AudioEngine: URL request #" + requestId + " completed for session " + sessionUUID);
+                AudiophileCraft.LOGGER.debug("URL request {} completed for session {}.", requestId, sessionUUID);
             }
 
             @Override
             public void onFailed(long requestId, String reason) {
                 if (!activeUrlRequestIds.remove(sessionUUID, requestId)) return;
-                System.err.println("AudioEngine: URL request #" + requestId + " failed: " + reason);
+                AudiophileCraft.LOGGER.warn("URL request {} failed for session {}: {}", requestId, sessionUUID, reason);
                 MinecraftClient.getInstance().execute(() -> {
                     if (MinecraftClient.getInstance().player != null) {
                         MinecraftClient.getInstance()
@@ -233,7 +234,7 @@ final class AudioPlaybackController {
             }
         });
         activeUrlRequestIds.put(sessionUUID, startedRequestId);
-        System.out.println("AudioEngine: URL request #" + startedRequestId + " started for session " + sessionUUID);
+        AudiophileCraft.LOGGER.debug("URL request {} started for session {}.", startedRequestId, sessionUUID);
     }
 
     void createSourcesFromClusters(
@@ -300,10 +301,11 @@ final class AudioPlaybackController {
                 int sourceId = alGenSources();
                 int error = alGetError();
                 if (error != AL_NO_ERROR) {
-                    System.err.println("AudioEngine: OPENAL SOURCE LIMIT HIT! Failed at speaker #"
-                            + (session.getStreamSources().size() + 1) + " of "
-                            + clusters.stream().mapToInt(List::size).sum()
-                            + " (error=0x" + Integer.toHexString(error) + ")");
+                    AudiophileCraft.LOGGER.error(
+                            "OpenAL source allocation failed at speaker {} of {} (error=0x{}).",
+                            session.getStreamSources().size() + 1,
+                            clusters.stream().mapToInt(List::size).sum(),
+                            Integer.toHexString(error));
                     for (StreamSource source : session.getStreamSources()) {
                         source.cleanup();
                     }
@@ -363,7 +365,7 @@ final class AudioPlaybackController {
                                 echoSendFilterId);
                     }
                 } catch (Exception e) {
-                    System.err.println("AudioEngine: EFX filter/send setup failed: " + e.getMessage());
+                    AudiophileCraft.LOGGER.warn("Failed to configure EFX filters/sends for speaker {}.", position, e);
                 }
 
                 StreamSource source = new StreamSource(
@@ -484,13 +486,13 @@ final class AudioPlaybackController {
                                 try {
                                     return effects.scanVenue(world, clusterCenters);
                                 } catch (Exception e) {
-                                    System.err.println("Venue scan crash: " + e.getMessage());
+                                    AudiophileCraft.LOGGER.error("Initial venue scan failed.", e);
                                     return null;
                                 }
                             },
                             MinecraftClient.getInstance()::execute)
                     .exceptionally(exception -> {
-                        System.err.println("Venue scan future failed: " + exception.getMessage());
+                        AudiophileCraft.LOGGER.error("Initial venue scan task failed.", exception);
                         return null;
                     })
                     .thenAcceptAsync(
@@ -557,13 +559,13 @@ final class AudioPlaybackController {
                             try {
                                 return effects.scanVenue(world, clusterCenters);
                             } catch (Exception e) {
-                                System.err.println("Dynamic venue scan crash: " + e.getMessage());
+                                AudiophileCraft.LOGGER.error("Dynamic venue scan failed.", e);
                                 return null;
                             }
                         },
                         MinecraftClient.getInstance()::execute)
                 .exceptionally(exception -> {
-                    System.err.println("Dynamic venue scan future failed: " + exception.getMessage());
+                    AudiophileCraft.LOGGER.error("Dynamic venue scan task failed.", exception);
                     return null;
                 })
                 .thenAcceptAsync(
@@ -777,7 +779,7 @@ final class AudioPlaybackController {
 
             finalizePlaybackPipeline(sessionUUID, captureSpeakerData(speakers), power, inputGain, true);
         } catch (Exception e) {
-            e.printStackTrace();
+            AudiophileCraft.LOGGER.error("Failed to start PCM playback for session {}.", sessionUUID, e);
         }
     }
 

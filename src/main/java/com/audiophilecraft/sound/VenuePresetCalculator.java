@@ -5,7 +5,11 @@ import net.minecraft.util.math.Vec3d;
 
 final class VenuePresetCalculator {
     AdvancedAcousticScanner.VenuePreset calculate(AdvancedAcousticScanner.VenueDescriptor descriptor, Vec3d probePos) {
-        LiveTuningConfig cfg = LiveTuningConfig.get();
+        return calculate(descriptor, probePos, LiveTuningConfig.get());
+    }
+
+    AdvancedAcousticScanner.VenuePreset calculate(
+            AdvancedAcousticScanner.VenueDescriptor descriptor, Vec3d probePos, LiveTuningConfig cfg) {
         float vAvgAbsorption = descriptor.avgAbsorption;
         float vMeanDist = descriptor.scale;
         float vEnclosure = descriptor.enclosure;

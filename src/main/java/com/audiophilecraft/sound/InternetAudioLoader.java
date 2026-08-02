@@ -196,13 +196,13 @@ public class InternetAudioLoader {
 
             @Override
             public void noMatches() {
-                System.err.println("InternetAudioLoader: No matches found for: " + url);
+                AudiophileCraft.LOGGER.warn("No internet audio matches found for {}.", url);
                 callback.onFailed("No matches found for: " + url);
             }
 
             @Override
             public void loadFailed(FriendlyException exception) {
-                System.err.println("InternetAudioLoader: Load failed: " + exception.getMessage());
+                AudiophileCraft.LOGGER.warn("Internet audio load failed for {}.", url, exception);
                 callback.onFailed("Load failed: " + exception.getMessage());
             }
         });
@@ -214,7 +214,7 @@ public class InternetAudioLoader {
         boolean cancelled = state.cancel();
         if (cancelled) {
             streamingRequests.remove(requestId, state);
-            System.out.println("InternetAudioLoader: URL request #" + requestId + " cancelled");
+            AudiophileCraft.LOGGER.debug("Cancelled internet audio request {}.", requestId);
         }
         return cancelled;
     }
@@ -352,8 +352,7 @@ public class InternetAudioLoader {
             dispatchIfActive(state, () -> callback.onComplete(requestId, completedFrames));
         } catch (Throwable e) {
             if (!state.isCancelled()) {
-                System.err.println("CRITICAL DECODE ERROR: " + e.toString());
-                e.printStackTrace();
+                AudiophileCraft.LOGGER.error("Critical streaming decode failure for request {}.", requestId, e);
                 dispatchIfActive(state, () -> callback.onFailed(requestId, e.toString()));
             }
         } finally {
@@ -489,8 +488,7 @@ public class InternetAudioLoader {
             callback.onTrackLoaded(stereoData, sampleRate, title);
 
         } catch (Throwable e) {
-            System.err.println("InternetAudioLoader: Decode error: " + e.toString());
-            e.printStackTrace();
+            AudiophileCraft.LOGGER.error("Legacy internet audio decode failed.", e);
             callback.onFailed("Decode error: " + e.toString());
         }
     }

@@ -3,6 +3,7 @@ package com.audiophilecraft.sound;
 import static org.lwjgl.openal.AL10.*;
 import static org.lwjgl.openal.EXTEfx.*;
 
+import com.audiophilecraft.AudiophileCraft;
 import java.util.List;
 import net.minecraft.util.math.BlockPos;
 import net.minecraft.util.math.Vec3d;
@@ -110,23 +111,23 @@ final class AudioEffectsController {
         try {
             alDistanceModel(AL_NONE);
             if (!roomBuses[PRIMARY_ROOM_BUS].initialize()) {
-                System.err.println("AudioEngine: Failed to create primary room reverb bus");
+                AudiophileCraft.LOGGER.error("Failed to create the primary room reverb bus.");
                 cleanupNativeEffects();
                 return;
             }
 
             initializeSlapback();
             if (slapbackAuxSlotId == 0) {
-                System.err.println("AudioEngine: Slapback effect unavailable");
+                AudiophileCraft.LOGGER.warn("Slapback effect is unavailable on the active audio device.");
             }
 
             if (!roomBuses[SECONDARY_ROOM_BUS].initialize()) {
-                System.err.println("AudioEngine: Secondary room reverb unavailable; using one room bus");
+                AudiophileCraft.LOGGER.warn("Secondary room reverb is unavailable; using one room bus.");
             }
 
             initialized = true;
         } catch (Exception e) {
-            System.err.println("AudioEngine: EFX init failed: " + e.getMessage());
+            AudiophileCraft.LOGGER.error("Failed to initialize OpenAL EFX.", e);
             cleanupNativeEffects();
         }
     }

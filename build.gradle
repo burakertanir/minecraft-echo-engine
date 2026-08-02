@@ -83,8 +83,14 @@ tasks.withType(JavaCompile).configureEach {
 	it.options.release = 17
 }
 
+def unitTestWorkingDirectory = layout.buildDirectory.dir('test-run')
 tasks.withType(Test).configureEach {
 	useJUnitPlatform()
+	doFirst {
+		def directory = unitTestWorkingDirectory.get().asFile
+		directory.mkdirs()
+		workingDir = directory
+	}
 }
 
 // Gradle 8.6's Windows test worker can corrupt non-ASCII project paths in its

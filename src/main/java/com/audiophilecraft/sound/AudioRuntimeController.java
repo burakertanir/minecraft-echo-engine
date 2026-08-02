@@ -1,5 +1,6 @@
 package com.audiophilecraft.sound;
 
+import com.audiophilecraft.AudiophileCraft;
 import java.nio.IntBuffer;
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -30,6 +31,7 @@ import org.lwjgl.openal.ALCapabilities;
  * synchronization contract.
  */
 final class AudioRuntimeController {
+    private static final long BACKGROUND_ERROR_LOG_INTERVAL_NANOS = 5_000_000_000L;
     private static final int ECHO_GROUP_COUNT = 9;
     private static final float ECHO_NORMALIZATION_EPSILON = 0.000001f;
     private static final float ECHO_NORMALIZATION_RECOVERY = 0.25f;
@@ -48,6 +50,7 @@ final class AudioRuntimeController {
     private volatile Vec3d smoothedListenerPosition = Vec3d.ZERO;
     private volatile boolean externalPlaybackPaused;
     private ScheduledExecutorService audioThread;
+    private long lastBackgroundErrorLogNanos;
     private long lastTickTime = System.nanoTime();
 
     AudioRuntimeController(
@@ -472,8 +475,7 @@ final class AudioRuntimeController {
             try {
                 AL.setCurrentThread(capabilities);
             } catch (Exception exception) {
-                System.err.println(
-                        "AudioEngine: Failed to propagate AL caps to audio thread: " + exception.getMessage());
+                AudiophileCraft.LOGGER.error("Failed to propagate OpenAL capabilities to the audio thread.", exception);
             }
         });
         audioThread.scheduleWithFixedDelay(this::processAudioBackground, 0, 5, TimeUnit.MILLISECONDS);
@@ -493,8 +495,12 @@ final class AudioRuntimeController {
                 feedSources(sessionSnapshot, currentPosition);
                 restartUnderrunSources();
             } catch (Exception exception) {
-                System.err.println("[AudioEngine] processAudioBackground failed: " + exception.getMessage());
-                exception.printStackTrace();
+                long nowNanos = System.nanoTime();
+                if (lastBackgroundErrorLogNanos == 0L
+                        || nowNanos - lastBackgroundErrorLogNanos >= BACKGROUND_ERROR_LOG_INTERVAL_NANOS) {
+                    lastBackgroundErrorLogNanos = nowNanos;
+                    AudiophileCraft.LOGGER.error("Audio background processing failed.", exception);
+                }
             }
         }
     }

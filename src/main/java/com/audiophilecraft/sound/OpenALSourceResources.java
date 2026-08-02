@@ -26,6 +26,7 @@ import static org.lwjgl.openal.EXTEfx.AL_LOWPASS_GAINHF;
 import static org.lwjgl.openal.EXTEfx.alDeleteFilters;
 import static org.lwjgl.openal.EXTEfx.alFilterf;
 
+import com.audiophilecraft.AudiophileCraft;
 import net.minecraft.util.math.BlockPos;
 import net.minecraft.util.math.Vec3d;
 import org.lwjgl.openal.AL11;
@@ -132,7 +133,7 @@ final class OpenALSourceResources {
             AL11.alSource3i(sourceId, AL_AUXILIARY_SEND_FILTER, 0, 0, AL_FILTER_NULL);
             AL11.alSource3i(sourceId, AL_AUXILIARY_SEND_FILTER, 0, 1, AL_FILTER_NULL);
         } catch (Exception exception) {
-            System.err.println("StreamSource: Failed to detach filters/sends: " + exception.getMessage());
+            AudiophileCraft.LOGGER.warn("Failed to detach OpenAL filters/sends from source {}.", sourceId, exception);
         }
 
         alDeleteSources(sourceId);
@@ -150,7 +151,7 @@ final class OpenALSourceResources {
             if (roomSendFilterId != 0) alDeleteFilters(roomSendFilterId);
             if (echoSendFilterId != 0) alDeleteFilters(echoSendFilterId);
         } catch (Exception exception) {
-            System.err.println("StreamSource: Failed to delete filters: " + exception.getMessage());
+            AudiophileCraft.LOGGER.warn("Failed to delete OpenAL filters for source {}.", sourceId, exception);
         }
     }
 }

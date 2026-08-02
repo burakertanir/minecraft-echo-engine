@@ -1,5 +1,6 @@
 package com.audiophilecraft.util;
 
+import com.audiophilecraft.AudiophileCraft;
 import java.io.BufferedReader;
 import java.io.InputStreamReader;
 import java.net.HttpURLConnection;
@@ -96,7 +97,7 @@ public class YouTubeSearcher {
             }
 
         } catch (Exception e) {
-            e.printStackTrace();
+            AudiophileCraft.LOGGER.warn("YouTube search failed for query '{}'.", query, e);
         }
         return results;
     }

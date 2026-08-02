@@ -2,6 +2,7 @@ package com.audiophilecraft.sound;
 
 import static org.lwjgl.openal.AL10.*;
 
+import com.audiophilecraft.AudiophileCraft;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
@@ -387,7 +388,8 @@ public class PlaybackSession {
             engine.createSourcesFromClusters(this, clusters, counts, world, power, inputGain);
             engine.startPlaybackWithVenueScan(this, world, speakers, true);
         } catch (Exception e) {
-            e.printStackTrace();
+            AudiophileCraft.LOGGER.error(
+                    "Failed to rebuild playback session for track {} with {} speakers.", trackId, speakers.size(), e);
         }
     }
 }

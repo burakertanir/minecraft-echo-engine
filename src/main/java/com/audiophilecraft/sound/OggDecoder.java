@@ -2,6 +2,7 @@ package com.audiophilecraft.sound;
 
 import static org.lwjgl.openal.AL10.*;
 
+import com.audiophilecraft.AudiophileCraft;
 import java.nio.ByteBuffer;
 import java.nio.IntBuffer;
 import java.nio.ShortBuffer;
@@ -132,7 +133,7 @@ public class OggDecoder {
                     vorbisData.flip();
                 }
             } else {
-                System.err.println("AudiophileCraft: Resource not found: " + id);
+                AudiophileCraft.LOGGER.warn("OGG resource not found: {}.", id);
                 return null;
             }
 
@@ -141,7 +142,8 @@ public class OggDecoder {
                 handle = STBVorbis.stb_vorbis_open_memory(vorbisData, error, null);
 
                 if (handle == 0) {
-                    System.err.println("AudiophileCraft: Failed to open OGG stream: error=" + error.get(0));
+                    AudiophileCraft.LOGGER.error(
+                            "Failed to open OGG stream {} (error={}).", resourcePath, error.get(0));
                     return null;
                 }
 
@@ -151,7 +153,8 @@ public class OggDecoder {
                 int sampleRate = info.sample_rate();
                 int channels = info.channels();
                 if (channels != 1 && channels != 2) {
-                    System.err.println("AudiophileCraft: Unsupported OGG stream channel count: " + channels);
+                    AudiophileCraft.LOGGER.warn(
+                            "Unsupported OGG stream channel count {} for {}.", channels, resourcePath);
                     return null;
                 }
                 int totalSamples = STBVorbis.stb_vorbis_stream_length_in_samples(handle);
@@ -161,7 +164,7 @@ public class OggDecoder {
                 return decoder;
             }
         } catch (Exception e) {
-            e.printStackTrace();
+            AudiophileCraft.LOGGER.error("Failed to open streaming OGG resource {}.", resourcePath, e);
             return null;
         } finally {
             if (!ownershipTransferred) {
@@ -199,13 +202,13 @@ public class OggDecoder {
                     vorbisData.flip();
                 }
             } else {
-                System.err.println("AudiophileCraft: Resource not found: " + id);
+                AudiophileCraft.LOGGER.warn("OGG resource not found: {}.", id);
                 return null;
             }
 
             rawAudio = STBVorbis.stb_vorbis_decode_memory(vorbisData, channels, sampleRate);
             if (rawAudio == null) {
-                System.err.println("AudiophileCraft: Failed to decode Ogg: " + resourcePath);
+                AudiophileCraft.LOGGER.error("Failed to decode OGG resource {}.", resourcePath);
                 return null;
             }
 
@@ -228,7 +231,8 @@ public class OggDecoder {
                 resultBuffer.put(rawAudio.duplicate());
                 resultBuffer.flip();
             } else {
-                System.err.println("AudiophileCraft: Unsupported channel count: " + channelCount);
+                AudiophileCraft.LOGGER.warn(
+                        "Unsupported decoded OGG channel count {} for {}.", channelCount, resourcePath);
                 return null;
             }
 
@@ -240,7 +244,7 @@ public class OggDecoder {
             ownershipTransferred = true;
             return data;
         } catch (Exception e) {
-            e.printStackTrace();
+            AudiophileCraft.LOGGER.error("Failed to load OGG resource {}.", resourcePath, e);
             return null;
         } finally {
             if (!ownershipTransferred && resultBuffer != null) {

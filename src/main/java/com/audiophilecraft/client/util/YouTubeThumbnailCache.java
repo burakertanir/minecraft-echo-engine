@@ -1,5 +1,6 @@
 package com.audiophilecraft.client.util;
 
+import com.audiophilecraft.AudiophileCraft;
 import java.awt.image.BufferedImage;
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
@@ -168,14 +169,14 @@ public class YouTubeThumbnailCache {
                         cacheTime.put(videoId, System.currentTimeMillis());
                     }
                 } catch (Exception e) {
-                    e.printStackTrace();
+                    AudiophileCraft.LOGGER.warn("Failed to register YouTube thumbnail texture for {}.", videoId, e);
                 }
             });
 
             return original;
 
         } catch (Exception e) {
-            e.printStackTrace();
+            AudiophileCraft.LOGGER.warn("Failed to download or process YouTube thumbnail for {}.", videoId, e);
             return null;
         }
     }

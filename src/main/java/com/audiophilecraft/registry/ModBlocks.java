@@ -1,5 +1,6 @@
 package com.audiophilecraft.registry;
 
+import com.audiophilecraft.AudiophileCraft;
 import com.audiophilecraft.block.LineArrayBlock;
 import com.audiophilecraft.block.MidRangeBlock;
 import com.audiophilecraft.block.SubwooferBlock;
@@ -37,6 +38,6 @@ public class ModBlocks {
     }
 
     public static void registerModBlocks() {
-        System.out.println("Registering Blocks for AudiophileCraft");
+        AudiophileCraft.LOGGER.debug("Registered AudiophileCraft blocks.");
     }
 }
