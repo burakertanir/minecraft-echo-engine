@@ -294,7 +294,17 @@ public class LiveTuningConfig {
     public float reverb_send_far = 0.6f;
 
     // ============================================================================
-    // CATEGORY 10: SLAPBACK ECHO
+    // CATEGORY 10: SPEAKER HARMONICS
+    // ============================================================================
+    public float harmonics_master = 1.0f;
+    public float harmonics_powerInfluence = 0.8f;
+    public float harmonics_subAmount = 0.9f;
+    public float harmonics_midAmount = 0.4f;
+    public float harmonics_lineAmount = 0.6f;
+    public float harmonics_normalAmount = 0.012f;
+
+    // ============================================================================
+    // CATEGORY 11: SLAPBACK ECHO
     // ============================================================================
     public float echo_delay = 0.05f;
     public float echo_damping = 0.1f;
@@ -1103,7 +1113,39 @@ public class LiveTuningConfig {
                 // CATEGORY 10
                 w.println();
                 w.println("  // ========================================================================");
-                w.println("  // BOLUM 10: SLAPBACK ECHO (Geri Sekme Yankisi)");
+                w.println("  // BOLUM 10: HOPARLOR HARMONIKLERI");
+                w.println("  // Hoparlor surucusunun power ile artan hafif analog karakterini kontrol eder.");
+                w.println("  // ========================================================================");
+                w.println();
+                writeParam(
+                        w,
+                        "harmonics_master",
+                        c.harmonics_master,
+                        "Tum harmonik islemin genel carpani. 0.0=tamamen temiz, 1.0=varsayilan.");
+                writeParam(
+                        w,
+                        "harmonics_powerInfluence",
+                        c.harmonics_powerInfluence,
+                        "Power ayarinin harmonik miktarina etkisi. 0.0=sabit, 1.0=power tamamen belirler.");
+                writeParam(
+                        w,
+                        "harmonics_subAmount",
+                        c.harmonics_subAmount,
+                        "Subwoofer harmonik miktari. Agirlikli olarak ikinci harmonik uretir.");
+                writeParam(w, "harmonics_midAmount", c.harmonics_midAmount, "Mid hoparlor harmonik miktari.");
+                writeParam(
+                        w,
+                        "harmonics_lineAmount",
+                        c.harmonics_lineAmount,
+                        "Line Array harmonik miktari. Fazlasi tizleri sertlestirebilir.");
+                writeParam(w, "harmonics_normalAmount", c.harmonics_normalAmount, "Normal hoparlor harmonik miktari.");
+
+                w.println();
+
+                // CATEGORY 11
+                w.println();
+                w.println("  // ========================================================================");
+                w.println("  // BOLUM 11: SLAPBACK ECHO (Geri Sekme Yankisi)");
                 w.println("  // Stadyum/vadi gibi alanlarda yasanan net ses sekmelerini kontrol eder.");
                 w.println("  // ========================================================================");
                 w.println();

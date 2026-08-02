@@ -1,7 +1,9 @@
 package com.audiophilecraft.sound;
 
+import com.audiophilecraft.config.LiveTuningConfig;
+
 /**
- * Self-contained DSP pipeline: input gain, crossover and 5-band EQ.
+ * Self-contained DSP pipeline: input gain, crossover, 5-band EQ and speaker harmonics.
  * Extracted from StreamSource to allow per-session DSP configurations.
  */
 public class StreamDSPPipeline {
@@ -14,6 +16,7 @@ public class StreamDSPPipeline {
     private final float[] eqFrequencies;
     private final String speakerType;
     private final PlaybackSession session;
+    private final AudioDSP.HarmonicSaturator harmonicSaturator;
 
     public StreamDSPPipeline(PlaybackSession session, String speakerType, float sampleRate) {
         this.session = session;
@@ -44,6 +47,16 @@ public class StreamDSPPipeline {
             crossoverFilter2 = null;
             eqFrequencies = new float[] { 250f, 500f, 1000f, 2000f, 4000f };
         }
+
+        if ("sub".equals(speakerType)) {
+            harmonicSaturator = new AudioDSP.HarmonicSaturator(sampleRate, 0.85f, 0.15f);
+        } else if ("mid".equals(speakerType)) {
+            harmonicSaturator = new AudioDSP.HarmonicSaturator(sampleRate, 0.50f, 0.35f);
+        } else if ("line".equals(speakerType)) {
+            harmonicSaturator = new AudioDSP.HarmonicSaturator(sampleRate, 0.20f, 0.55f);
+        } else {
+            harmonicSaturator = new AudioDSP.HarmonicSaturator(sampleRate, 0.45f, 0.40f);
+        }
     }
 
     public void reset() {
@@ -55,12 +68,13 @@ public class StreamDSPPipeline {
             if (eqFilters[i] != null)
                 eqFilters[i].reset();
         }
+        harmonicSaturator.reset();
     }
 
     /**
      * Runs the full DSP chain on the audio buffer.
      */
-    public void process(short[] data, float sampleRate, float inputGain) {
+    public void process(short[] data, float sampleRate, float inputGain, float power) {
         AudioDSP.applyGain(data, inputGain);
 
         if (crossoverFilter1 != null)
@@ -84,5 +98,16 @@ public class StreamDSPPipeline {
             if (eqFilters[i] != null)
                 eqFilters[i].process(data);
         }
+
+        LiveTuningConfig config = LiveTuningConfig.get();
+        float amount =
+                switch (speakerType) {
+                    case "sub" -> config.harmonics_subAmount;
+                    case "mid" -> config.harmonics_midAmount;
+                    case "line" -> config.harmonics_lineAmount;
+                    default -> config.harmonics_normalAmount;
+                };
+        float requestedAmount = amount * Math.max(0.0f, config.harmonics_master);
+        harmonicSaturator.process(data, requestedAmount, power, config.harmonics_powerInfluence);
     }
 }

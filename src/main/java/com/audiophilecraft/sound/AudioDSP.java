@@ -138,6 +138,63 @@ public class AudioDSP {
         LOW_SHELF
     }
 
+    /** Lightweight, stateful speaker coloration with a DC-safe even harmonic path. */
+    public static final class HarmonicSaturator {
+        private final double evenWeight;
+        private final double oddWeight;
+        private final double dcBlockerCoefficient;
+        private final double amountSmoothingCoefficient;
+
+        private double previousEvenInput;
+        private double previousEvenOutput;
+        private double smoothedAmount;
+
+        public HarmonicSaturator(float sampleRate, float evenWeight, float oddWeight) {
+            double safeSampleRate = Math.max(8000.0, sampleRate);
+            this.evenWeight = Math.max(0.0, evenWeight);
+            this.oddWeight = Math.max(0.0, oddWeight);
+            this.dcBlockerCoefficient = Math.exp(-2.0 * Math.PI * 5.0 / safeSampleRate);
+            this.amountSmoothingCoefficient = 1.0 - Math.exp(-1.0 / (0.030 * safeSampleRate));
+        }
+
+        public void reset() {
+            previousEvenInput = 0.0;
+            previousEvenOutput = 0.0;
+            smoothedAmount = 0.0;
+        }
+
+        public void process(short[] data, float maximumAmount, float power, float powerInfluence) {
+            double clampedMaximum = clamp(maximumAmount, 0.0, 1.0);
+            if (clampedMaximum == 0.0 && smoothedAmount < 1.0e-9) {
+                return;
+            }
+            double clampedInfluence = clamp(powerInfluence, 0.0, 1.0);
+            double normalizedPower = clamp((power - 0.1) / 9.9, 0.0, 1.0);
+            double smoothPower = normalizedPower * normalizedPower * (3.0 - 2.0 * normalizedPower);
+            double targetAmount = clampedMaximum * (1.0 - clampedInfluence + clampedInfluence * smoothPower);
+
+            for (int i = 0; i < data.length; i++) {
+                smoothedAmount += (targetAmount - smoothedAmount) * amountSmoothingCoefficient;
+
+                double input = data[i] / 32768.0;
+                double evenInput = input * input;
+                double evenHarmonic = evenInput - previousEvenInput + dcBlockerCoefficient * previousEvenOutput;
+                previousEvenInput = evenInput;
+                previousEvenOutput = evenHarmonic;
+
+                double oddSaturation = input * input * input;
+                double colored = input + smoothedAmount * (evenWeight * evenHarmonic - oddWeight * oddSaturation);
+                double headroom = 1.0 + smoothedAmount * evenWeight;
+                int output = (int) Math.round((colored / headroom) * 32767.0);
+                data[i] = (short) Math.max(-32768, Math.min(32767, output));
+            }
+        }
+
+        private static double clamp(double value, double minimum, double maximum) {
+            return Math.max(minimum, Math.min(maximum, value));
+        }
+    }
+
     public static class BiquadFilter {
         private double b0, b1, b2, a1, a2;
         private double x1 = 0, x2 = 0, y1 = 0, y2 = 0;

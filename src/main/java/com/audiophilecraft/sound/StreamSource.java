@@ -131,7 +131,8 @@ public class StreamSource {
                 sampleShiftMs,
                 delayDistanceSnapshot,
                 initialChannelMask,
-                spatialController.smoothedInputGain());
+                spatialController.smoothedInputGain(),
+                spatialController.smoothedPower());
         publish();
     }
 
@@ -190,8 +191,11 @@ public class StreamSource {
     public synchronized void seekToTime(double timeSeconds) {
         if (!isValid) return;
 
-        isFinished =
-                audioRenderer.seekToTime(timeSeconds, delayDistanceSnapshot, spatialController.smoothedInputGain());
+        isFinished = audioRenderer.seekToTime(
+                timeSeconds,
+                delayDistanceSnapshot,
+                spatialController.smoothedInputGain(),
+                spatialController.smoothedPower());
     }
 
     public synchronized boolean update(World world, Vec3d listenerPosition, double timeSeconds) {
@@ -257,6 +261,7 @@ public class StreamSource {
                 globalSampleTime,
                 delayDistanceSnapshot,
                 spatialController.smoothedInputGain(),
+                spatialController.smoothedPower(),
                 isFinished);
         isFinished = result.finished();
         return result.restartRequired();

@@ -60,7 +60,8 @@ final class StreamAudioRenderer {
             int sampleShiftMs,
             float initialDelayDistance,
             int initialChannelMask,
-            float initialInputGain) {
+            float initialInputGain,
+            float initialPower) {
         this.session = session;
         this.sourceId = sourceId;
         this.streamBuffer = streamBuffer;
@@ -79,7 +80,7 @@ final class StreamAudioRenderer {
 
         this.buffers = BufferUtils.createIntBuffer(BUFFER_COUNT);
         alGenBuffers(this.buffers);
-        primeQueue(initialDelayDistance, initialInputGain);
+        primeQueue(initialDelayDistance, initialInputGain, initialPower);
     }
 
     AudioStreamBuffer getStreamBuffer() {
@@ -105,7 +106,7 @@ final class StreamAudioRenderer {
         delayVelocity = 0.0;
     }
 
-    boolean seekToTime(double timeSeconds, float delayDistance, float smoothedInputGain) {
+    boolean seekToTime(double timeSeconds, float delayDistance, float smoothedInputGain, float smoothedPower) {
         dspPipeline.reset();
         resetDelaySmoothing();
 
@@ -116,7 +117,8 @@ final class StreamAudioRenderer {
         double seekStartSample = timeSeconds * streamBuffer.sampleRate;
         for (int i = 0; i < BUFFER_COUNT; i++) {
             double bufferStartSample = seekStartSample + (i * STREAM_BUFFER_SIZE);
-            finished |= generatePcmBlock(reusableRawAudio, bufferStartSample, delayDistance, smoothedInputGain);
+            finished |= generatePcmBlock(
+                    reusableRawAudio, bufferStartSample, delayDistance, smoothedInputGain, smoothedPower);
             uploadPcm(buffers.get(i), reusablePcmBuffer, reusableRawAudio);
         }
         outputCursor = seekStartSample + (BUFFER_COUNT * STREAM_BUFFER_SIZE);
@@ -128,6 +130,7 @@ final class StreamAudioRenderer {
             double globalSampleTime,
             float delayDistance,
             float smoothedInputGain,
+            float smoothedPower,
             boolean sourceFinished) {
         boolean finished = sourceFinished;
         int processed = alGetSourcei(sourceId, AL_BUFFERS_PROCESSED);
@@ -141,7 +144,7 @@ final class StreamAudioRenderer {
 
                 if (readEnd <= streamBuffer.getWriteCursor()) {
                     finished |= generatePcmBlock(
-                            audioThreadRawAudio, bufferStartSample, delayDistance, smoothedInputGain);
+                            audioThreadRawAudio, bufferStartSample, delayDistance, smoothedInputGain, smoothedPower);
                 } else {
                     Arrays.fill(audioThreadRawAudio, (short) 0);
                 }
@@ -189,10 +192,10 @@ final class StreamAudioRenderer {
         alDeleteBuffers(buffers);
     }
 
-    private void primeQueue(float delayDistance, float smoothedInputGain) {
+    private void primeQueue(float delayDistance, float smoothedInputGain, float smoothedPower) {
         for (int i = 0; i < BUFFER_COUNT; i++) {
             double bufferStartSample = (double) (i * STREAM_BUFFER_SIZE);
-            generatePcmBlock(reusableRawAudio, bufferStartSample, delayDistance, smoothedInputGain);
+            generatePcmBlock(reusableRawAudio, bufferStartSample, delayDistance, smoothedInputGain, smoothedPower);
             uploadPcm(buffers.get(i), reusablePcmBuffer, reusableRawAudio);
         }
         outputCursor = (double) (BUFFER_COUNT * STREAM_BUFFER_SIZE);
@@ -210,7 +213,8 @@ final class StreamAudioRenderer {
             short[] output,
             double bufferStartSample,
             float delayDistance,
-            float smoothedInputGain) {
+            float smoothedInputGain,
+            float smoothedPower) {
         double sampleRate = streamBuffer.sampleRate;
         if (sampleRate <= 0) return false;
 
@@ -263,7 +267,7 @@ final class StreamAudioRenderer {
         lastRenderedDelaySamples = currentDelay;
         delayVelocity = localVelocity;
 
-        dspPipeline.process(output, (float) streamBuffer.sampleRate, smoothedInputGain);
+        dspPipeline.process(output, (float) streamBuffer.sampleRate, smoothedInputGain, smoothedPower);
 
         if (session == AudioEngine.getInstance().getActiveSession()) {
             PeakMeter.getInstance().feedPeak(speakerType, output, STREAM_BUFFER_SIZE);
