@@ -32,6 +32,7 @@ import org.lwjgl.system.MemoryUtil;
 final class StreamAudioRenderer {
     private static final int BUFFER_COUNT = 6;
     private static final int STREAM_BUFFER_SIZE = 1024;
+    private static final double RESUME_DECLICK_SECONDS = 0.008;
 
     private final int sourceId;
     private final AudioStreamBuffer streamBuffer;
@@ -51,6 +52,9 @@ final class StreamAudioRenderer {
     private double lastRenderedDelaySamples = -1.0;
     private double prevTargetDelaySamples = -1.0;
     private double delayVelocity;
+    private double resumeCrossfadeFromDelaySamples = -1.0;
+    private int resumeCrossfadeSamplesTotal;
+    private int resumeCrossfadeSamplesRemaining;
 
     StreamAudioRenderer(
             PlaybackSession session,
@@ -101,9 +105,19 @@ final class StreamAudioRenderer {
 
     void snapPropagationDelay(float delayDistance) {
         double targetDelaySamples = calculateTargetDelaySamples(delayDistance);
+        double previousDelaySamples = lastRenderedDelaySamples;
         lastRenderedDelaySamples = targetDelaySamples;
         prevTargetDelaySamples = targetDelaySamples;
         delayVelocity = 0.0;
+
+        if (previousDelaySamples >= 0.0 && Math.abs(targetDelaySamples - previousDelaySamples) >= 0.5) {
+            resumeCrossfadeFromDelaySamples = previousDelaySamples;
+            resumeCrossfadeSamplesTotal =
+                    Math.max(1, (int) Math.round(streamBuffer.sampleRate * RESUME_DECLICK_SECONDS));
+            resumeCrossfadeSamplesRemaining = resumeCrossfadeSamplesTotal;
+        } else {
+            resetResumeCrossfade();
+        }
     }
 
     boolean seekToTime(double timeSeconds, float delayDistance, float smoothedInputGain, float smoothedPower) {
@@ -262,6 +276,22 @@ final class StreamAudioRenderer {
             } else {
                 output[i] = streamBuffer.getSampleLagrange(readPos, currentChannelMask);
             }
+
+            if (resumeCrossfadeSamplesRemaining > 0) {
+                double oldReadPos = (bufferStartSample + i) - resumeCrossfadeFromDelaySamples;
+                short oldSample = 0;
+                if (oldReadPos >= 0 && oldReadPos < streamBuffer.getTotalSamples()) {
+                    oldSample = streamBuffer.getSampleLagrange(oldReadPos, currentChannelMask);
+                }
+
+                int completedSamples = resumeCrossfadeSamplesTotal - resumeCrossfadeSamplesRemaining;
+                double blend = (double) (completedSamples + 1) / resumeCrossfadeSamplesTotal;
+                output[i] = (short) Math.round(oldSample * (1.0 - blend) + output[i] * blend);
+                resumeCrossfadeSamplesRemaining--;
+                if (resumeCrossfadeSamplesRemaining == 0) {
+                    resetResumeCrossfade();
+                }
+            }
         }
 
         lastRenderedDelaySamples = currentDelay;
@@ -287,6 +317,13 @@ final class StreamAudioRenderer {
         lastRenderedDelaySamples = -1.0;
         prevTargetDelaySamples = -1.0;
         delayVelocity = 0.0;
+        resetResumeCrossfade();
+    }
+
+    private void resetResumeCrossfade() {
+        resumeCrossfadeFromDelaySamples = -1.0;
+        resumeCrossfadeSamplesTotal = 0;
+        resumeCrossfadeSamplesRemaining = 0;
     }
 
     record FeedResult(boolean restartRequired, boolean finished) {}

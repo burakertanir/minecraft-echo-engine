@@ -1,5 +1,5 @@
 <div align="center">
-  <h1>🔊 ECHO ENGINE</h1>
+  <h1>🔊 ECHO Sound Engine</h1>
   <p><b>Dünyanın En Gelişmiş Minecraft Akustik ve Ses İşleme Modu</b></p>
   <p>
     <a href="#özellikler">Özellikler</a> • 
@@ -12,7 +12,7 @@
 
 ## 🎵 Mod Hakkında
 
-**Echo Engine**, standart Minecraft ses motorunun sınırlarını tamamen yok eden, baştan aşağı özel yazılmış devasa bir ses ve DSP (Dijital Sinyal İşleme) altyapısıdır. Bu mod sadece oyuna bir "Hoparlör" eklemekle kalmaz; gerçek hayattaki **fiziksel ses yayılımını**, **oda akustiğini** ve **materyal yansımalarını** birebir Minecraft evrenine taşır.
+**ECHO Sound Engine**, standart Minecraft ses motorunun sınırlarını tamamen yok eden, baştan aşağı özel yazılmış devasa bir ses ve DSP (Dijital Sinyal İşleme) altyapısıdır. Bu mod sadece oyuna bir "Hoparlör" eklemekle kalmaz; gerçek hayattaki **fiziksel ses yayılımını**, **oda akustiğini** ve **materyal yansımalarını** birebir Minecraft evrenine taşır.
 
 Bu mod alanında iddialıdır: Büyük ihtimalle **dünyada bu seviyede bir akustik hesaplama ve canlı yayın entegrasyonu sunan tek Minecraft modudur.**
 
@@ -50,7 +50,7 @@ Birden fazla hoparlörü yan yana koyduğunuzda mod bunu algılar ve bir **"Line
 
 ## ⚙️ Nasıl Çalışır?
 
-Echo Engine, oyunun standart arka plan döngüsünden (main thread) bağımsız olarak, kendi `ScheduledExecutorService` altyapısında eşzamanlı (async) olarak çalışır. 
+ECHO Sound Engine, oyunun standart arka plan döngüsünden (main thread) bağımsız olarak, kendi `ScheduledExecutorService` altyapısında eşzamanlı (async) olarak çalışır.
 
 1. **Ses Kaynağı:** LavaPlayer veya yerel OGG dosyası üzerinden ses yakalanır (`InternetAudioLoader` / `OggDecoder`).
 2. **Bufferlama:** Sinyal `AudioStreamBuffer` içine alınarak paket kayıpları (lag) engellenir.
@@ -75,5 +75,5 @@ Echo Engine, oyunun standart arka plan döngüsünden (main thread) bağımsız 
 ---
 
 <p align="center">
-  <i>ECHO ENGINE - Sesin fiziksel sınırlarını aşın.</i>
+  <i>ECHO Sound Engine - Sesin fiziksel sınırlarını aşın.</i>
 </p>
