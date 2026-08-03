@@ -1,97 +1,88 @@
 # ECHO Sound Engine
 
-ECHO Sound Engine, Minecraft 1.20.1 için geliştirilmiş Fabric tabanlı bir fiziksel
-hoparlör ve uzamsal ses modudur. Hoparlör dizilimlerini, yönlülüğü, mesafeyi,
-duvar arkasındaki frekans kaybını ve mekân akustiğini özel bir OpenAL ses motorunda
-işler.
+ECHO Sound Engine is a Fabric-based physical speaker and spatial sound mod developed
+for Minecraft 1.20.1. It processes speaker arrays, directivity, distance,
+frequency loss behind walls, and room acoustics within a custom OpenAL sound engine.
 
-## Gereksinimler
+## Requirements
 
 - Minecraft 1.20.1
-- Fabric Loader 0.15.7 veya üzeri
+- Fabric Loader 0.15.7 or higher
 - Fabric API
-- Java 17 veya üzeri
+- Java 17 or higher
 
-Multiplayer kullanımında modun hem sunucuda hem de bağlanan istemcilerde kurulu
-olması gerekir.
+For multiplayer use, the mod must be installed on both the server and the connecting clients.
 
-## Özellikler
+## Features
 
-### Hoparlör sistemi
+### Speaker system
 
-- Subwoofer, Studio Monitor ve Line Array Module blokları
-- Yakın hoparlörleri fiziksel emitter grupları hâlinde birleştiren kümeleme
-- Büyük dizilimlerde güç ve menzil ölçekleme
-- Line Array için yatay/dikey yönlülük ve ayarlanabilir dikey açı
-- `BOTH`, `LEFT` ve `RIGHT` kanal seçimi
-- Hoparlör başına 0-30 ms sample shift
-- Sub, mid, line ve normal kanallar için bağımsız mixer ve parametrik EQ
+- Subwoofer, Studio Monitor, and Line Array Module blocks
+- Clustering that combines nearby speakers into physical emitter groups
+- Power and range scaling in large arrays
+- Horizontal/vertical directivity and adjustable vertical angle for Line Arrays
+- `BOTH`, `LEFT`, and `RIGHT` channel selection
+- 0-30 ms sample shift per speaker
+- Independent mixer and parametric EQ for sub, mid, line, and normal channels
 
-### Fiziksel ses motoru
+### Physical sound engine
 
-- OpenAL tabanlı uzamsal kaynaklar ve HRTF uyumlu konumlandırma
-- Mesafe zayıflaması ve sesin yayılma süresi
-- Duvar kalınlığına ve blok geçirgenliğine bağlı occlusion
-- Yüksek frekans yönlülüğü ve hava emilimi
-- Hoparlör tipine ve gücüne bağlı kontrollü harmonikler
-- Pause, seek ve resume sırasında zaman/propagation senkronizasyonu
+- OpenAL-based spatial sources and HRTF-compatible positioning
+- Distance attenuation and sound propagation delay
+- Occlusion based on wall thickness and block permeability
+- High-frequency directivity and air absorption
+- Controlled harmonics depending on speaker type and power
+- Time/propagation synchronization during pause, seek, and resume
 
-### Mekân akustiği
+### Room acoustics
 
-- Her prob için 1000 yönlü Spherical Fibonacci ışın taraması
-- Blok malzemelerine göre yansıma ve emilim hesabı
-- Hacim, yüzey alanı, açıklık ve enclosure analizi
-- Sabine tabanlı decay hesabı ve Tier 1-10 venue profilleri
-- Açık ve yarı açık mekânlarda dinamik reverb azaltma
-- Birden fazla emitter grubu ve iki fiziksel room bus arasında yumuşak geçiş
-- Sound Tablet üzerinde reverb heatmap ve acoustic zone görünümü
+- 1000-directional Spherical Fibonacci ray tracing for each probe
+- Reflection and absorption calculation based on block materials
+- Volume, surface area, opening, and enclosure analysis
+- Sabine-based decay calculation and Tier 1-10 venue profiles
+- Dynamic reverb reduction in open and semi-open spaces
+- Smooth crossfading between multiple emitter groups and two physical room buses
+- Reverb heatmap and acoustic zone display on the Sound Tablet
 
-### Oynatma ve dayanıklılık
+### Playback and resilience
 
-- Yerel OGG/PCM ve internet ses kaynakları
-- YouTube, SoundCloud ve doğrudan HTTP(S) kaynakları için LavaPlayer entegrasyonu
-- Birden fazla session ve multiplayer senkronizasyonu
-- Ses cihazı çıkarılıp takıldığında oyun yeniden başlatılmadan motoru kurtarma
-- Replay Mod için opsiyonel pause/resume ve cleanup entegrasyonu
-- Eski decode görevlerini ve stale callback'leri engelleyen request/cancellation sistemi
+- Local OGG/PCM and internet audio sources
+- LavaPlayer integration for YouTube, SoundCloud, and direct HTTP(S) sources
+- Multiple sessions and multiplayer synchronization
+- Engine recovery without restarting the game when an audio device is plugged/unplugged
+- Optional pause/resume and cleanup integration for the Replay Mod
+- Request/cancellation system preventing stale decode tasks and callbacks
 
-## Kurulum
+## Installation
 
-1. Fabric Loader ve Fabric API'yi Minecraft 1.20.1 için kurun.
-2. Dağıtım JAR'ını `.minecraft/mods` klasörüne yerleştirin.
-3. Oyunu Fabric profiliyle başlatın.
+1. Install Fabric Loader and Fabric API for Minecraft 1.20.1.
+2. Place the distribution JAR in the `.minecraft/mods` folder.
+3. Launch the game using the Fabric profile.
 
-İnternet ses kütüphaneleri mod JAR'ına gömülüdür; ayrıca LavaPlayer kurmanız
-gerekmez.
+Internet audio libraries are embedded in the mod JAR; you do not need to install LavaPlayer separately.
 
-## Kullanım
+## Usage
 
-1. Creative envanterindeki `ECHO Sound Engine` sekmesinden hoparlörleri ve
-   `Sound Tablet` öğesini alın.
-2. Subwoofer, Studio Monitor ve Line Array bloklarını istediğiniz düzende
-   yerleştirin.
-3. Bir hoparlöre sağ tıklayarak kanal, sample shift ve desteklenen bloklarda
-   dikey açı ayarlarını yapın.
-4. Sound Tablet'i kullanarak yakındaki kurulumları açın.
-5. Bir parça adı arayın veya desteklenen bir URL yapıştırın; güç, input gain,
-   mixer ve EQ ayarlarını yaptıktan sonra oynatmayı başlatın.
+1. Get speakers and the `Sound Tablet` item from the `ECHO Sound Engine` tab in the creative inventory.
+2. Place the Subwoofer, Studio Monitor, and Line Array blocks in your desired layout.
+3. Right-click a speaker to configure the channel, sample shift, and vertical angle on supported blocks.
+4. Open nearby setups using the Sound Tablet.
+5. Search for a track name or paste a supported URL; adjust power, input gain, mixer, and EQ settings, then start playback.
 
-Tablet, oyuncunun 500 blok çevresindeki uygun hoparlörleri tarar. Heatmap görünümü
-gerçek venue taramasında kullanılan akustik sonuçları gösterir.
+The tablet scans for suitable speakers within a 500-block radius of the player. The heatmap view shows the acoustic results used in the actual venue scan.
 
-## Canlı tuning
+## Live tuning
 
-İlk çalıştırmada aşağıdaki dosya otomatik oluşturulur:
+The following file is automatically created on the first run:
 
 ```text
 .minecraft/config/audiophilecraft_tuning.json
 ```
 
-Dosya oyun açıkken düzenlenebilir ve yaklaşık bir saniye içinde yeniden yüklenir.
-Config migration sistemi eski varsayılanları günceller, kullanıcının değiştirdiği
-değerleri korur ve sürüm geçişinde `.bak` yedeği oluşturur.
+The file can be edited while the game is running and reloads in about a second.
+The config migration system updates old defaults, preserves user-modified values, and creates a `.bak` backup during version transitions.
 
-## Geliştirme
+## Development
 
 ```powershell
 .\gradlew.bat spotlessApply
@@ -99,15 +90,12 @@ değerleri korur ve sürüm geçişinde `.bak` yedeği oluşturur.
 .\gradlew.bat build
 ```
 
-Test paketi; stream buffer sınırlarını, speaker gruplamayı, reverb profil
-benzerliğini, venue tier eşiklerini ve config migration/yedek davranışını kapsar.
-Detaylı sahiplik ve lifecycle açıklamaları [ARCHITECTURE.md](ARCHITECTURE.md)
-dosyasındadır.
+The test suite covers stream buffer limits, speaker clustering, reverb profile similarity, venue tier thresholds, and config migration/backup behavior.
+Detailed ownership and lifecycle explanations are available in [ARCHITECTURE.md](ARCHITECTURE.md).
 
-## Lisans
+## License
 
-ECHO Sound Engine, [All Rights Reserved](LICENSE) lisansıyla yayımlanır:
-kaynak kod görüntüleme amaçlıdır; kopyalama, dağıtım, değiştirme ve kullanım
-için yazarın (Burak) yazılı izni gerekir.
+ECHO Sound Engine is published under an [All Rights Reserved](LICENSE) license:
+The source code is provided for viewing purposes only; copying, distribution, modification, and usage require written permission from the author (Burak).
 
-Copyright (c) 2026 Burak. Tüm hakları saklıdır.
+Copyright (c) 2026 Burak. All rights reserved.
