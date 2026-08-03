@@ -1,4 +1,4 @@
-# ECHO Sound Engine
+# ECHO Sound Engine for MINECRAFT
 
 ECHO Sound Engine is a Fabric-based physical speaker and spatial sound mod developed
 for Minecraft 1.20.1. It processes speaker arrays, directivity, distance,
