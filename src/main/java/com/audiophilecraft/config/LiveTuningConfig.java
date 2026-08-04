@@ -69,29 +69,29 @@ public class LiveTuningConfig {
     public float line_hzExp = 1.5f;
     public float line_vtExpBase = 1.5f;
     public float line_vtExpPerSpeaker = 0.3f;
-    public float line_rearGain = 0.9f;
+    public float line_rearGain = 0.8f;
     public float mid_hzExp = 2.2f;
     public float mid_vtExp = 2.0f;
-    public float mid_rearGain = 0.1225f;
+    public float mid_rearGain = 0.7f;
     public float normal_hzExp = 2.7f;
     public float normal_vtExp = 2.0f;
-    public float normal_rearGain = 0.0576f;
+    public float normal_rearGain = 0.7f;
 
     // ============================================================================
     // CATEGORY 3: WALL OCCLUSION
     // ============================================================================
-    public float occ_standardWall = 0.7f;
-    public float occ_varianceBlend = 0.25f;
-    public float occ_sub_floor = 0.3f;
-    public float occ_mid_floor = 0.2f;
-    public float occ_line_floor = 0.2f;
-    public float occ_lerpIn = 0.35f;
+    public float occ_standardWall = 0.55f;
+    public float occ_varianceBlend = 0.6f;
+    public float occ_sub_floor = 0.4f;
+    public float occ_mid_floor = 0.35f;
+    public float occ_line_floor = 0.35f;
+    public float occ_lerpIn = 0.15f;
     public float occ_lerpOut = 0.15f;
     public float occ_hfExp_occluding = 1.5f;
     public float occ_hfExp_deoccluding = 1.1f;
-    public float occ_hf_floor = 0.01f;
+    public float occ_hf_floor = 0.0f;
     public float occ_raycast_flexOffset = 0.75f;
-    public float occ_thicknessDecay = 0.9f;
+    public float occ_thicknessDecay = 0.8f;
 
     // ============================================================================
     // CATEGORY 4: PROXIMITY BOOST
@@ -102,13 +102,13 @@ public class LiveTuningConfig {
     // ============================================================================
     // CATEGORY 5: HF DIRECTIONALITY & AIR ABSORPTION
     // ============================================================================
-    public float hf_line_behindFloor = 0.05f;
-    public float hf_line_frontFloor = 0.2f;
+    public float hf_line_behindFloor = 0.3f;
+    public float hf_line_frontFloor = 0.4f;
     public float hf_mid_behindFloor = 0.3f;
-    public float hf_mid_frontFloor = 0.42f;
+    public float hf_mid_frontFloor = 0.4f;
     public float hf_normal_behindFloor = 0.1f;
     public float hf_normal_frontFloor = 0.25f;
-    public float hf_air_absorb_halving_dist = 145.0f;
+    public float hf_air_absorb_halving_dist = 100.0f;
 
     // ============================================================================
     // CATEGORY 6: REVERB MASTER (post-venue-preset multipliers)
@@ -126,7 +126,7 @@ public class LiveTuningConfig {
     // Master reverb occlusion
     public float masterOcc_gainFloor = 0.7f;
     public float masterOcc_hfExponent = 1.8f;
-    public float masterOcc_lerpIn = 0.35f;
+    public float masterOcc_lerpIn = 0.15f;
     public float masterOcc_lerpOut = 0.2f;
 
     // ============================================================================
@@ -136,7 +136,7 @@ public class LiveTuningConfig {
     // --- TIER 1: CLOSET ---
     public float tier1_minGain = 0.28f;
     public float tier1_gainMul = 0.3f;
-    public float tier1_reflGainMul = 0.7f;
+    public float tier1_reflGainMul = 0.3f;
     public float tier1_lateReverbMul = 1.0f;
     public float tier1_hfMul = 1.0f;
     public float tier1_lfMul = 1.0f;
@@ -181,12 +181,12 @@ public class LiveTuningConfig {
     // --- TIER 5: LARGE CLUB ---
     public float tier5_minGain = 0.15f;
     public float tier5_gainMul = 0.25f;
-    public float tier5_reflGainMul = 0.25f;
+    public float tier5_reflGainMul = 0.24f;
     public float tier5_lateReverbMul = 1.0f;
     public float tier5_hfMul = 1.0f;
     public float tier5_lfMul = 1.0f;
     public float tier5_decayMul = 0.22f;
-    public float tier5_lateReverbRoomScale = 0.4f;
+    public float tier5_lateReverbRoomScale = 0.35f;
     public float tier5_density = -1.0f;
     public float tier5_diffusion = -1.0f;
 
@@ -197,7 +197,7 @@ public class LiveTuningConfig {
     public float tier6_lateReverbMul = 1.0f;
     public float tier6_hfMul = 1.0f;
     public float tier6_lfMul = 1.0f;
-    public float tier6_decayMul = 0.25f;
+    public float tier6_decayMul = 0.23f;
     public float tier6_lateReverbRoomScale = 0.4f;
     public float tier6_density = -1.0f;
     public float tier6_diffusion = 1.0f;
@@ -205,11 +205,11 @@ public class LiveTuningConfig {
     // --- TIER 7: MASSIVE STADIUM ---
     public float tier7_minGain = 0.18f;
     public float tier7_gainMul = 0.25f;
-    public float tier7_reflGainMul = 0.23f;
+    public float tier7_reflGainMul = 0.24f;
     public float tier7_lateReverbMul = 1.0f;
     public float tier7_hfMul = 1.0f;
     public float tier7_lfMul = 1.0f;
-    public float tier7_decayMul = 0.24f;
+    public float tier7_decayMul = 0.23f;
     public float tier7_lateReverbRoomScale = 0.4f;
     public float tier7_maxLateMultiplier_highEncl = 2.0f;
     public float tier7_maxLateMultiplier_lowEncl = 2.8f;
@@ -219,7 +219,7 @@ public class LiveTuningConfig {
     // --- TIER 8: COLOSSAL DOME / HANGAR ---
     public float tier8_minGain = 0.22f;
     public float tier8_gainMul = 0.25f;
-    public float tier8_reflGainMul = 0.22f;
+    public float tier8_reflGainMul = 0.25f;
     public float tier8_lateReverbMul = 1.1f;
     public float tier8_hfMul = 1.0f;
     public float tier8_lfMul = 1.0f;
@@ -237,7 +237,7 @@ public class LiveTuningConfig {
     public float tier9_lateReverbMul = 1.2f;
     public float tier9_hfMul = 1.0f;
     public float tier9_lfMul = 1.0f;
-    public float tier9_decayMul = 0.22f;
+    public float tier9_decayMul = 0.24f;
     public float tier9_lateReverbRoomScale = 0.6f;
     public float tier9_maxLateMultiplier_highEncl = 3.0f;
     public float tier9_maxLateMultiplier_lowEncl = 4.2f;
@@ -247,16 +247,16 @@ public class LiveTuningConfig {
     // --- TIER 10: INFINITE CATHEDRAL / VOID ---
     public float tier10_minGain = 0.25f;
     public float tier10_gainMul = 0.25f;
-    public float tier10_reflGainMul = 0.2f;
-    public float tier10_lateReverbMul = 1.1f;
+    public float tier10_reflGainMul = 0.3f;
+    public float tier10_lateReverbMul = 1.5f;
     public float tier10_hfMul = 1.0f;
     public float tier10_lfMul = 1.0f;
-    public float tier10_decayMul = 0.21f;
-    public float tier10_lateReverbRoomScale = 0.7f;
+    public float tier10_decayMul = 0.26f;
+    public float tier10_lateReverbRoomScale = 0.4f;
     public float tier10_maxLateMultiplier_highEncl = 3.5f;
     public float tier10_maxLateMultiplier_lowEncl = 5.0f;
-    public float tier10_density = -1.0f;
-    public float tier10_diffusion = -1.0f;
+    public float tier10_density = 1.0f;
+    public float tier10_diffusion = 1.0f;
 
     // Tier Thresholds
     public float tier2_volumeThreshold = 300.0f;
@@ -283,9 +283,9 @@ public class LiveTuningConfig {
     // ============================================================================
     public float openAir_dynamic_gainMul = 0.05f;
     public float openAir_dynamic_reflGainMul = 0.18f;
-    public float openAir_dynamic_lateReverbMul = 0.3f;
-    public float openAir_dynamic_hfMul = 1.0f;
-    public float openAir_dynamic_lfMul = 1.0f;
+    public float openAir_dynamic_lateReverbMul = 0.4f;
+    public float openAir_dynamic_hfMul = 0.6f;
+    public float openAir_dynamic_lfMul = 1.2f;
     public float openAir_enclosure_penalty_exponent = 3.5f;
 
     // ============================================================================
@@ -315,11 +315,11 @@ public class LiveTuningConfig {
     // CATEGORY 11: SLAPBACK ECHO
     // ============================================================================
     public float echo_delay = 0.05f;
-    public float echo_damping = 0.1f;
+    public float echo_damping = 0.4f;
     public float echo_feedback = 0.4f;
     public float echo_spread = -0.5f;
-    public float echo_baseGain = 0.005f;
-    public float echo_maxGain = 0.14f;
+    public float echo_baseGain = 0.08f;
+    public float echo_maxGain = 0.16f;
 
     // ============================================================================
     // SINGLETON & FILE MANAGEMENT

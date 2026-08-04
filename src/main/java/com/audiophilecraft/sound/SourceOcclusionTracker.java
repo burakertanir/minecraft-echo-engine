@@ -18,6 +18,7 @@ final class SourceOcclusionTracker {
     private float current = 1.0f;
     private long lastCalculationTick = -1;
     private Vec3d lastListenerPosition;
+    private boolean isFirstTick = true;
 
     /**
      * Updates the tracker and returns the target used for smoothing this tick.
@@ -54,8 +55,13 @@ final class SourceOcclusionTracker {
             }
         }
 
-        float lerp = smoothingTarget < current ? config.occ_lerpIn : config.occ_lerpOut;
-        current += (smoothingTarget - current) * lerp;
+        if (isFirstTick) {
+            current = smoothingTarget;
+            isFirstTick = false;
+        } else {
+            float lerp = smoothingTarget < current ? config.occ_lerpIn : config.occ_lerpOut;
+            current += (smoothingTarget - current) * lerp;
+        }
         return smoothingTarget;
     }
 

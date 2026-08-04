@@ -118,14 +118,11 @@ final class OpenALSourceResources {
     }
 
     void delete(StreamAudioRenderer renderer) {
-        while (alGetSourcei(sourceId, AL_BUFFERS_QUEUED) > 0) {
-            int processed = alGetSourcei(sourceId, AL_BUFFERS_PROCESSED);
-            if (processed <= 0) break;
-            while (processed > 0) {
-                alSourceUnqueueBuffers(sourceId);
-                processed--;
-            }
-        }
+        // Force-stop to ensure all queued buffers become processed/detachable.
+        alSourceStop(sourceId);
+        // Detach ALL buffers at once — works reliably on stopped sources and
+        // avoids the old loop that could leave queued-but-unprocessed buffers
+        // attached, causing alDeleteSources to silently fail (zombie sources).
         alSourcei(sourceId, AL_BUFFER, 0);
 
         try {
