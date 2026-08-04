@@ -292,7 +292,7 @@ final class SourceSpatialController {
 
     private void applyMainGain(LiveTuningConfig config) {
         float targetGain = smoothedPower * attenuation * proximityBoost;
-        targetGain = Math.max(0.0f, Math.min(2.0f, targetGain));
+        targetGain = Math.max(0.0f, Math.min(3.0f, targetGain));
 
         float gainDelta = targetGain - smoothedGain;
         float gainLerp = config.gain_smoothing;

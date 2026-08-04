@@ -218,7 +218,7 @@ final class ServerAudioNetworkHandler {
             float db = buf.readFloat();
             if (!ModMessages.isValidSpeakerType(speakerType) || !ModMessages.isValidEqBand(band) || !Float.isFinite(db))
                 return;
-            float sanitizedDb = clamp(db, -12.0f, 12.0f);
+            float sanitizedDb = clamp(db, -9.0f, 9.0f);
             server.execute(() -> {
                 ItemStack stack = getTabletStack(player);
                 if (stack.getItem() instanceof AmplifierTabletItem) {

@@ -3,6 +3,7 @@ package com.audiophilecraft.client.screen;
 import com.audiophilecraft.network.ModMessages;
 import com.audiophilecraft.sound.AudioEngine;
 import com.audiophilecraft.sound.PeakMeter;
+import com.audiophilecraft.sound.StreamDSPPipeline;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
@@ -246,7 +247,7 @@ final class AmplifierMixerPanel {
                 value = gainToSlider(AudioEngine.getInstance().getMixerGain(speakerType));
             } else {
                 float db = AudioEngine.getInstance().getEqDb(speakerType, typeIndex - 1);
-                value = (db + 12.0f) / 24.0f;
+                value = (db + 9.0f) / 18.0f;
             }
             updateMessage();
         }
@@ -257,7 +258,7 @@ final class AmplifierMixerPanel {
             if (typeIndex == 0) {
                 setMessage(Text.literal(prefix + (int) (sliderToGain(value) * 100) + "%"));
             } else {
-                float db = (float) (value * 24.0 - 12.0);
+                float db = (float) (value * 18.0 - 9.0);
                 setMessage(Text.literal(prefix + String.format("%.1f dB", db)));
             }
         }
@@ -272,7 +273,7 @@ final class AmplifierMixerPanel {
                 buffer.writeFloat(gain);
                 ClientPlayNetworking.send(ModMessages.C2S_UPDATE_MIXER_GAIN, buffer);
             } else {
-                float db = (float) (value * 24.0 - 12.0);
+                float db = (float) (value * 18.0 - 9.0);
                 AudioEngine.getInstance().setEqDbForSession(currentPlayerUuid(), speakerType, typeIndex - 1, db);
                 PacketByteBuf buffer = PacketByteBufs.create();
                 buffer.writeString(speakerType);
@@ -346,13 +347,17 @@ final class AmplifierMixerPanel {
 
         private String getPrefix() {
             if (typeIndex == 0) return "Vol: ";
-            String[][] labels = {
-                {"30Hz: ", "50Hz: ", "70Hz: ", "90Hz: ", "110Hz: "},
-                {"100Hz: ", "400Hz: ", "1kHz: ", "4kHz: ", "10kHz: "},
-                {"250Hz: ", "1kHz: ", "4kHz: ", "8kHz: ", "14kHz: "}
-            };
-            int speakerIndex = "sub".equals(speakerType) ? 0 : ("mid".equals(speakerType) ? 1 : 2);
-            return labels[speakerIndex][typeIndex - 1];
+            float[] frequencies = StreamDSPPipeline.defaultEqFrequencies(speakerType);
+            if (typeIndex - 1 >= frequencies.length) return "Band " + (typeIndex - 1) + ": ";
+            return formatFrequency(frequencies[typeIndex - 1]) + ": ";
+        }
+
+        private static String formatFrequency(float frequency) {
+            if (frequency >= 1000.0f) {
+                int kHz = (int) (frequency / 1000.0f);
+                return kHz + "kHz";
+            }
+            return (int) frequency + "Hz";
         }
     }
 

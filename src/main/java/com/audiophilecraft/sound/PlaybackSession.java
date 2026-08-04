@@ -259,7 +259,7 @@ public class PlaybackSession {
 
     public synchronized void setEqDb(String speakerType, int band, float db) {
         if (band < 0 || band > 4) return;
-        db = Math.max(-12f, Math.min(db, 12f));
+        db = Math.max(-9f, Math.min(db, 9f));
         float[] eq = getEqArray(speakerType);
         if (eq != null) eq[band] = db;
     }

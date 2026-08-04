@@ -28,24 +28,24 @@ public class StreamDSPPipeline {
                     new AudioDSP.BiquadFilter(AudioDSP.FilterType.LOW_PASS, sampleRate, 120.0f, 0.707f, 0.0f);
             crossoverFilter2 =
                     new AudioDSP.BiquadFilter(AudioDSP.FilterType.LOW_PASS, sampleRate, 120.0f, 0.707f, 0.0f);
-            eqFrequencies = new float[] {30f, 50f, 70f, 90f, 110f};
+            eqFrequencies = defaultEqFrequencies(speakerType);
         } else if ("mid".equals(speakerType)) {
             // Yamaha HS8 full-range: gentle rolloff at 45Hz (-3dB noktasi)
             crossoverFilter1 =
                     new AudioDSP.BiquadFilter(AudioDSP.FilterType.HIGH_PASS, sampleRate, 45.0f, 0.577f, 0.0f);
             crossoverFilter2 = null;
-            eqFrequencies = new float[] {100f, 400f, 1000f, 4000f, 10000f};
+            eqFrequencies = defaultEqFrequencies(speakerType);
         } else if ("line".equals(speakerType)) {
             // 24dB/oct HP at 120Hz — sub ile eslesir
             crossoverFilter1 =
                     new AudioDSP.BiquadFilter(AudioDSP.FilterType.HIGH_PASS, sampleRate, 120.0f, 0.707f, 0.0f);
             crossoverFilter2 =
                     new AudioDSP.BiquadFilter(AudioDSP.FilterType.HIGH_PASS, sampleRate, 120.0f, 0.707f, 0.0f);
-            eqFrequencies = new float[] {2000f, 4000f, 6000f, 10000f, 15000f};
+            eqFrequencies = defaultEqFrequencies(speakerType);
         } else { // normal — full range, no crossover
             crossoverFilter1 = null;
             crossoverFilter2 = null;
-            eqFrequencies = new float[] {250f, 500f, 1000f, 2000f, 4000f};
+            eqFrequencies = defaultEqFrequencies(speakerType);
         }
 
         if ("sub".equals(speakerType)) {
@@ -57,6 +57,23 @@ public class StreamDSPPipeline {
         } else {
             harmonicSaturator = new AudioDSP.HarmonicSaturator(sampleRate, 0.45f, 0.40f);
         }
+    }
+
+    /**
+     * Single source of truth for the default 5-band EQ frequencies per speaker type.
+     * The mixer panel reads these to display band labels.
+     */
+    public static float[] defaultEqFrequencies(String speakerType) {
+        if ("sub".equals(speakerType)) {
+            return new float[] {30f, 50f, 70f, 90f, 110f};
+        }
+        if ("mid".equals(speakerType)) {
+            return new float[] {100f, 400f, 1000f, 4000f, 10000f};
+        }
+        if ("line".equals(speakerType)) {
+            return new float[] {2000f, 4000f, 6000f, 10000f, 15000f};
+        }
+        return new float[] {250f, 500f, 1000f, 2000f, 4000f};
     }
 
     public void reset() {

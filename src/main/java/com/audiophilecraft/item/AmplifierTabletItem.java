@@ -110,7 +110,7 @@ public class AmplifierTabletItem extends Item {
 
     public static void setEqDb(ItemStack stack, String speakerType, int band, float db) {
         NbtCompound nbt = stack.getOrCreateNbt();
-        nbt.putFloat("EqDb_" + speakerType + "_" + band, Math.max(-12f, Math.min(db, 12f)));
+        nbt.putFloat("EqDb_" + speakerType + "_" + band, Math.max(-9f, Math.min(db, 9f)));
     }
 
     // --- EQ Q (bandwidth, persisted across songs and server restarts) ---

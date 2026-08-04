@@ -160,7 +160,7 @@ final class ClientAudioNetworkHandler {
             float db = buf.readFloat();
             if (!ModMessages.isValidSpeakerType(speakerType)
                     || !ModMessages.isValidEqBand(band)
-                    || !ModMessages.isFiniteInRange(db, -12.0f, 12.0f)) return;
+                    || !ModMessages.isFiniteInRange(db, -9.0f, 9.0f)) return;
             client.execute(() -> AudioEngine.getInstance().setEqDbForSession(sessionUUID, speakerType, band, db));
         });
 

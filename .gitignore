@@ -18,6 +18,9 @@ bin/
 # Minecraft run directory
 run/
 
+# Generated mixin refmap
+audiophilecraft-refmap.json
+
 # OS files
 .DS_Store
 Thumbs.db
