@@ -9,7 +9,10 @@ import net.minecraft.util.math.BlockPos;
 import net.minecraft.util.math.Vec3d;
 import net.minecraft.world.World;
 
-/** Owns shared OpenAL effects, venue reverb state, and listener-centric acoustic updates. */
+/**
+ * Owns shared OpenAL effects, venue reverb state, and listener-centric acoustic
+ * updates.
+ */
 final class AudioEffectsController {
     private static final float[] ZERO_PAN = {0f, 0f, 0f};
     private static final int PRIMARY_ROOM_BUS = 0;
@@ -181,7 +184,8 @@ final class AudioEffectsController {
                 roomBusProfiles[busIndex] = new AcousticProfile(profile.descriptor(), refreshedPreset);
             }
             lastConfigGeneration = currentGeneration;
-            // Reattaching the echo effect resets its delay buffer, so update it only on reload.
+            // Reattaching the echo effect resets its delay buffer, so update it only on
+            // reload.
             applySlapbackConfig();
         }
 
@@ -241,7 +245,10 @@ final class AudioEffectsController {
         roomBus.setFloat(AL_EAXREVERB_DIFFUSION, AL_REVERB_DIFFUSION, diffusion);
         roomBus.setFloat(AL_EAXREVERB_GAIN, AL_REVERB_GAIN, gain);
         roomBus.setFloat(AL_EAXREVERB_GAINHF, AL_REVERB_GAINHF, gainHF);
-        roomBus.setFloat(AL_EAXREVERB_GAINLF, -1, preset.gainLF);
+
+        float safeGainLF = Math.max(0.0f, Math.min(1.0f, preset.gainLF));
+        roomBus.setFloat(AL_EAXREVERB_GAINLF, -1, safeGainLF);
+
         roomBus.setFloat(
                 AL_EAXREVERB_AIR_ABSORPTION_GAINHF, AL_REVERB_AIR_ABSORPTION_GAINHF, preset.airAbsorptionGainHF);
         roomBus.attachEffect();
@@ -256,7 +263,8 @@ final class AudioEffectsController {
         alEffectf(slapbackEffectId, AL_ECHO_FEEDBACK, config.echo_feedback);
         alEffectf(slapbackEffectId, AL_ECHO_SPREAD, config.echo_spread);
         alAuxiliaryEffectSloti(slapbackAuxSlotId, AL_EFFECTSLOT_EFFECT, slapbackEffectId);
-        // Dynamic echo volume is controlled by each StreamSource; the shared slot stays fixed.
+        // Dynamic echo volume is controlled by each StreamSource; the shared slot stays
+        // fixed.
         alAuxiliaryEffectSlotf(slapbackAuxSlotId, AL_EFFECTSLOT_GAIN, 1.0f);
     }
 
