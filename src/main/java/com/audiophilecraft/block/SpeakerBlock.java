@@ -64,6 +64,7 @@ public class SpeakerBlock extends Block implements BlockEntityProvider {
         }
     }
 
+    @SuppressWarnings("deprecation")
     @Override
     public void onStateReplaced(BlockState state, World world, BlockPos pos, BlockState newState, boolean moved) {
         if (!state.isOf(newState.getBlock())) {
@@ -74,12 +75,14 @@ public class SpeakerBlock extends Block implements BlockEntityProvider {
         }
     }
 
+    @SuppressWarnings("deprecation")
     @Override
     public NamedScreenHandlerFactory createScreenHandlerFactory(BlockState state, World world, BlockPos pos) {
         BlockEntity blockEntity = world.getBlockEntity(pos);
         return blockEntity instanceof NamedScreenHandlerFactory ? (NamedScreenHandlerFactory) blockEntity : null;
     }
 
+    @SuppressWarnings("deprecation")
     @Override
     public ActionResult onUse(
             BlockState state, World world, BlockPos pos, PlayerEntity player, Hand hand, BlockHitResult hit) {

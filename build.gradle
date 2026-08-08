@@ -69,6 +69,7 @@ dependencies {
 	// Fast unit tests for pure audio, clustering, and acoustic calculations.
 	testImplementation platform('org.junit:junit-bom:5.10.2')
 	testImplementation 'org.junit.jupiter:junit-jupiter'
+	testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
 }
 
 processResources {
@@ -81,6 +82,7 @@ processResources {
 
 tasks.withType(JavaCompile).configureEach {
 	it.options.release = 17
+	it.options.compilerArgs.add('-Xlint:deprecation')
 }
 
 def unitTestWorkingDirectory = layout.buildDirectory.dir('test-run')
