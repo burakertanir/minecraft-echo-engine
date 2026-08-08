@@ -69,22 +69,25 @@ public final class ModMessages {
 
     public static void sendPlayTrack(
             ServerPlayerEntity player,
+            Identifier playbackDimension,
             UUID ownerUUID,
             String trackId,
             List<SpeakerPlaybackData> speakers,
             float power,
             float inputGain) {
-        ServerAudioNetworkHandler.sendPlayTrack(player, ownerUUID, trackId, speakers, power, inputGain);
+        ServerAudioNetworkHandler.sendPlayTrack(
+                player, playbackDimension, ownerUUID, trackId, speakers, power, inputGain);
     }
 
     public static void sendPlayUrl(
             ServerPlayerEntity player,
+            Identifier playbackDimension,
             UUID ownerUUID,
             String url,
             List<SpeakerPlaybackData> speakers,
             float power,
             float inputGain) {
-        ServerAudioNetworkHandler.sendPlayUrl(player, ownerUUID, url, speakers, power, inputGain);
+        ServerAudioNetworkHandler.sendPlayUrl(player, playbackDimension, ownerUUID, url, speakers, power, inputGain);
     }
 
     static boolean isValidHandOrdinal(int handOrdinal) {
@@ -101,6 +104,10 @@ public final class ModMessages {
 
     static boolean isValidEqBand(int band) {
         return band >= 0 && band < EQ_BAND_COUNT;
+    }
+
+    static boolean isMatchingDimension(Identifier currentDimension, Identifier packetDimension) {
+        return currentDimension != null && currentDimension.equals(packetDimension);
     }
 
     static boolean isValidAudioUrl(String value) {

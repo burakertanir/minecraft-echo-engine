@@ -75,8 +75,10 @@ senkronu kayabilir veya OpenAL context coker.
     tamponlar serbest birakilir ve backend yeni context uzerinde tekrar kurulur.
 11. `AudioEngine` public API/facade siniridir. Yeni DSP veya tarama algoritmasi
     dogrudan bu sinifa doldurulmaz.
-12. Multiplayer paketleri PCM tasimaz. Her istemci parcayi kendi decode eder;
-    sunucu yalnizca komut, metadata ve senkron bariyerlerini yonetir.
+12. Multiplayer paketleri PCM tasimaz. Ayni dimension'daki her istemci parcayi
+    kendi decode eder; sunucu dimension kimligini, komutlari, metadata'yi ve
+    senkron bariyerlerini yonetir. Baska dimension'daki client playback paketini
+    isleyemez.
 
 ## 3. Ust Seviye Calisma Akisi
 
@@ -618,19 +620,21 @@ kullanilmalidir.
 
 ### 13.2 Play bariyeri
 
-Internet parcasinda sunucu tum clientlarin decode hazirligini bekler:
+Internet parcasinda sunucu, parcayi baslatan oyuncuyla ayni dimension'daki
+clientlarin decode hazirligini bekler:
 
 ```text
 Owner client -> C2S_PLAY_URL
-Server -> S2C_PLAY_URL -> tum clientlar
-Her client decode eder -> C2S_PLAYBACK_READY
-Server tum online clientlari bekler
-Server -> S2C_START_PLAYBACK
+Server -> dimension kimlikli S2C_PLAY_URL -> ayni dimension clientlari
+Her uygun client decode eder -> C2S_PLAYBACK_READY
+Server yalnizca o dimension'daki alicilari bekler
+Server -> dimension-scoped S2C_START_PLAYBACK
 ```
 
 Timeout 30 saniyedir. Pending state her 20 server tick'te kontrol edilir.
 Oyuncu ayrilirsa waiting set'ten cikarilir. Timeout sonunda kalan clientlar icin
-calim yine baslatilir.
+calim yine baslatilir. Dimension degistiren oyuncular da periyodik bakimda
+waiting set'ten cikarilir.
 
 ### 13.3 Seek bariyeri
 
@@ -646,6 +650,10 @@ C2S_SEEK_TRACK
 
 UI yerel tahmin ile seek'i aninda gosterebilir, fakat paylasilan devam noktasi
 server barrier'dan gelir.
+
+Seek alicilari da session'in dimension'i ile sinirlidir. `pendingSeekReady`, play
+bariyeriyle ayni 30 saniyelik periyodik bakimdan gecer; cevap vermeyen client
+seek completion'i sonsuza kadar bekletemez.
 
 ### 13.4 Kontrol paketleri
 
@@ -856,9 +864,13 @@ edilecek alanlari gosterir.
 2. Venue world taramasi thread-safe olmak icin client ana akisinda. En fazla 8 x
    1000 ray ayni geciste frame hitch uretebilir. Gelecekte snapshot/chunk-safe
    saf veri katmani dusunulebilir.
-3. JUnit 5 altyapisi ve 71 saf regresyon testi vardir. Speaker gruplama,
+3. JUnit 5 altyapisi ve 110 saf regresyon testi vardir. Speaker gruplama,
    `AudioStreamBuffer`, reverb profil benzerligi, venue tier sinirlari, config
-   migration dosya/yedek davranisi ve ag paketi girdi dogrulamasi kapsanir.
+   migration dosya/yedek davranisi, dimension dogrulamasi, sync timeout
+   sinirlari, ready bariyeri ve gercek `PacketByteBuf` round-trip/bozuk paket
+   davranisi kapsanir. Ayrica ayri test modundaki 2 Fabric GameTest, baslatilan
+   gercek Minecraft sunucusunda block entity ve dimension-scoped speaker
+   registry yasam dongusunu dogrular.
 4. Dogrudan `System.out`, `System.err` ve `printStackTrace` cagrilari SLF4J'ye
    tasindi. Yuksek frekansli audio-thread hatasi rate-limited loglanir. OpenAL
    mesajlarina daha ayrintili session/source baglami eklenebilir.
@@ -882,11 +894,21 @@ edilecek alanlari gosterir.
 .\gradlew.bat test
 ```
 
+`test`, 110 hizli JUnit testini calistirir. Gercek Minecraft sunucusunu acan iki
+oyun entegrasyon testini tek basina calistirmak icin:
+
+```powershell
+.\gradlew.bat runGameTest
+```
+
 Yayin adayi icin:
 
 ```powershell
 .\gradlew.bat build
 ```
+
+`runGameTest`, `check` gorevine baglidir; dolayisiyla `build` hem 110 JUnit
+testini hem de 2 basiz sunucu GameTest'ini otomatik calistirir.
 
 ### Duyum ve davranis smoke testleri
 
@@ -899,7 +921,7 @@ Yayin adayi icin:
 | Acik hava deligi | Ray point cloud, openness ve tier kararliligi. |
 | Occlusion | Engel girince dry HF azalirken room/echo karakterinin beklenen sekilde kalmasi. |
 | Pause ve hareket | Pause et, baska yere git, resume et; propagation kaymasi olmamali. |
-| Seek | Tek oyuncu ve mumkunse iki client ready barrier. |
+| Seek | Paket formati, timeout, ready sirasi, disconnect ve dimension degisimi otomatiktir; son duyum smoke testi yap. |
 | World/disconnect | Ses ve EFX geride kalmamali. |
 | Cihaz degisimi | Kulakligi cikar/tak; oyun restart etmeden yeni parca acilabilmeli. |
 | Replay Mod | Replay pause, resume ve replay kapatma cleanup'i. |
@@ -950,7 +972,13 @@ Yayin guvenligi
 |   |-- [x] VenuePresetCalculator tier sinirlari
 |   |-- [x] SpeakerClusterer transitive gruplama
 |   |-- [x] AudioStreamBuffer channel/seek/uzun frame konumlari
-|   `-- [x] Config migration custom-value/yedek korumasi
+|   |-- [x] Config migration custom-value/yedek korumasi
+|   |-- [x] Playback/seek packet codec round-trip ve bozuk paket reddi
+|   `-- [x] Ready bariyeri timeout/disconnect/dimension degisimi
+|-- Basiz Minecraft GameTest (temel paket tamamlandi)
+|   |-- [x] Mod ve server baslangici
+|   |-- [x] Tum speaker block entity tipleri
+|   `-- [x] Dimension-scoped speaker registry ekleme/silme
 |-- Diagnostik
 |   |-- [x] System.err/System.out/printStackTrace -> SLF4J
 |   `-- OpenAL error mesajlarina session/source baglami

@@ -38,6 +38,7 @@ import java.util.List;
 import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.function.Function;
 import net.fabricmc.fabric.api.networking.v1.PacketByteBufs;
 import net.fabricmc.fabric.api.networking.v1.ServerPlayConnectionEvents;
 import net.fabricmc.fabric.api.networking.v1.ServerPlayNetworking;
@@ -52,7 +53,7 @@ import net.minecraft.util.math.BlockPos;
 
 /** Owns C2S packet handling, server-side persistence, broadcasts and ready handshakes. */
 final class ServerAudioNetworkHandler {
-    private static final long SYNC_TIMEOUT_MS = 30_000L;
+    static final long SYNC_TIMEOUT_MS = 30_000L;
     private static final int SYNC_MAINTENANCE_INTERVAL_TICKS = 20;
 
     private static final ConcurrentHashMap<UUID, PendingSync> pendingPlayReady = new ConcurrentHashMap<>();
@@ -78,17 +79,8 @@ final class ServerAudioNetworkHandler {
         syncMaintenanceTicks = 0;
 
         long now = System.currentTimeMillis();
-        for (var pending : pendingPlayReady.entrySet()) {
-            PendingSync state = pending.getValue();
-            if (now - state.startedAtMs() <= SYNC_TIMEOUT_MS) continue;
-            if (!pendingPlayReady.remove(pending.getKey(), state)) continue;
-
-            AudiophileCraft.LOGGER.warn(
-                    "Playback sync timed out for session {}; starting without {} client(s).",
-                    pending.getKey(),
-                    state.waitingPlayers().size());
-            broadcastToAll(server, S2C_START_PLAYBACK, buf -> buf.writeUuid(pending.getKey()));
-        }
+        maintainPendingSyncs(server, pendingPlayReady, S2C_START_PLAYBACK, "Playback", now);
+        maintainPendingSyncs(server, pendingSeekReady, S2C_SYNC_SEEK, "Seek", now);
     }
 
     static void clearPendingSyncs() {
@@ -102,43 +94,39 @@ final class ServerAudioNetworkHandler {
         for (PendingSync sync : pendingSeekReady.values()) sync.waitingPlayers().remove(playerUUID);
 
         long now = System.currentTimeMillis();
-        pendingPlayReady.entrySet().removeIf(entry -> {
-            PendingSync sync = entry.getValue();
-            if (sync.waitingPlayers().isEmpty() || now - sync.startedAtMs() > SYNC_TIMEOUT_MS) {
-                broadcastToAll(server, S2C_START_PLAYBACK, buf -> buf.writeUuid(entry.getKey()));
-                return true;
-            }
-            return false;
-        });
-        pendingSeekReady.entrySet().removeIf(entry -> {
-            PendingSync sync = entry.getValue();
-            if (sync.waitingPlayers().isEmpty() || now - sync.startedAtMs() > SYNC_TIMEOUT_MS) {
-                broadcastToAll(server, S2C_SYNC_SEEK, buf -> buf.writeUuid(entry.getKey()));
-                return true;
-            }
-            return false;
-        });
+        completeDueSyncs(server, pendingPlayReady, S2C_START_PLAYBACK, "Playback", now);
+        completeDueSyncs(server, pendingSeekReady, S2C_SYNC_SEEK, "Seek", now);
     }
 
     static void sendPlayTrack(
             ServerPlayerEntity player,
+            Identifier playbackDimension,
             UUID ownerUUID,
             String trackId,
             List<SpeakerPlaybackData> speakers,
             float power,
             float inputGain) {
-        PacketByteBuf buf = createPlaybackBuffer(ownerUUID, trackId, speakers, power, inputGain);
+        PacketByteBuf buf = AudioPacketCodec.createPlaybackBuffer(
+                playbackDimension,
+                ownerUUID,
+                trackId,
+                AudioPacketCodec.MAX_TRACK_ID_LENGTH,
+                speakers,
+                power,
+                inputGain);
         ServerPlayNetworking.send(player, S2C_PLAY_TRACK, buf);
     }
 
     static void sendPlayUrl(
             ServerPlayerEntity player,
+            Identifier playbackDimension,
             UUID ownerUUID,
             String url,
             List<SpeakerPlaybackData> speakers,
             float power,
             float inputGain) {
-        PacketByteBuf buf = createPlaybackBuffer(ownerUUID, url, speakers, power, inputGain);
+        PacketByteBuf buf = AudioPacketCodec.createPlaybackBuffer(
+                playbackDimension, ownerUUID, url, AudioPacketCodec.MAX_URL_LENGTH, speakers, power, inputGain);
         ServerPlayNetworking.send(player, S2C_PLAY_URL, buf);
     }
 
@@ -152,16 +140,20 @@ final class ServerAudioNetworkHandler {
                 if (!(stack.getItem() instanceof AmplifierTabletItem)) return;
 
                 UUID ownerUUID = player.getUuid();
+                Identifier playbackDimension =
+                        player.getWorld().getRegistryKey().getValue();
                 List<SpeakerPlaybackData> speakers =
                         SpeakerRegistry.findPlaybackDataByOwner(player.getWorld(), ownerUUID);
                 float power = AmplifierTabletItem.getSpeakerPower(stack);
                 float inputGain = AmplifierTabletItem.getInputGain(stack);
                 Set<UUID> waitingPlayers = ConcurrentHashMap.newKeySet();
                 for (ServerPlayerEntity onlinePlayer : server.getPlayerManager().getPlayerList()) {
-                    sendPlayUrl(onlinePlayer, ownerUUID, url, speakers, power, inputGain);
+                    if (!isPlayerInDimension(onlinePlayer, playbackDimension)) continue;
+                    sendPlayUrl(onlinePlayer, playbackDimension, ownerUUID, url, speakers, power, inputGain);
                     waitingPlayers.add(onlinePlayer.getUuid());
                 }
-                pendingPlayReady.put(ownerUUID, new PendingSync(waitingPlayers, System.currentTimeMillis()));
+                pendingPlayReady.put(
+                        ownerUUID, new PendingSync(waitingPlayers, System.currentTimeMillis(), playbackDimension));
             });
         });
 
@@ -315,15 +307,18 @@ final class ServerAudioNetworkHandler {
                 if (!(getTabletStack(player).getItem() instanceof AmplifierTabletItem)) return;
 
                 UUID sessionUUID = player.getUuid();
+                Identifier playbackDimension =
+                        player.getWorld().getRegistryKey().getValue();
                 Set<UUID> waitingPlayers = ConcurrentHashMap.newKeySet();
                 for (ServerPlayerEntity onlinePlayer : server.getPlayerManager().getPlayerList()) {
-                    PacketByteBuf prepBuf = PacketByteBufs.create();
-                    prepBuf.writeUuid(sessionUUID);
-                    prepBuf.writeFloat(targetTime);
+                    if (!isPlayerInDimension(onlinePlayer, playbackDimension)) continue;
+                    PacketByteBuf prepBuf =
+                            AudioPacketCodec.createSeekPrepBuffer(sessionUUID, playbackDimension, targetTime);
                     ServerPlayNetworking.send(onlinePlayer, S2C_PREP_SEEK, prepBuf);
                     waitingPlayers.add(onlinePlayer.getUuid());
                 }
-                pendingSeekReady.put(sessionUUID, new PendingSync(waitingPlayers, System.currentTimeMillis()));
+                pendingSeekReady.put(
+                        sessionUUID, new PendingSync(waitingPlayers, System.currentTimeMillis(), playbackDimension));
             });
         });
 
@@ -354,10 +349,10 @@ final class ServerAudioNetworkHandler {
         PendingSync sync = pendingSyncs.get(sessionUUID);
         if (sync == null) return;
 
-        sync.waitingPlayers().remove(playerUUID);
-        if (sync.waitingPlayers().isEmpty() || isSyncTimedOut(sync)) {
-            pendingSyncs.remove(sessionUUID);
-            broadcastToAll(server, completionChannel, buf -> buf.writeUuid(sessionUUID));
+        if (markPlayerReady(sync, playerUUID) || isSyncTimedOut(sync)) {
+            if (pendingSyncs.remove(sessionUUID, sync)) {
+                broadcastToDimension(server, sync.dimension(), completionChannel, buf -> buf.writeUuid(sessionUUID));
+            }
         }
     }
 
@@ -405,31 +400,88 @@ final class ServerAudioNetworkHandler {
         return System.currentTimeMillis() - sync.startedAtMs() > SYNC_TIMEOUT_MS;
     }
 
+    private static void maintainPendingSyncs(
+            MinecraftServer server,
+            ConcurrentHashMap<UUID, PendingSync> pendingSyncs,
+            Identifier completionChannel,
+            String syncName,
+            long now) {
+        for (PendingSync sync : pendingSyncs.values()) {
+            prunePlayersOutsideDimension(sync, playerUUID -> playerDimension(server, playerUUID));
+        }
+        completeDueSyncs(server, pendingSyncs, completionChannel, syncName, now);
+    }
+
+    private static void completeDueSyncs(
+            MinecraftServer server,
+            ConcurrentHashMap<UUID, PendingSync> pendingSyncs,
+            Identifier completionChannel,
+            String syncName,
+            long now) {
+        for (DueSync due : removeDueSyncs(pendingSyncs, now)) {
+            if (due.timedOut() && !due.state().waitingPlayers().isEmpty()) {
+                AudiophileCraft.LOGGER.warn(
+                        "{} sync timed out for session {}; continuing without {} client(s).",
+                        syncName,
+                        due.sessionUUID(),
+                        due.state().waitingPlayers().size());
+            }
+            broadcastToDimension(
+                    server, due.state().dimension(), completionChannel, buf -> buf.writeUuid(due.sessionUUID()));
+        }
+    }
+
+    static List<DueSync> removeDueSyncs(ConcurrentHashMap<UUID, PendingSync> pendingSyncs, long now) {
+        List<DueSync> dueSyncs = new java.util.ArrayList<>();
+        for (var pending : pendingSyncs.entrySet()) {
+            PendingSync state = pending.getValue();
+            boolean timedOut = now - state.startedAtMs() > SYNC_TIMEOUT_MS;
+            if (!timedOut && !state.waitingPlayers().isEmpty()) continue;
+            if (pendingSyncs.remove(pending.getKey(), state)) {
+                dueSyncs.add(new DueSync(pending.getKey(), state, timedOut));
+            }
+        }
+        return dueSyncs;
+    }
+
+    static boolean markPlayerReady(PendingSync sync, UUID playerUUID) {
+        sync.waitingPlayers().remove(playerUUID);
+        return sync.waitingPlayers().isEmpty();
+    }
+
+    static int prunePlayersOutsideDimension(PendingSync sync, Function<UUID, Identifier> dimensionLookup) {
+        int previousSize = sync.waitingPlayers().size();
+        sync.waitingPlayers()
+                .removeIf(playerUUID ->
+                        !ModMessages.isMatchingDimension(dimensionLookup.apply(playerUUID), sync.dimension()));
+        return previousSize - sync.waitingPlayers().size();
+    }
+
+    private static Identifier playerDimension(MinecraftServer server, UUID playerUUID) {
+        ServerPlayerEntity player = server.getPlayerManager().getPlayer(playerUUID);
+        return player == null ? null : player.getWorld().getRegistryKey().getValue();
+    }
+
+    private static boolean isPlayerInDimension(ServerPlayerEntity player, Identifier dimension) {
+        return player.getWorld().getRegistryKey().getValue().equals(dimension);
+    }
+
     private static float clamp(float value, float min, float max) {
         return Math.max(min, Math.min(max, value));
     }
 
-    private static PacketByteBuf createPlaybackBuffer(
-            UUID ownerUUID, String trackOrUrl, List<SpeakerPlaybackData> speakers, float power, float inputGain) {
-        PacketByteBuf buf = PacketByteBufs.create();
-        buf.writeUuid(ownerUUID);
-        buf.writeString(trackOrUrl);
-        buf.writeFloat(power);
-        buf.writeFloat(inputGain);
-        buf.writeInt(speakers.size());
-        for (SpeakerPlaybackData speaker : speakers) {
-            buf.writeBlockPos(speaker.position());
-            buf.writeString(speaker.speakerType(), 16);
-            buf.writeInt(speaker.facing().getId());
-            buf.writeInt(speaker.verticalTiltDeg());
-            buf.writeInt(speaker.sampleShiftMs());
-            buf.writeInt(speaker.channelMask());
-        }
-        return buf;
-    }
-
     private static void broadcastToAll(MinecraftServer server, Identifier channel, BufWriter writer) {
         for (ServerPlayerEntity player : server.getPlayerManager().getPlayerList()) {
+            PacketByteBuf buf = PacketByteBufs.create();
+            writer.write(buf);
+            ServerPlayNetworking.send(player, channel, buf);
+        }
+    }
+
+    private static void broadcastToDimension(
+            MinecraftServer server, Identifier dimension, Identifier channel, BufWriter writer) {
+        for (ServerPlayerEntity player : server.getPlayerManager().getPlayerList()) {
+            if (!isPlayerInDimension(player, dimension)) continue;
             PacketByteBuf buf = PacketByteBufs.create();
             writer.write(buf);
             ServerPlayNetworking.send(player, channel, buf);
@@ -441,5 +493,7 @@ final class ServerAudioNetworkHandler {
         void write(PacketByteBuf buf);
     }
 
-    private record PendingSync(Set<UUID> waitingPlayers, long startedAtMs) {}
+    record PendingSync(Set<UUID> waitingPlayers, long startedAtMs, Identifier dimension) {}
+
+    record DueSync(UUID sessionUUID, PendingSync state, boolean timedOut) {}
 }

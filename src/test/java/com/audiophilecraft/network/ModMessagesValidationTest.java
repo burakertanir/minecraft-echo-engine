@@ -4,6 +4,7 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import net.minecraft.util.Hand;
+import net.minecraft.util.Identifier;
 import org.junit.jupiter.api.Test;
 
 class ModMessagesValidationTest {
@@ -66,5 +67,16 @@ class ModMessagesValidationTest {
         }
         assertFalse(ModMessages.isValidEqBand(-1));
         assertFalse(ModMessages.isValidEqBand(5));
+    }
+
+    @Test
+    void playbackDimensionMustMatchTheClientsCurrentDimension() {
+        Identifier overworld = new Identifier("minecraft", "overworld");
+        Identifier nether = new Identifier("minecraft", "the_nether");
+        assertTrue(ModMessages.isMatchingDimension(overworld, overworld));
+
+        assertFalse(ModMessages.isMatchingDimension(overworld, nether));
+        assertFalse(ModMessages.isMatchingDimension(null, overworld));
+        assertFalse(ModMessages.isMatchingDimension(overworld, null));
     }
 }

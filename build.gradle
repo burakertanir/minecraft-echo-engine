@@ -24,9 +24,18 @@ repositories {
 	mavenCentral()
 }
 
+sourceSets {
+	gameTest {
+		compileClasspath += sourceSets.main.output + sourceSets.main.compileClasspath
+		runtimeClasspath += sourceSets.main.output + sourceSets.main.runtimeClasspath
+	}
+}
+
 // Loom include configuration bundles dependencies into the mod JAR
 configurations {
 	include
+	gameTestImplementation.extendsFrom implementation, modImplementation
+	gameTestRuntimeOnly.extendsFrom runtimeOnly, modRuntimeOnly
 }
 
 dependencies {
@@ -155,11 +164,45 @@ spotless {
 }
 
 loom {
+	createRemapConfigurations(sourceSets.gameTest)
+	mods {
+		"audiophilecraft" {
+			sourceSet sourceSets.main
+		}
+		"audiophilecraft-gametest" {
+			sourceSet sourceSets.gameTest
+		}
+	}
     runs {
         client {
             programArgs "--username", "DevBurak"
         }
+		gameTest {
+			server()
+			name "AudiophileCraft Game Test"
+			source sourceSets.main
+			runDir "build/game-test-run"
+			property "fabric-api.gametest"
+			property "fabric-api.gametest.report-file", file("build/test-results/gameTest/results.xml").absolutePath
+			programArg "--nogui"
+			ideConfigGenerated false
+		}
     }
+}
+
+def prepareGameTestRun = tasks.register('prepareGameTestRun', Copy) {
+	from('src/gameTest/server-config')
+	into(layout.buildDirectory.dir('game-test-run'))
+}
+
+tasks.named('runGameTest') {
+	dependsOn tasks.named('gameTestClasses'), prepareGameTestRun
+	classpath sourceSets.gameTest.output
+	outputs.file layout.buildDirectory.file('test-results/gameTest/results.xml')
+}
+
+tasks.named('check') {
+	dependsOn tasks.named('runGameTest')
 }
 
 // jemalloc native crash workaround: set env var + jvm args on runClient task

@@ -1,0 +1,18 @@
+{
+  "schemaVersion": 1,
+  "id": "audiophilecraft-gametest",
+  "version": "1.0.0",
+  "name": "AudiophileCraft Game Tests",
+  "environment": "server",
+  "entrypoints": {
+    "fabric-gametest": [
+      "com.audiophilecraft.gametest.AudiophileCraftGameTests"
+    ]
+  },
+  "depends": {
+    "fabricloader": ">=0.15.7",
+    "minecraft": "~1.20.1",
+    "audiophilecraft": "*",
+    "fabric-gametest-api-v1": "*"
+  }
+}
