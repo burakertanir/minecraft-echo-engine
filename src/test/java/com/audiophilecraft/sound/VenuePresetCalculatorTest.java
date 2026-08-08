@@ -1,5 +1,6 @@
 package com.audiophilecraft.sound;
 
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -52,6 +53,43 @@ class VenuePresetCalculatorTest {
         assertTrue(preset.tierName.contains("OPEN AIR"), preset.tierName);
     }
 
+    @ParameterizedTest
+    @MethodSource("exactVolumeBoundaryCases")
+    void exactVolumeBoundaryRemainsInTheLowerTier(float threshold, String expectedTier) {
+        AdvancedAcousticScanner.VenuePreset preset =
+                calculator.calculate(descriptor(threshold, 1.0f, 0.0f), Vec3d.ZERO, config);
+
+        assertTrue(preset.tierName.startsWith(expectedTier), preset.tierName);
+    }
+
+    @ParameterizedTest
+    @MethodSource("largeVenueEchoCases")
+    void assignsExpectedDistantEchoDepthForLargeVenueTiers(float volume, float expectedEchoDepth) {
+        AdvancedAcousticScanner.VenuePreset preset =
+                calculator.calculate(descriptor(volume, 1.0f, 0.0f), Vec3d.ZERO, config);
+
+        assertEquals(expectedEchoDepth, preset.echoDepth, 0.0001f, preset.tierName);
+    }
+
+    @Test
+    void degenerateVenueStillProducesFiniteBoundedDefaults() {
+        Vec3d probePosition = new Vec3d(3.0, 5.0, 7.0);
+        AdvancedAcousticScanner.VenueDescriptor degenerate =
+                new AdvancedAcousticScanner.VenueDescriptor(0.0f, 0.0f, 0.0f, 0.0f, 1.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f);
+
+        AdvancedAcousticScanner.VenuePreset preset = calculator.calculate(degenerate, probePosition, config);
+
+        assertEquals(probePosition, preset.probePosition);
+        assertTrue(Float.isFinite(preset.decayTime) && preset.decayTime > 0.0f);
+        assertTrue(Float.isFinite(preset.gain) && preset.gain >= 0.0f);
+        assertTrue(Float.isFinite(preset.reflectionsGain) && preset.reflectionsGain >= 0.0f);
+        assertTrue(preset.reflectionsDelay >= 0.001f && preset.reflectionsDelay <= 0.3f);
+        assertTrue(preset.lateReverbDelay >= 0.0f && preset.lateReverbDelay <= 0.1f);
+        assertTrue(preset.echoTime >= 0.075f && preset.echoTime <= 0.25f);
+        assertTrue(preset.enclosure >= 0.0f && preset.enclosure <= 1.0f);
+        assertTrue(preset.tierName.contains("OPEN AIR"), preset.tierName);
+    }
+
     private static Stream<Arguments> volumeTierCases() {
         LiveTuningConfig cfg = LiveTuningConfig.createDefaults();
         return Stream.of(
@@ -65,6 +103,31 @@ class VenuePresetCalculatorTest {
                 Arguments.of(cfg.tier8_volumeThreshold + 1.0f, "TIER 8"),
                 Arguments.of(cfg.tier9_volumeThreshold + 1.0f, "TIER 9"),
                 Arguments.of(cfg.tier10_volumeThreshold + 1.0f, "TIER 10"));
+    }
+
+    private static Stream<Arguments> exactVolumeBoundaryCases() {
+        LiveTuningConfig cfg = LiveTuningConfig.createDefaults();
+        return Stream.of(
+                Arguments.of(cfg.tier2_volumeThreshold, "TIER 1"),
+                Arguments.of(cfg.tier3_volumeThreshold, "TIER 2"),
+                Arguments.of(cfg.tier4_volumeThreshold, "TIER 3"),
+                Arguments.of(cfg.tier5_volumeThreshold, "TIER 4"),
+                Arguments.of(cfg.tier6_volumeThreshold, "TIER 5"),
+                Arguments.of(cfg.tier7_volumeThreshold, "TIER 6"),
+                Arguments.of(cfg.tier8_volumeThreshold, "TIER 7"),
+                Arguments.of(cfg.tier9_volumeThreshold, "TIER 8"),
+                Arguments.of(cfg.tier10_volumeThreshold, "TIER 9"));
+    }
+
+    private static Stream<Arguments> largeVenueEchoCases() {
+        LiveTuningConfig cfg = LiveTuningConfig.createDefaults();
+        return Stream.of(
+                Arguments.of(cfg.tier5_volumeThreshold + 1.0f, 0.04f),
+                Arguments.of(cfg.tier6_volumeThreshold + 1.0f, 0.10f),
+                Arguments.of(cfg.tier7_volumeThreshold + 1.0f, 0.18f),
+                Arguments.of(cfg.tier8_volumeThreshold + 1.0f, 0.24f),
+                Arguments.of(cfg.tier9_volumeThreshold + 1.0f, 0.28f),
+                Arguments.of(cfg.tier10_volumeThreshold + 1.0f, 0.32f));
     }
 
     private static AdvancedAcousticScanner.VenueDescriptor descriptor(float volume, float scale, float openness) {

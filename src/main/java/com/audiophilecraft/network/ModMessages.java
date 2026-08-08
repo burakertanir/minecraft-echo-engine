@@ -96,7 +96,7 @@ public final class ModMessages {
     }
 
     static boolean isValidSpeakerType(String speakerType) {
-        return VALID_SPEAKER_TYPES.contains(speakerType);
+        return speakerType != null && VALID_SPEAKER_TYPES.contains(speakerType);
     }
 
     static boolean isValidEqBand(int band) {

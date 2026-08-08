@@ -2,6 +2,7 @@ package com.audiophilecraft.sound;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import net.minecraft.util.math.Vec3d;
@@ -57,6 +58,34 @@ class ReverbBusAllocatorTest {
 
         assertFalse(ReverbBusAllocator.areSimilar(null, profile));
         assertFalse(ReverbBusAllocator.areSimilar(profile, null));
+        assertFalse(ReverbBusAllocator.areSimilar(null, null));
+    }
+
+    @Test
+    void profileDistanceRemainsNormalizedForExtremeDifferences() {
+        AcousticProfile minimum = profile(0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f);
+        AcousticProfile maximum = profile(1.0f, 1.0f, 1.0f, 1_000_000.0f, Float.MAX_VALUE, 100.0f);
+
+        double distance = ReverbBusAllocator.profileDistance(minimum, maximum);
+
+        assertTrue(Double.isFinite(distance));
+        assertTrue(distance >= 0.0 && distance <= 1.0, "distance=" + distance);
+    }
+
+    @Test
+    void changingOneAcousticMetricIncreasesDistance() {
+        AcousticProfile base = profile(0.8f, 0.08f, 0.2f, 20.0f, 20_000.0f, 1.5f);
+        AcousticProfile changed = profile(0.8f, 0.08f, 0.2f, 20.0f, 320_000.0f, 1.5f);
+
+        assertTrue(ReverbBusAllocator.profileDistance(base, changed) > 0.0);
+    }
+
+    @Test
+    void acousticProfileRejectsMissingRequiredParts() {
+        AcousticProfile valid = profile(0.8f, 0.08f, 0.2f, 20.0f, 20_000.0f, 1.5f);
+
+        assertThrows(NullPointerException.class, () -> new AcousticProfile(null, valid.preset()));
+        assertThrows(NullPointerException.class, () -> new AcousticProfile(valid.descriptor(), null));
     }
 
     private static AcousticProfile profile(

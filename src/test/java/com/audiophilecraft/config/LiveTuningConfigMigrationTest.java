@@ -2,6 +2,7 @@ package com.audiophilecraft.config;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.io.IOException;
@@ -92,6 +93,63 @@ class LiveTuningConfigMigrationTest {
         assertEquals(99, result.config().config_version);
         assertEquals(0.61f, result.config().line_rearGain);
         assertFalse(Files.exists(backupPath(configPath, 99)));
+    }
+
+    @Test
+    void negativeVersionIsTreatedAsLegacyVersionZero() throws IOException {
+        Path configPath = writeConfig(
+                """
+                {
+                  "config_version": -7,
+                  "line_rearGain": 0.25
+                }
+                """);
+
+        LiveTuningConfig.MigrationResult result = LiveTuningConfig.readAndMigrate(configPath);
+
+        assertTrue(result.migrated());
+        assertEquals(0, result.sourceVersion());
+        assertEquals(1, result.config().config_version);
+        assertEquals(0.9f, result.config().line_rearGain);
+        assertTrue(Files.exists(backupPath(configPath, 0)));
+    }
+
+    @Test
+    void commentMarkersInsideQuotedStringsArePreserved() throws IOException {
+        Path configPath = writeConfig(
+                """
+                {
+                  "config_version": 1,
+                  "documentation_url": "https://example.com/audio//stream",
+                  "line_rearGain": 0.37 // trailing comment
+                }
+                """);
+
+        LiveTuningConfig.MigrationResult result = LiveTuningConfig.readAndMigrate(configPath);
+
+        assertFalse(result.migrated());
+        assertEquals(0.37f, result.config().line_rearGain);
+    }
+
+    @Test
+    void existingBackupIsNeverOverwrittenByALaterMigrationAttempt() throws IOException {
+        String original = "{\n  \"line_rearGain\": 0.25\n}\n";
+        Path configPath = writeConfig(original);
+        Path backup = backupPath(configPath, 0);
+
+        LiveTuningConfig.readAndMigrate(configPath);
+        Files.writeString(configPath, "{\n  \"line_rearGain\": 0.26\n}\n");
+        LiveTuningConfig.readAndMigrate(configPath);
+
+        assertEquals(original, Files.readString(backup));
+    }
+
+    @Test
+    void malformedJsonFailsWithoutCreatingABackup() throws IOException {
+        Path configPath = writeConfig("{ \"config_version\": 0, \"line_rearGain\": }");
+
+        assertThrows(RuntimeException.class, () -> LiveTuningConfig.readAndMigrate(configPath));
+        assertFalse(Files.exists(backupPath(configPath, 0)));
     }
 
     private Path writeConfig(String content) throws IOException {

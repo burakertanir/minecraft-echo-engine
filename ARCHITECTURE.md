@@ -856,9 +856,9 @@ edilecek alanlari gosterir.
 2. Venue world taramasi thread-safe olmak icin client ana akisinda. En fazla 8 x
    1000 ray ayni geciste frame hitch uretebilir. Gelecekte snapshot/chunk-safe
    saf veri katmani dusunulebilir.
-3. JUnit 5 altyapisi ve 34 saf regresyon testi vardir. Speaker gruplama,
-   `AudioStreamBuffer`, reverb profil benzerligi, venue tier sinirlari ve config
-   migration dosya/yedek davranisi kapsanir.
+3. JUnit 5 altyapisi ve 71 saf regresyon testi vardir. Speaker gruplama,
+   `AudioStreamBuffer`, reverb profil benzerligi, venue tier sinirlari, config
+   migration dosya/yedek davranisi ve ag paketi girdi dogrulamasi kapsanir.
 4. Dogrudan `System.out`, `System.err` ve `printStackTrace` cagrilari SLF4J'ye
    tasindi. Yuksek frekansli audio-thread hatasi rate-limited loglanir. OpenAL
    mesajlarina daha ayrintili session/source baglami eklenebilir.

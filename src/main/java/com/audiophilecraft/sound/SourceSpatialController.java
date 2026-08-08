@@ -88,8 +88,8 @@ final class SourceSpatialController {
         distance = (float) sourceDistance;
         calculateDirectionality(sourceDistance, deltaX, deltaY, deltaZ, config);
 
-        float smoothingTarget = occlusionTracker.update(world, position, listenerPosition, sourceDistance,
-                isSubwoofer(), config);
+        float smoothingTarget =
+                occlusionTracker.update(world, position, listenerPosition, sourceDistance, isSubwoofer(), config);
         targetOcclusion = occlusionTracker.target();
         currentOcclusion = occlusionTracker.current();
 
@@ -123,8 +123,7 @@ final class SourceSpatialController {
     }
 
     void applyPendingEchoSend(float normalization) {
-        if (!pendingEchoSend)
-            return;
+        if (!pendingEchoSend) return;
 
         float normalizedGain = pendingEchoSendGain * Math.max(0.0f, Math.min(1.0f, normalization));
         openAlResources.applyEchoSend(
@@ -145,16 +144,15 @@ final class SourceSpatialController {
         directionalGain = 1.0f;
         directionalFocus = 1.0f;
         horizontalDot = 1.0;
-        if (isSubwoofer())
-            return;
+        if (isSubwoofer()) return;
 
         double toListenerX = -deltaX;
         double toListenerZ = -deltaZ;
         double horizontalDistance = Math.sqrt(toListenerX * toListenerX + toListenerZ * toListenerZ);
         double horizontalDirectionX = directionX;
         double horizontalDirectionZ = directionZ;
-        double directionLength = Math
-                .sqrt(horizontalDirectionX * horizontalDirectionX + horizontalDirectionZ * horizontalDirectionZ);
+        double directionLength =
+                Math.sqrt(horizontalDirectionX * horizontalDirectionX + horizontalDirectionZ * horizontalDirectionZ);
 
         horizontalDot = 0.0;
         double verticalDot = 0.0;
@@ -188,8 +186,8 @@ final class SourceSpatialController {
             verticalExponent = config.normal_vtExp;
         }
 
-        double combinedFocus = Math.pow(horizontalFactor, horizontalExponent)
-                * Math.pow(verticalFactor, verticalExponent);
+        double combinedFocus =
+                Math.pow(horizontalFactor, horizontalExponent) * Math.pow(verticalFactor, verticalExponent);
         if (horizontalDot >= 0.0) {
             directionalFocus = (float) (combinedFocus + (1.0 - combinedFocus) * 0.40 * horizontalDot);
         } else {
@@ -224,10 +222,8 @@ final class SourceSpatialController {
         dynamicMaxDistance = baseMaxDistance * (float) Math.max(0.2, Math.sqrt(smoothedPower));
 
         double rolloffExponent = config.mid_rolloffExponent;
-        if (isSubwoofer())
-            rolloffExponent = config.sub_rolloffExponent;
-        if (isLineArray())
-            rolloffExponent = config.line_rolloffExponent;
+        if (isSubwoofer()) rolloffExponent = config.sub_rolloffExponent;
+        if (isLineArray()) rolloffExponent = config.line_rolloffExponent;
 
         if (distance <= effectiveReferenceDistance) {
             attenuation = 1.0f;
@@ -242,8 +238,8 @@ final class SourceSpatialController {
             float kneeRatio = 0.0f; // DISABLED FOR TESTING
             double kneeEnd = Math.min(effectiveReferenceDistance * (1.0 + kneeRatio), fadeStart);
             if (kneeEnd > effectiveReferenceDistance && distance < kneeEnd) {
-                float kneeProgress = (float) ((distance - effectiveReferenceDistance)
-                        / (kneeEnd - effectiveReferenceDistance));
+                float kneeProgress =
+                        (float) ((distance - effectiveReferenceDistance) / (kneeEnd - effectiveReferenceDistance));
                 float smoothProgress = kneeProgress * kneeProgress * (3.0f - 2.0f * kneeProgress);
                 inversePower = 1.0 + (inversePower - 1.0) * smoothProgress;
             }
@@ -321,8 +317,8 @@ final class SourceSpatialController {
         float occlusionHighFrequencyGain = calculateOcclusionHighFrequencyGain(smoothingTarget, config);
         float underwaterHighFrequencyGain = AudioEngine.getInstance().getUnderwaterHFGain();
         float directionHighFrequencyGain = calculateDirectionalHighFrequencyGain(config);
-        float airHighFrequencyGain = isLineArray() ? (float) Math.pow(0.5, distance / config.hf_air_absorb_halving_dist)
-                : 1.0f;
+        float airHighFrequencyGain =
+                isLineArray() ? (float) Math.pow(0.5, distance / config.hf_air_absorb_halving_dist) : 1.0f;
 
         float directHighFrequencyGain = distanceHighFrequencyGain
                 * occlusionHighFrequencyGain
@@ -384,8 +380,7 @@ final class SourceSpatialController {
     }
 
     private float calculateDirectionalHighFrequencyGain(LiveTuningConfig config) {
-        if (isSubwoofer())
-            return 0.05f;
+        if (isSubwoofer()) return 0.05f;
 
         double frontness = (horizontalDot + 1.0) / 2.0;
         double behindFloor;
@@ -428,8 +423,7 @@ final class SourceSpatialController {
         pendingEchoHighFrequencyGain = 1.0f;
         pendingEchoContribution = 0.0f;
         pendingEchoSend = false;
-        if (!openAlResources.hasRoomSendFilter() || engine.getAuxSlotId() == 0)
-            return;
+        if (!openAlResources.hasRoomSendFilter() || engine.getAuxSlotId() == 0) return;
 
         float reverbOcclusion = Math.max(0.15f, currentOcclusion);
         float baseReverbVolume = (config.reverb_send_near + config.reverb_send_far) * 0.5f;
@@ -447,13 +441,10 @@ final class SourceSpatialController {
         float softDistanceFalloff = attenuation > 0.0f ? (float) Math.pow(attenuation, 0.15f) * rangeFade : 0.0f;
         float sendGain = reverbOcclusion * powerScaledSend * softDistanceFalloff;
         float wetFloor = 0.04f * reverbOcclusion * rangeFade;
-        if (sendGain < wetFloor)
-            sendGain = wetFloor;
-        if (sendGain > 0.60f)
-            sendGain = 0.60f;
+        if (sendGain < wetFloor) sendGain = wetFloor;
+        if (sendGain > 0.60f) sendGain = 0.60f;
         sendGain *= wetSpatialTransmission;
-        if (engine.isSideMuted())
-            sendGain = 0.0f;
+        if (engine.isSideMuted()) sendGain = 0.0f;
 
         // Normalize each frequency band independently so unrelated speaker types
         // cannot suppress this source's contribution to the room bus.
@@ -467,8 +458,8 @@ final class SourceSpatialController {
             float echoDistanceFalloff = (float) Math.pow(Math.max(0.001f, attenuation), 0.3f);
             pendingEchoSendGain = sendGain * engine.getSlapbackGain() * echoDistanceFalloff;
             pendingEchoHighFrequencyGain = reverbHighFrequencyGain * Math.max(0.01f, 1.0f - config.echo_damping);
-            pendingEchoContribution = pendingEchoSendGain * Math.max(0.0f, smoothedGain)
-                    * Math.max(0.0f, smoothedInputGain);
+            pendingEchoContribution =
+                    pendingEchoSendGain * Math.max(0.0f, smoothedGain) * Math.max(0.0f, smoothedInputGain);
             pendingEchoSend = true;
         }
     }

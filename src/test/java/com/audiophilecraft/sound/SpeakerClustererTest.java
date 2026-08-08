@@ -61,4 +61,31 @@ class SpeakerClustererTest {
         assertEquals(originalOrder, speakers);
         assertEquals(firstResult, secondResult);
     }
+
+    @Test
+    void singleSpeakerProducesOneSingleMemberCluster() {
+        BlockPos speaker = new BlockPos(-5, 12, 30);
+
+        assertEquals(List.of(List.of(speaker)), SpeakerClusterer.clusterSpeakers(List.of(speaker)));
+    }
+
+    @Test
+    void longTransitiveChainDoesNotSplitByEndpointDistance() {
+        List<BlockPos> chain =
+                List.of(new BlockPos(0, 0, 0), new BlockPos(2, 0, 0), new BlockPos(4, 0, 0), new BlockPos(6, 0, 0));
+
+        List<List<BlockPos>> clusters = SpeakerClusterer.clusterSpeakers(chain);
+
+        assertEquals(1, clusters.size());
+        assertEquals(4, clusters.get(0).size());
+        assertTrue(clusters.get(0).containsAll(chain));
+    }
+
+    @Test
+    void negativeCoordinatesUseTheSameDistanceBoundary() {
+        BlockPos first = new BlockPos(-10, -4, -3);
+        BlockPos second = new BlockPos(-8, -2, -3);
+
+        assertEquals(1, SpeakerClusterer.clusterSpeakers(List.of(first, second)).size());
+    }
 }
