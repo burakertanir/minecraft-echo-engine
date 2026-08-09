@@ -7,6 +7,7 @@
   "authors": [
     "Burak"
   ],
+  "icon": "assets/audiophilecraft/icon.png",
   "license": "ARR",
   "environment": "*",
   "entrypoints": {
