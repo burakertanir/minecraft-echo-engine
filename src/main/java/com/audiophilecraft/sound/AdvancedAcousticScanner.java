@@ -1,6 +1,7 @@
 package com.audiophilecraft.sound;
 
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
@@ -18,6 +19,7 @@ import net.minecraft.world.World;
 public class AdvancedAcousticScanner {
 
     public static final int RAY_COUNT = AcousticRayScanner.RAY_COUNT;
+    private static final float BOUNDING_BOX_TAIL_TRIM = 0.01f;
     private final AcousticRayScanner rayScanner = new AcousticRayScanner();
     private final VenuePresetCalculator presetCalculator = new VenuePresetCalculator();
 
@@ -393,24 +395,35 @@ public class AdvancedAcousticScanner {
      * minZ).
      * The point cloud already captures all surfaces hit by rays across all probes.
      */
-    private static float computeBoundingBoxVolume(List<Vec3d> pointCloud) {
+    static float computeBoundingBoxVolume(List<Vec3d> pointCloud) {
         if (pointCloud == null || pointCloud.isEmpty()) return 1000.0f;
 
-        float minX = Float.MAX_VALUE, minY = Float.MAX_VALUE, minZ = Float.MAX_VALUE;
-        float maxX = -Float.MAX_VALUE, maxY = -Float.MAX_VALUE, maxZ = -Float.MAX_VALUE;
-
-        for (Vec3d pt : pointCloud) {
-            if (pt.x < minX) minX = (float) pt.x;
-            if (pt.y < minY) minY = (float) pt.y;
-            if (pt.z < minZ) minZ = (float) pt.z;
-            if (pt.x > maxX) maxX = (float) pt.x;
-            if (pt.y > maxY) maxY = (float) pt.y;
-            if (pt.z > maxZ) maxZ = (float) pt.z;
+        int pointCount = pointCloud.size();
+        float[] xCoordinates = new float[pointCount];
+        float[] yCoordinates = new float[pointCount];
+        float[] zCoordinates = new float[pointCount];
+        for (int index = 0; index < pointCount; index++) {
+            Vec3d point = pointCloud.get(index);
+            xCoordinates[index] = (float) point.x;
+            yCoordinates[index] = (float) point.y;
+            zCoordinates[index] = (float) point.z;
         }
 
-        float dx = Math.max(0.1f, maxX - minX);
-        float dy = Math.max(0.1f, maxY - minY);
-        float dz = Math.max(0.1f, maxZ - minZ);
+        Arrays.sort(xCoordinates);
+        Arrays.sort(yCoordinates);
+        Arrays.sort(zCoordinates);
+
+        // A tiny opening can let a handful of rays hit a surface hundreds of blocks
+        // away. Raw extrema then turn that sparse escape into the size of the whole
+        // venue. Ignore only the outermost one percent on each side; a real wall that
+        // is supported by more rays remains part of the bounds.
+        int trimCount = (int) Math.floor(pointCount * BOUNDING_BOX_TAIL_TRIM);
+        trimCount = Math.min(trimCount, Math.max(0, (pointCount - 2) / 2));
+        int upperIndex = pointCount - 1 - trimCount;
+
+        float dx = Math.max(0.1f, xCoordinates[upperIndex] - xCoordinates[trimCount]);
+        float dy = Math.max(0.1f, yCoordinates[upperIndex] - yCoordinates[trimCount]);
+        float dz = Math.max(0.1f, zCoordinates[upperIndex] - zCoordinates[trimCount]);
         return dx * dy * dz;
     }
 
