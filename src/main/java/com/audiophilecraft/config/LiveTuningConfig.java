@@ -51,17 +51,17 @@ public class LiveTuningConfig {
     // ============================================================================
     // CATEGORY 1: DISTANCE ATTENUATION
     // ============================================================================
-    public float sub_refDist = 15.0f;
-    public float sub_baseMaxDist = 120.0f;
-    public float sub_rolloffExponent = 1.5f;
+    public float sub_refDist = 13.0f;
+    public float sub_baseMaxDist = 140.0f;
+    public float sub_rolloffExponent = 1.6f;
     public float mid_refDist = 7.0f;
-    public float mid_baseMaxDist = 100.0f;
-    public float mid_rolloffExponent = 1.8f;
-    public float line_refDist = 5.0f;
+    public float mid_baseMaxDist = 80.0f;
+    public float mid_rolloffExponent = 1.35f;
+    public float line_refDist = 8.0f;
     public float line_baseMaxDist = 90.0f;
-    public float line_rolloffExponent = 2.0f;
+    public float line_rolloffExponent = 1.2f;
     public float distance_softKneeRatio = 0.5f;
-    public float fadeStartPercent = 0.8f;
+    public float fadeStartPercent = 0.6f;
 
     // ============================================================================
     // CATEGORY 2: DIRECTIONALITY
@@ -69,25 +69,25 @@ public class LiveTuningConfig {
     public float line_hzExp = 1.5f;
     public float line_vtExpBase = 1.5f;
     public float line_vtExpPerSpeaker = 0.3f;
-    public float line_rearGain = 0.25f;
+    public float line_rearGain = 0.8f;
     public float mid_hzExp = 2.2f;
     public float mid_vtExp = 2.0f;
-    public float mid_rearGain = 0.1225f;
+    public float mid_rearGain = 0.7f;
     public float normal_hzExp = 2.7f;
     public float normal_vtExp = 2.0f;
-    public float normal_rearGain = 0.0576f;
+    public float normal_rearGain = 0.7f;
 
     // ============================================================================
     // CATEGORY 3: WALL OCCLUSION
     // ============================================================================
-    public float occ_standardWall = 0.42f;
-    public float occ_varianceBlend = 0.25f;
-    public float occ_sub_floor = 0.3025f;
-    public float occ_mid_floor = 0.1444f;
-    public float occ_line_floor = 0.25f;
-    public float occ_lerpIn = 0.35f;
+    public float occ_standardWall = 0.6f;
+    public float occ_varianceBlend = 0.6f;
+    public float occ_sub_floor = 0.4f;
+    public float occ_mid_floor = 0.35f;
+    public float occ_line_floor = 0.35f;
+    public float occ_lerpIn = 0.15f;
     public float occ_lerpOut = 0.15f;
-    public float occ_hfExp_occluding = 1.35f;
+    public float occ_hfExp_occluding = 1.5f;
     public float occ_hfExp_deoccluding = 1.1f;
     public float occ_hf_floor = 0.0f;
     public float occ_raycast_flexOffset = 0.75f;
@@ -102,13 +102,13 @@ public class LiveTuningConfig {
     // ============================================================================
     // CATEGORY 5: HF DIRECTIONALITY & AIR ABSORPTION
     // ============================================================================
-    public float hf_line_behindFloor = 0.05f;
-    public float hf_line_frontFloor = 0.2f;
+    public float hf_line_behindFloor = 0.3f;
+    public float hf_line_frontFloor = 0.4f;
     public float hf_mid_behindFloor = 0.3f;
-    public float hf_mid_frontFloor = 0.42f;
+    public float hf_mid_frontFloor = 0.4f;
     public float hf_normal_behindFloor = 0.1f;
     public float hf_normal_frontFloor = 0.25f;
-    public float hf_air_absorb_halving_dist = 145.0f;
+    public float hf_air_absorb_halving_dist = 100.0f;
 
     // ============================================================================
     // CATEGORY 6: REVERB MASTER (post-venue-preset multipliers)
@@ -118,15 +118,15 @@ public class LiveTuningConfig {
     public float reverb_gainHFMultiplier = 1.0f;
     public float reverb_reflGainMultiplier = 1.0f;
     public float reverb_lateGainMultiplier = 1.0f;
-    public float reverb_densityOverride = -1.0f;
-    public float reverb_diffusionOverride = -1.0f;
+    public float reverb_densityOverride = 1.0f;
+    public float reverb_diffusionOverride = 1.0f;
     public float reverb_distantEchoTimeMultiplier = 1.0f;
     public float reverb_distantEchoDepthMultiplier = 1.2f;
 
     // Master reverb occlusion
     public float masterOcc_gainFloor = 0.7f;
     public float masterOcc_hfExponent = 1.8f;
-    public float masterOcc_lerpIn = 0.35f;
+    public float masterOcc_lerpIn = 0.15f;
     public float masterOcc_lerpOut = 0.2f;
 
     // ============================================================================
@@ -135,82 +135,82 @@ public class LiveTuningConfig {
 
     // --- TIER 1: CLOSET ---
     public float tier1_minGain = 0.28f;
-    public float tier1_gainMul = 0.7f;
-    public float tier1_reflGainMul = 0.8f;
+    public float tier1_gainMul = 0.5f;
+    public float tier1_reflGainMul = 0.5f;
     public float tier1_lateReverbMul = 1.0f;
     public float tier1_hfMul = 1.0f;
     public float tier1_lfMul = 1.0f;
-    public float tier1_decayMul = 0.3f;
+    public float tier1_decayMul = 0.33f;
     public float tier1_density = -1.0f;
     public float tier1_diffusion = -1.0f;
 
     // --- TIER 2: SMALL ROOM ---
     public float tier2_minGain = 0.25f;
-    public float tier2_gainMul = 0.7f;
-    public float tier2_reflGainMul = 1.0f;
-    public float tier2_lateReverbMul = 1.15f;
+    public float tier2_gainMul = 0.4f;
+    public float tier2_reflGainMul = 0.3f;
+    public float tier2_lateReverbMul = 1.0f;
     public float tier2_hfMul = 1.0f;
     public float tier2_lfMul = 1.0f;
-    public float tier2_decayMul = 0.3f;
+    public float tier2_decayMul = 0.24f;
     public float tier2_density = -1.0f;
     public float tier2_diffusion = -1.0f;
 
     // --- TIER 3: MEDIUM ROOM ---
     public float tier3_minGain = 0.18f;
-    public float tier3_gainMul = 0.65f;
-    public float tier3_reflGainMul = 0.85f;
-    public float tier3_lateReverbMul = 0.8f;
+    public float tier3_gainMul = 0.36f;
+    public float tier3_reflGainMul = 0.25f;
+    public float tier3_lateReverbMul = 1.0f;
     public float tier3_hfMul = 1.0f;
     public float tier3_lfMul = 1.0f;
-    public float tier3_decayMul = 0.24f;
+    public float tier3_decayMul = 0.21f;
     public float tier3_density = -1.0f;
     public float tier3_diffusion = -1.0f;
 
     // --- TIER 4: LARGE ROOM / SMALL HALL ---
-    public float tier4_minGain = 0.165f;
-    public float tier4_gainMul = 0.58f;
-    public float tier4_reflGainMul = 0.67f;
-    public float tier4_lateReverbMul = 0.8f;
+    public float tier4_minGain = 0.18f;
+    public float tier4_gainMul = 0.35f;
+    public float tier4_reflGainMul = 0.22f;
+    public float tier4_lateReverbMul = 1.0f;
     public float tier4_hfMul = 1.0f;
     public float tier4_lfMul = 1.0f;
-    public float tier4_decayMul = 0.3f;
-    public float tier4_lateReverbRoomScale = 0.1f;
+    public float tier4_decayMul = 0.2f;
+    public float tier4_lateReverbRoomScale = 0.32f;
     public float tier4_density = -1.0f;
     public float tier4_diffusion = -1.0f;
 
     // --- TIER 5: LARGE CLUB ---
     public float tier5_minGain = 0.15f;
-    public float tier5_gainMul = 0.52f;
-    public float tier5_reflGainMul = 0.5f;
-    public float tier5_lateReverbMul = 0.8f;
+    public float tier5_gainMul = 0.36f;
+    public float tier5_reflGainMul = 0.23f;
+    public float tier5_lateReverbMul = 1.0f;
     public float tier5_hfMul = 1.0f;
     public float tier5_lfMul = 1.0f;
-    public float tier5_decayMul = 0.31f;
-    public float tier5_lateReverbRoomScale = 0.2f;
+    public float tier5_decayMul = 0.22f;
+    public float tier5_lateReverbRoomScale = 0.35f;
     public float tier5_density = -1.0f;
     public float tier5_diffusion = -1.0f;
 
     // --- TIER 6: ARENA ---
     public float tier6_minGain = 0.12f;
-    public float tier6_gainMul = 0.55f;
-    public float tier6_reflGainMul = 0.6f;
-    public float tier6_lateReverbMul = 1.1f;
+    public float tier6_gainMul = 0.36f;
+    public float tier6_reflGainMul = 0.24f;
+    public float tier6_lateReverbMul = 1.0f;
     public float tier6_hfMul = 1.0f;
-    public float tier6_lfMul = 0.8f;
-    public float tier6_decayMul = 0.31f;
-    public float tier6_lateReverbRoomScale = 0.3f;
+    public float tier6_lfMul = 1.0f;
+    public float tier6_decayMul = 0.23f;
+    public float tier6_lateReverbRoomScale = 0.35f;
     public float tier6_density = -1.0f;
     public float tier6_diffusion = -1.0f;
 
     // --- TIER 7: MASSIVE STADIUM ---
-    public float tier7_minGain = 0.2f;
-    public float tier7_gainMul = 0.3f;
-    public float tier7_reflGainMul = 0.3f;
+    public float tier7_minGain = 0.18f;
+    public float tier7_gainMul = 0.34f;
+    public float tier7_reflGainMul = 0.23f;
     public float tier7_lateReverbMul = 1.0f;
     public float tier7_hfMul = 1.0f;
-    public float tier7_lfMul = 0.8f;
-    public float tier7_decayMul = 0.3f;
-    public float tier7_lateReverbRoomScale = 0.7f;
+    public float tier7_lfMul = 1.0f;
+    public float tier7_decayMul = 0.22f;
+    public float tier7_lateReverbRoomScale = 0.35f;
     public float tier7_maxLateMultiplier_highEncl = 2.0f;
     public float tier7_maxLateMultiplier_lowEncl = 2.8f;
     public float tier7_density = -1.0f;
@@ -218,13 +218,13 @@ public class LiveTuningConfig {
 
     // --- TIER 8: COLOSSAL DOME / HANGAR ---
     public float tier8_minGain = 0.22f;
-    public float tier8_gainMul = 0.4f;
-    public float tier8_reflGainMul = 0.38f;
-    public float tier8_lateReverbMul = 1.5f;
+    public float tier8_gainMul = 0.34f;
+    public float tier8_reflGainMul = 0.23f;
+    public float tier8_lateReverbMul = 1.1f;
     public float tier8_hfMul = 1.0f;
-    public float tier8_lfMul = 0.8f;
-    public float tier8_decayMul = 0.33f;
-    public float tier8_lateReverbRoomScale = 0.8f;
+    public float tier8_lfMul = 1.0f;
+    public float tier8_decayMul = 0.23f;
+    public float tier8_lateReverbRoomScale = 0.4f;
     public float tier8_maxLateMultiplier_highEncl = 2.5f;
     public float tier8_maxLateMultiplier_lowEncl = 3.5f;
     public float tier8_density = -1.0f;
@@ -232,31 +232,31 @@ public class LiveTuningConfig {
 
     // --- TIER 9: MEGA COMPLEX / CITY BLOCK ---
     public float tier9_minGain = 0.25f;
-    public float tier9_gainMul = 0.35f;
-    public float tier9_reflGainMul = 0.32f;
-    public float tier9_lateReverbMul = 1.7f;
+    public float tier9_gainMul = 0.34f;
+    public float tier9_reflGainMul = 0.21f;
+    public float tier9_lateReverbMul = 1.2f;
     public float tier9_hfMul = 1.0f;
-    public float tier9_lfMul = 0.9f;
-    public float tier9_decayMul = 0.33f;
-    public float tier9_lateReverbRoomScale = 0.9f;
+    public float tier9_lfMul = 1.0f;
+    public float tier9_decayMul = 0.24f;
+    public float tier9_lateReverbRoomScale = 0.4f;
     public float tier9_maxLateMultiplier_highEncl = 3.0f;
     public float tier9_maxLateMultiplier_lowEncl = 4.2f;
     public float tier9_density = -1.0f;
     public float tier9_diffusion = -1.0f;
 
     // --- TIER 10: INFINITE CATHEDRAL / VOID ---
-    public float tier10_minGain = 0.28f;
-    public float tier10_gainMul = 0.3f;
-    public float tier10_reflGainMul = 0.25f;
-    public float tier10_lateReverbMul = 2.0f;
+    public float tier10_minGain = 0.25f;
+    public float tier10_gainMul = 0.4f;
+    public float tier10_reflGainMul = 0.3f;
+    public float tier10_lateReverbMul = 1.5f;
     public float tier10_hfMul = 1.0f;
-    public float tier10_lfMul = 0.8f;
-    public float tier10_decayMul = 0.35f;
-    public float tier10_lateReverbRoomScale = 1.0f;
+    public float tier10_lfMul = 1.0f;
+    public float tier10_decayMul = 0.26f;
+    public float tier10_lateReverbRoomScale = 0.4f;
     public float tier10_maxLateMultiplier_highEncl = 3.5f;
     public float tier10_maxLateMultiplier_lowEncl = 5.0f;
-    public float tier10_density = -1.0f;
-    public float tier10_diffusion = -1.0f;
+    public float tier10_density = 1.0f;
+    public float tier10_diffusion = 1.0f;
 
     // Tier Thresholds
     public float tier2_volumeThreshold = 300.0f;
@@ -281,12 +281,12 @@ public class LiveTuningConfig {
     // ============================================================================
     // CATEGORY 8: OPEN AIR PHYSICS
     // ============================================================================
-    public float openAir_dynamic_gainMul = 0.05f;
-    public float openAir_dynamic_reflGainMul = 0.18f;
-    public float openAir_dynamic_lateReverbMul = 0.0f;
+    public float openAir_dynamic_gainMul = 0.5f;
+    public float openAir_dynamic_reflGainMul = 0.5f;
+    public float openAir_dynamic_lateReverbMul = 0.5f;
     public float openAir_dynamic_hfMul = 1.0f;
     public float openAir_dynamic_lfMul = 1.0f;
-    public float openAir_enclosure_penalty_exponent = 3.5f;
+    public float openAir_enclosure_penalty_exponent = 2.5f;
 
     // ============================================================================
     // CATEGORY 9: PHYSICS ENGINE
@@ -315,11 +315,11 @@ public class LiveTuningConfig {
     // CATEGORY 11: SLAPBACK ECHO
     // ============================================================================
     public float echo_delay = 0.05f;
-    public float echo_damping = 0.1f;
+    public float echo_damping = 0.5f;
     public float echo_feedback = 0.4f;
-    public float echo_spread = -0.5f;
-    public float echo_baseGain = 0.005f;
-    public float echo_maxGain = 0.1f;
+    public float echo_spread = -1.0f;
+    public float echo_baseGain = 0.06f;
+    public float echo_maxGain = 0.18f;
 
     // ============================================================================
     // SINGLETON & FILE MANAGEMENT
@@ -474,52 +474,67 @@ public class LiveTuningConfig {
     }
 
     private static void migrateVersion0To1(LiveTuningConfig config, JsonObject sourceJson) {
-        if (usesOldDefault(sourceJson, "line_rearGain", 0.25f)) config.line_rearGain = 0.9f;
-        if (usesOldDefault(sourceJson, "occ_standardWall", 0.42f)) config.occ_standardWall = 0.7f;
-        if (usesOldDefault(sourceJson, "occ_sub_floor", 0.3025f)) config.occ_sub_floor = 0.3f;
-        if (usesOldDefault(sourceJson, "occ_mid_floor", 0.1444f)) config.occ_mid_floor = 0.2f;
-        if (usesOldDefault(sourceJson, "occ_line_floor", 0.25f)) config.occ_line_floor = 0.2f;
-        if (usesOldDefault(sourceJson, "occ_hfExp_occluding", 1.35f)) config.occ_hfExp_occluding = 1.5f;
-        if (usesOldDefault(sourceJson, "occ_thicknessDecay", 0.85f)) config.occ_thicknessDecay = 0.9f;
-        if (usesOldDefault(sourceJson, "echo_maxGain", 0.1f)) config.echo_maxGain = 0.14f;
-        if (usesOldDefault(sourceJson, "tier1_gainMul", 0.4f)) config.tier1_gainMul = 0.3f;
-        if (usesOldDefault(sourceJson, "tier2_gainMul", 0.35f)) config.tier2_gainMul = 0.3f;
-        if (usesOldDefault(sourceJson, "tier2_decayMul", 0.3f)) config.tier2_decayMul = 0.26f;
-        if (usesOldDefault(sourceJson, "tier3_gainMul", 0.3f)) config.tier3_gainMul = 0.28f;
-        if (usesOldDefault(sourceJson, "tier3_reflGainMul", 0.3f)) config.tier3_reflGainMul = 0.27f;
-        if (usesOldDefault(sourceJson, "tier3_decayMul", 0.24f)) config.tier3_decayMul = 0.22f;
-        if (usesOldDefault(sourceJson, "tier4_gainMul", 0.3f)) config.tier4_gainMul = 0.28f;
-        if (usesOldDefault(sourceJson, "tier4_reflGainMul", 0.32f)) config.tier4_reflGainMul = 0.25f;
-        if (usesOldDefault(sourceJson, "tier4_decayMul", 0.3f)) config.tier4_decayMul = 0.21f;
-        if (usesOldDefault(sourceJson, "tier5_gainMul", 0.3f)) config.tier5_gainMul = 0.25f;
-        if (usesOldDefault(sourceJson, "tier5_reflGainMul", 0.28f)) config.tier5_reflGainMul = 0.25f;
-        if (usesOldDefault(sourceJson, "tier5_decayMul", 0.31f)) config.tier5_decayMul = 0.22f;
-        if (usesOldDefault(sourceJson, "tier5_lateReverbRoomScale", 0.3f)) config.tier5_lateReverbRoomScale = 0.4f;
-        if (usesOldDefault(sourceJson, "tier6_gainMul", 0.3f)) config.tier6_gainMul = 0.25f;
-        if (usesOldDefault(sourceJson, "tier6_reflGainMul", 0.27f)) config.tier6_reflGainMul = 0.24f;
-        if (usesOldDefault(sourceJson, "tier6_decayMul", 0.31f)) config.tier6_decayMul = 0.25f;
-        if (usesOldDefault(sourceJson, "tier6_diffusion", -1.0f)) config.tier6_diffusion = 1.0f;
-        if (usesOldDefault(sourceJson, "tier6_lfMul", 0.8f)) config.tier6_lfMul = 1.0f;
-        if (usesOldDefault(sourceJson, "tier7_gainMul", 0.3f)) config.tier7_gainMul = 0.25f;
-        if (usesOldDefault(sourceJson, "tier7_reflGainMul", 0.27f)) config.tier7_reflGainMul = 0.23f;
-        if (usesOldDefault(sourceJson, "tier7_decayMul", 0.3f)) config.tier7_decayMul = 0.24f;
-        if (usesOldDefault(sourceJson, "tier7_lfMul", 0.8f)) config.tier7_lfMul = 1.0f;
-        if (usesOldDefault(sourceJson, "tier8_gainMul", 0.3f)) config.tier8_gainMul = 0.25f;
-        if (usesOldDefault(sourceJson, "tier8_reflGainMul", 0.3f)) config.tier8_reflGainMul = 0.22f;
-        if (usesOldDefault(sourceJson, "tier8_decayMul", 0.33f)) config.tier8_decayMul = 0.23f;
-        if (usesOldDefault(sourceJson, "tier8_lfMul", 0.8f)) config.tier8_lfMul = 1.0f;
-        if (usesOldDefault(sourceJson, "tier9_gainMul", 0.3f)) config.tier9_gainMul = 0.25f;
-        if (usesOldDefault(sourceJson, "tier9_reflGainMul", 0.3f)) config.tier9_reflGainMul = 0.21f;
-        if (usesOldDefault(sourceJson, "tier9_decayMul", 0.33f)) config.tier9_decayMul = 0.22f;
-        if (usesOldDefault(sourceJson, "tier9_lfMul", 0.9f)) config.tier9_lfMul = 1.0f;
-        if (usesOldDefault(sourceJson, "tier10_minGain", 0.28f)) config.tier10_minGain = 0.25f;
-        if (usesOldDefault(sourceJson, "tier10_gainMul", 0.32f)) config.tier10_gainMul = 0.25f;
-        if (usesOldDefault(sourceJson, "tier10_reflGainMul", 0.35f)) config.tier10_reflGainMul = 0.2f;
-        if (usesOldDefault(sourceJson, "tier10_decayMul", 0.35f)) config.tier10_decayMul = 0.21f;
-        if (usesOldDefault(sourceJson, "tier10_lfMul", 0.8f)) config.tier10_lfMul = 1.0f;
-        if (usesOldDefault(sourceJson, "harmonics_subAmount", 0.9f)) config.harmonics_subAmount = 0.7f;
-        if (usesOldDefault(sourceJson, "harmonics_midAmount", 0.4f)) config.harmonics_midAmount = 0.3f;
-        if (usesOldDefault(sourceJson, "harmonics_lineAmount", 0.6f)) config.harmonics_lineAmount = 0.4f;
+        LiveTuningConfig defaults = createDefaults();
+        if (usesOldDefault(sourceJson, "line_rearGain", 0.25f)) config.line_rearGain = defaults.line_rearGain;
+        if (usesOldDefault(sourceJson, "occ_standardWall", 0.42f)) config.occ_standardWall = defaults.occ_standardWall;
+        if (usesOldDefault(sourceJson, "occ_sub_floor", 0.3025f)) config.occ_sub_floor = defaults.occ_sub_floor;
+        if (usesOldDefault(sourceJson, "occ_mid_floor", 0.1444f)) config.occ_mid_floor = defaults.occ_mid_floor;
+        if (usesOldDefault(sourceJson, "occ_line_floor", 0.25f)) config.occ_line_floor = defaults.occ_line_floor;
+        if (usesOldDefault(sourceJson, "occ_hfExp_occluding", 1.35f))
+            config.occ_hfExp_occluding = defaults.occ_hfExp_occluding;
+        if (usesOldDefault(sourceJson, "occ_thicknessDecay", 0.85f))
+            config.occ_thicknessDecay = defaults.occ_thicknessDecay;
+        if (usesOldDefault(sourceJson, "echo_maxGain", 0.1f)) config.echo_maxGain = defaults.echo_maxGain;
+        if (usesOldDefault(sourceJson, "tier1_gainMul", 0.4f)) config.tier1_gainMul = defaults.tier1_gainMul;
+        if (usesOldDefault(sourceJson, "tier2_gainMul", 0.35f)) config.tier2_gainMul = defaults.tier2_gainMul;
+        if (usesOldDefault(sourceJson, "tier2_decayMul", 0.3f)) config.tier2_decayMul = defaults.tier2_decayMul;
+        if (usesOldDefault(sourceJson, "tier3_gainMul", 0.3f)) config.tier3_gainMul = defaults.tier3_gainMul;
+        if (usesOldDefault(sourceJson, "tier3_reflGainMul", 0.3f))
+            config.tier3_reflGainMul = defaults.tier3_reflGainMul;
+        if (usesOldDefault(sourceJson, "tier3_decayMul", 0.24f)) config.tier3_decayMul = defaults.tier3_decayMul;
+        if (usesOldDefault(sourceJson, "tier4_gainMul", 0.3f)) config.tier4_gainMul = defaults.tier4_gainMul;
+        if (usesOldDefault(sourceJson, "tier4_reflGainMul", 0.32f))
+            config.tier4_reflGainMul = defaults.tier4_reflGainMul;
+        if (usesOldDefault(sourceJson, "tier4_decayMul", 0.3f)) config.tier4_decayMul = defaults.tier4_decayMul;
+        if (usesOldDefault(sourceJson, "tier5_gainMul", 0.3f)) config.tier5_gainMul = defaults.tier5_gainMul;
+        if (usesOldDefault(sourceJson, "tier5_reflGainMul", 0.28f))
+            config.tier5_reflGainMul = defaults.tier5_reflGainMul;
+        if (usesOldDefault(sourceJson, "tier5_decayMul", 0.31f)) config.tier5_decayMul = defaults.tier5_decayMul;
+        if (usesOldDefault(sourceJson, "tier5_lateReverbRoomScale", 0.3f))
+            config.tier5_lateReverbRoomScale = defaults.tier5_lateReverbRoomScale;
+        if (usesOldDefault(sourceJson, "tier6_gainMul", 0.3f)) config.tier6_gainMul = defaults.tier6_gainMul;
+        if (usesOldDefault(sourceJson, "tier6_reflGainMul", 0.27f))
+            config.tier6_reflGainMul = defaults.tier6_reflGainMul;
+        if (usesOldDefault(sourceJson, "tier6_decayMul", 0.31f)) config.tier6_decayMul = defaults.tier6_decayMul;
+        if (usesOldDefault(sourceJson, "tier6_diffusion", -1.0f)) config.tier6_diffusion = defaults.tier6_diffusion;
+        if (usesOldDefault(sourceJson, "tier6_lfMul", 0.8f)) config.tier6_lfMul = defaults.tier6_lfMul;
+        if (usesOldDefault(sourceJson, "tier7_gainMul", 0.3f)) config.tier7_gainMul = defaults.tier7_gainMul;
+        if (usesOldDefault(sourceJson, "tier7_reflGainMul", 0.27f))
+            config.tier7_reflGainMul = defaults.tier7_reflGainMul;
+        if (usesOldDefault(sourceJson, "tier7_decayMul", 0.3f)) config.tier7_decayMul = defaults.tier7_decayMul;
+        if (usesOldDefault(sourceJson, "tier7_lfMul", 0.8f)) config.tier7_lfMul = defaults.tier7_lfMul;
+        if (usesOldDefault(sourceJson, "tier8_gainMul", 0.3f)) config.tier8_gainMul = defaults.tier8_gainMul;
+        if (usesOldDefault(sourceJson, "tier8_reflGainMul", 0.3f))
+            config.tier8_reflGainMul = defaults.tier8_reflGainMul;
+        if (usesOldDefault(sourceJson, "tier8_decayMul", 0.33f)) config.tier8_decayMul = defaults.tier8_decayMul;
+        if (usesOldDefault(sourceJson, "tier8_lfMul", 0.8f)) config.tier8_lfMul = defaults.tier8_lfMul;
+        if (usesOldDefault(sourceJson, "tier9_gainMul", 0.3f)) config.tier9_gainMul = defaults.tier9_gainMul;
+        if (usesOldDefault(sourceJson, "tier9_reflGainMul", 0.3f))
+            config.tier9_reflGainMul = defaults.tier9_reflGainMul;
+        if (usesOldDefault(sourceJson, "tier9_decayMul", 0.33f)) config.tier9_decayMul = defaults.tier9_decayMul;
+        if (usesOldDefault(sourceJson, "tier9_lfMul", 0.9f)) config.tier9_lfMul = defaults.tier9_lfMul;
+        if (usesOldDefault(sourceJson, "tier10_minGain", 0.28f)) config.tier10_minGain = defaults.tier10_minGain;
+        if (usesOldDefault(sourceJson, "tier10_gainMul", 0.32f)) config.tier10_gainMul = defaults.tier10_gainMul;
+        if (usesOldDefault(sourceJson, "tier10_reflGainMul", 0.35f))
+            config.tier10_reflGainMul = defaults.tier10_reflGainMul;
+        if (usesOldDefault(sourceJson, "tier10_decayMul", 0.35f)) config.tier10_decayMul = defaults.tier10_decayMul;
+        if (usesOldDefault(sourceJson, "tier10_lfMul", 0.8f)) config.tier10_lfMul = defaults.tier10_lfMul;
+        if (usesOldDefault(sourceJson, "harmonics_subAmount", 0.9f))
+            config.harmonics_subAmount = defaults.harmonics_subAmount;
+        if (usesOldDefault(sourceJson, "harmonics_midAmount", 0.4f))
+            config.harmonics_midAmount = defaults.harmonics_midAmount;
+        if (usesOldDefault(sourceJson, "harmonics_lineAmount", 0.6f))
+            config.harmonics_lineAmount = defaults.harmonics_lineAmount;
     }
 
     private static boolean usesOldDefault(JsonObject sourceJson, String fieldName, float oldDefault) {

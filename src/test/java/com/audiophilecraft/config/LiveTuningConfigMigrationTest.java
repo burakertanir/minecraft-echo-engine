@@ -33,9 +33,9 @@ class LiveTuningConfigMigrationTest {
         assertTrue(result.migrated());
         assertEquals(0, result.sourceVersion());
         assertEquals(1, result.config().config_version);
-        assertEquals(0.9f, result.config().line_rearGain);
-        assertEquals(0.14f, result.config().echo_maxGain);
-        assertEquals(1.0f, result.config().tier6_diffusion);
+        assertEquals(0.8f, result.config().line_rearGain);
+        assertEquals(0.18f, result.config().echo_maxGain);
+        assertEquals(-1.0f, result.config().tier6_diffusion);
         assertEquals(original, Files.readString(backupPath(configPath, 0)));
     }
 
@@ -110,7 +110,7 @@ class LiveTuningConfigMigrationTest {
         assertTrue(result.migrated());
         assertEquals(0, result.sourceVersion());
         assertEquals(1, result.config().config_version);
-        assertEquals(0.9f, result.config().line_rearGain);
+        assertEquals(0.8f, result.config().line_rearGain);
         assertTrue(Files.exists(backupPath(configPath, 0)));
     }
 
