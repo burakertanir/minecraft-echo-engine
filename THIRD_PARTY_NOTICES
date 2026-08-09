@@ -28,9 +28,9 @@ Bundled components
               org.apache.httpcomponents:httpcore:4.4.16,
               commons-logging:commons-logging:1.2,
               commons-codec:commons-codec:1.15,
-              com.fasterxml.jackson.core:jackson-core:2.15.2,
-              com.fasterxml.jackson.core:jackson-databind:2.15.2,
-              com.fasterxml.jackson.core:jackson-annotations:2.15.2
+              com.fasterxml.jackson.core:jackson-core:2.18.9,
+              com.fasterxml.jackson.core:jackson-databind:2.18.9,
+              com.fasterxml.jackson.core:jackson-annotations:2.18.9
    Projects: https://hc.apache.org/
              https://commons.apache.org/
              https://github.com/FasterXML/jackson
@@ -48,8 +48,8 @@ Bundled components
    License: Apache License 2.0
 
 5. Mozilla Rhino
-   Artifacts: org.mozilla:rhino:1.7.14,
-              org.mozilla:rhino-engine:1.7.14
+   Artifacts: org.mozilla:rhino:1.7.15,
+              org.mozilla:rhino-engine:1.7.15
    Project: https://github.com/mozilla/rhino
    License: Mozilla Public License 2.0
    Required Rhino notices are reproduced in RHINO-NOTICE.txt.
@@ -88,7 +88,7 @@ License texts
 -------------
 
 The complete applicable license texts and notices are distributed next to
-this file under META-INF/licenses/audiophilecraft/:
+this file under META-INF/licenses/echosoundengine/:
 
 - APACHE-2.0.txt
 - MIT-YOUTUBE-SOURCE.txt

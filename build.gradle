@@ -39,6 +39,9 @@ configurations {
 }
 
 dependencies {
+	def jacksonVersion = "2.18.9"
+	def rhinoVersion = "1.7.15"
+
 	// To change the versions see the gradle.properties file
 	minecraft "com.mojang:minecraft:${project.minecraft_version}"
 	mappings "net.fabricmc:yarn:${project.yarn_mappings}:v2"
@@ -55,9 +58,12 @@ dependencies {
 	include("org.apache.httpcomponents:httpcore:4.4.16")
 	include("commons-logging:commons-logging:1.2")
 	include("commons-codec:commons-codec:1.15")
-	include("com.fasterxml.jackson.core:jackson-core:2.15.2")
-	include("com.fasterxml.jackson.core:jackson-databind:2.15.2")
-	include("com.fasterxml.jackson.core:jackson-annotations:2.15.2")
+	implementation("com.fasterxml.jackson.core:jackson-core:${jacksonVersion}")
+	implementation("com.fasterxml.jackson.core:jackson-databind:${jacksonVersion}")
+	implementation("com.fasterxml.jackson.core:jackson-annotations:${jacksonVersion}")
+	include("com.fasterxml.jackson.core:jackson-core:${jacksonVersion}")
+	include("com.fasterxml.jackson.core:jackson-databind:${jacksonVersion}")
+	include("com.fasterxml.jackson.core:jackson-annotations:${jacksonVersion}")
 
 	// YouTube Source Plugin — Replaces deprecated built-in YouTube source
 	implementation("dev.lavalink.youtube:v2:1.18.1")
@@ -70,10 +76,10 @@ dependencies {
 	include 'dev.arbjerg:lavaplayer-natives:2.2.6'
 
 	// Rhino Script Engine (Required for Youtube plugin on Java 15+)
-	implementation 'org.mozilla:rhino:1.7.14'
-	include 'org.mozilla:rhino:1.7.14'
-	implementation 'org.mozilla:rhino-engine:1.7.14'
-	include 'org.mozilla:rhino-engine:1.7.14'
+	implementation "org.mozilla:rhino:${rhinoVersion}"
+	include "org.mozilla:rhino:${rhinoVersion}"
+	implementation "org.mozilla:rhino-engine:${rhinoVersion}"
+	include "org.mozilla:rhino-engine:${rhinoVersion}"
 
 	// Fast unit tests for pure audio, clustering, and acoustic calculations.
 	testImplementation platform('org.junit:junit-bom:5.10.2')
