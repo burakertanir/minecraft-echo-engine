@@ -1,0 +1,9 @@
+{
+  "schemaVersion": 1,
+  "id": "echosoundengine_lavaplayer",
+  "version": "${version}",
+  "name": "Lavaplayer without legacy YouTube source",
+  "custom": {
+    "echosoundengine:legacy-youtube-removed": true
+  }
+}

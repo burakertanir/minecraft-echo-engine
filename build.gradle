@@ -34,9 +34,44 @@ sourceSets {
 // Loom include configuration bundles dependencies into the mod JAR
 configurations {
 	include
+	lavaplayerUpstream {
+		canBeConsumed = false
+		canBeResolved = true
+		transitive = false
+	}
 	gameTestImplementation.extendsFrom implementation, modImplementation
 	gameTestRuntimeOnly.extendsFrom runtimeOnly, modRuntimeOnly
 }
+
+def lavaplayerVersion = "2.2.6"
+def strippedLavaplayerEntries = [
+	// Deprecated built-in YouTube implementation rejected by CurseForge.
+	'com/sedmelluq/discord/lavaplayer/source/youtube/**',
+	// Convenience bootstrap hard-references the removed built-in implementation.
+	'com/sedmelluq/discord/lavaplayer/source/AudioSourceManagers.class',
+	'fabric.mod.json',
+	// Repacking invalidates any upstream archive signature metadata.
+	'META-INF/*.SF',
+	'META-INF/*.RSA',
+	'META-INF/*.DSA'
+]
+def strippedLavaplayerJar = tasks.register('strippedLavaplayerJar', Jar) {
+	archiveBaseName = 'lavaplayer'
+	archiveVersion = lavaplayerVersion
+	archiveClassifier = 'no-legacy-youtube'
+	destinationDirectory = layout.buildDirectory.dir('stripped-libraries')
+	inputs.property 'strippedLavaplayerEntries', strippedLavaplayerEntries
+
+	from({ zipTree(configurations.lavaplayerUpstream.singleFile) })
+	strippedLavaplayerEntries.each { exclude it }
+	from('gradle/lavaplayer-stripped.fabric.mod.json') {
+		rename { 'fabric.mod.json' }
+		expand version: lavaplayerVersion
+	}
+}
+
+def strippedLavaplayerFiles = files(strippedLavaplayerJar.flatMap { it.archiveFile })
+strippedLavaplayerFiles.builtBy(strippedLavaplayerJar)
 
 dependencies {
 	def jacksonVersion = "2.18.9"
@@ -51,9 +86,9 @@ dependencies {
 	modImplementation "net.fabricmc.fabric-api:fabric-api:${project.fabric_version}"
 
 	// LavaPlayer — Internet audio streaming (YouTube, SoundCloud, HTTP)
-	implementation("dev.arbjerg:lavaplayer:2.2.6")
-	include("dev.arbjerg:lavaplayer:2.2.6")
-	include("dev.arbjerg:lava-common:2.2.6")
+	implementation("dev.arbjerg:lavaplayer:${lavaplayerVersion}")
+	lavaplayerUpstream("dev.arbjerg:lavaplayer:${lavaplayerVersion}")
+	include("dev.arbjerg:lava-common:${lavaplayerVersion}")
 	include("org.apache.httpcomponents:httpclient:4.5.14")
 	include("org.apache.httpcomponents:httpcore:4.4.16")
 	include("commons-logging:commons-logging:1.2")
@@ -72,8 +107,8 @@ dependencies {
 	include("com.grack:nanojson:1.7")
 
 	// Lavaplayer Natives (Required for audio decoding, otherwise playback silently fails)
-	implementation 'dev.arbjerg:lavaplayer-natives:2.2.6'
-	include 'dev.arbjerg:lavaplayer-natives:2.2.6'
+	implementation "dev.arbjerg:lavaplayer-natives:${lavaplayerVersion}"
+	include "dev.arbjerg:lavaplayer-natives:${lavaplayerVersion}"
 
 	// Rhino Script Engine (Required for Youtube plugin on Java 15+)
 	implementation "org.mozilla:rhino:${rhinoVersion}"
@@ -207,8 +242,93 @@ tasks.named('runGameTest') {
 	outputs.file layout.buildDirectory.file('test-results/gameTest/results.xml')
 }
 
+def verifyCurseForgeCompatibility = tasks.register('verifyCurseForgeCompatibility') {
+	dependsOn tasks.named('remapJar')
+	inputs.file(tasks.named('remapJar').flatMap { it.archiveFile })
+
+	doLast {
+		def outputJar = tasks.named('remapJar').get().archiveFile.get().asFile
+		def legacyYoutubePrefix = 'com/sedmelluq/discord/lavaplayer/source/youtube/'
+		def legacySourceBootstrap = 'com/sedmelluq/discord/lavaplayer/source/AudioSourceManagers.class'
+		def lavaplayerCoreClass = 'com/sedmelluq/discord/lavaplayer/player/DefaultAudioPlayerManager.class'
+		def replacementYoutubeClass = 'dev/lavalink/youtube/YoutubeAudioSourceManager.class'
+		def legacyEntries = []
+		def nestedJarReferences = []
+		def lavaplayerCoreContainer = null
+		def lavaplayerCoreFound = false
+		def replacementFound = false
+
+		new java.util.zip.ZipFile(outputJar).withCloseable { outerJar ->
+			def modMetadataEntry = outerJar.getEntry('fabric.mod.json')
+			if (modMetadataEntry == null) {
+				throw new GradleException("fabric.mod.json is missing from ${outputJar.name}")
+			}
+			def modMetadata = outerJar.getInputStream(modMetadataEntry).withCloseable {
+				new groovy.json.JsonSlurper().parse(it)
+			}
+			nestedJarReferences.addAll((modMetadata.jars ?: []).collect { it.file })
+
+			outerJar.entries().each { outerEntry ->
+				if (outerEntry.name.startsWith(legacyYoutubePrefix) || outerEntry.name == legacySourceBootstrap) {
+					legacyEntries.add(outerEntry.name)
+				}
+				if (outerEntry.name == replacementYoutubeClass) {
+					replacementFound = true
+				}
+				if (outerEntry.name == lavaplayerCoreClass) {
+					lavaplayerCoreFound = true
+					lavaplayerCoreContainer = '<root>'
+				}
+				if (!outerEntry.directory && outerEntry.name.endsWith('.jar')) {
+					def nestedBytes = outerJar.getInputStream(outerEntry).withCloseable { it.bytes }
+					new java.util.zip.ZipInputStream(new ByteArrayInputStream(nestedBytes)).withCloseable { nestedJar ->
+						java.util.zip.ZipEntry nestedEntry
+						while ((nestedEntry = nestedJar.nextEntry) != null) {
+							if (nestedEntry.name.startsWith(legacyYoutubePrefix) ||
+								nestedEntry.name == legacySourceBootstrap) {
+								legacyEntries.add("${outerEntry.name}!/${nestedEntry.name}")
+							}
+							if (nestedEntry.name == replacementYoutubeClass) {
+								replacementFound = true
+							}
+							if (nestedEntry.name == lavaplayerCoreClass) {
+								lavaplayerCoreFound = true
+								lavaplayerCoreContainer = outerEntry.name
+							}
+						}
+					}
+				}
+			}
+		}
+
+		if (!legacyEntries.isEmpty()) {
+			throw new GradleException(
+				"CurseForge-incompatible legacy Lavaplayer YouTube classes found:\n" +
+				legacyEntries.join('\n'))
+		}
+		if (!lavaplayerCoreFound) {
+			throw new GradleException(
+				"The stripped Lavaplayer core is missing from ${outputJar.name}")
+		}
+		if (lavaplayerCoreContainer != '<root>' && !nestedJarReferences.contains(lavaplayerCoreContainer)) {
+			throw new GradleException(
+				"fabric.mod.json does not load nested Lavaplayer JAR ${lavaplayerCoreContainer}")
+		}
+		if (!replacementFound) {
+			throw new GradleException(
+				"The supported youtube-source manager is missing from ${outputJar.name}")
+		}
+	}
+}
+
+tasks.named('remapJar') {
+	dependsOn strippedLavaplayerJar
+	nestedJars.from(strippedLavaplayerFiles)
+	addNestedDependencies = true
+}
+
 tasks.named('check') {
-	dependsOn tasks.named('runGameTest')
+	dependsOn tasks.named('runGameTest'), verifyCurseForgeCompatibility
 }
 
 // jemalloc native crash workaround: set env var + jvm args on runClient task
