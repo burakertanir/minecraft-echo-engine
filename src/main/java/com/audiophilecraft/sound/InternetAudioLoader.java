@@ -17,8 +17,11 @@ import dev.lavalink.youtube.YoutubeAudioSourceManager;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
 import java.nio.ShortBuffer;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.concurrent.ArrayBlockingQueue;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Future;
 import java.util.concurrent.RejectedExecutionException;
@@ -206,6 +209,63 @@ public class InternetAudioLoader {
                 callback.onFailed("Load failed: " + exception.getMessage());
             }
         });
+    }
+
+    /**
+     * Synchronously resolve a LavaPlayer identifier (URL, bare video ID, or
+     * "ytsearch:query") into its tracks.
+     *
+     * <p>Blocks the calling thread until LavaPlayer finishes resolving or
+     * {@code timeoutMs} elapses. Returns an empty list on no-match, failure,
+     * or timeout. Resolution itself still runs on LavaPlayer's own threads;
+     * only the wait is synchronous.
+     *
+     * @param identifier URL, video ID, or "ytsearch:" search query
+     * @param timeoutMs  maximum time to wait for resolution
+     * @return resolved tracks (all playlist tracks for searches/playlists)
+     */
+    public List<AudioTrack> loadItemBlocking(String identifier, long timeoutMs) {
+        List<AudioTrack> pending = new java.util.concurrent.CopyOnWriteArrayList<>();
+        CountDownLatch done = new CountDownLatch(1);
+        playerManager.loadItem(identifier, new AudioLoadResultHandler() {
+            @Override
+            public void trackLoaded(AudioTrack track) {
+                try {
+                    pending.add(track);
+                } finally {
+                    done.countDown();
+                }
+            }
+
+            @Override
+            public void playlistLoaded(AudioPlaylist playlist) {
+                try {
+                    pending.addAll(playlist.getTracks());
+                    if (pending.isEmpty() && playlist.getSelectedTrack() != null) {
+                        pending.add(playlist.getSelectedTrack());
+                    }
+                } finally {
+                    done.countDown();
+                }
+            }
+
+            @Override
+            public void noMatches() {
+                done.countDown();
+            }
+
+            @Override
+            public void loadFailed(FriendlyException exception) {
+                AudiophileCraft.LOGGER.debug("Blocking internet load failed for {}.", identifier, exception);
+                done.countDown();
+            }
+        });
+        try {
+            done.await(timeoutMs, TimeUnit.MILLISECONDS);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+        }
+        return new ArrayList<>(pending);
     }
 
     public boolean cancelStreamingRequest(long requestId) {
