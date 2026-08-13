@@ -15,9 +15,9 @@ class SpeakerClustererTest {
     }
 
     @Test
-    void includesTheExactDistanceBoundary() {
+    void includesFaceAdjacentSpeakersInOneCluster() {
         BlockPos first = new BlockPos(0, 0, 0);
-        BlockPos second = new BlockPos(2, 2, 0);
+        BlockPos second = new BlockPos(1, 0, 0);
 
         List<List<BlockPos>> clusters = SpeakerClusterer.clusterSpeakers(List.of(first, second));
 
@@ -26,9 +26,20 @@ class SpeakerClustererTest {
     }
 
     @Test
-    void separatesSpeakersBeyondTheDistanceBoundary() {
+    void includesCornerAdjacentSpeakersInOneCluster() {
         BlockPos first = new BlockPos(0, 0, 0);
-        BlockPos second = new BlockPos(3, 0, 0);
+        BlockPos second = new BlockPos(1, 1, 1);
+
+        List<List<BlockPos>> clusters = SpeakerClusterer.clusterSpeakers(List.of(first, second));
+
+        assertEquals(1, clusters.size());
+        assertEquals(List.of(first, second), clusters.get(0));
+    }
+
+    @Test
+    void separatesSpeakersWithAnEmptyBlockBetweenThem() {
+        BlockPos first = new BlockPos(0, 0, 0);
+        BlockPos second = new BlockPos(2, 0, 0);
 
         List<List<BlockPos>> clusters = SpeakerClusterer.clusterSpeakers(List.of(first, second));
 
@@ -36,10 +47,10 @@ class SpeakerClustererTest {
     }
 
     @Test
-    void mergesClustersConnectedByALaterBridgeSpeaker() {
+    void mergesClustersConnectedByATouchingBridgeSpeaker() {
         BlockPos lower = new BlockPos(0, 0, 0);
-        BlockPos upper = new BlockPos(0, 4, 0);
-        BlockPos bridge = new BlockPos(1, 2, 0);
+        BlockPos upper = new BlockPos(0, 0, 2);
+        BlockPos bridge = new BlockPos(1, 0, 1);
 
         List<List<BlockPos>> clusters = SpeakerClusterer.clusterSpeakers(List.of(bridge, upper, lower));
 
@@ -70,9 +81,9 @@ class SpeakerClustererTest {
     }
 
     @Test
-    void longTransitiveChainDoesNotSplitByEndpointDistance() {
+    void longTouchingChainDoesNotSplitByEndpointDistance() {
         List<BlockPos> chain =
-                List.of(new BlockPos(0, 0, 0), new BlockPos(2, 0, 0), new BlockPos(4, 0, 0), new BlockPos(6, 0, 0));
+                List.of(new BlockPos(0, 0, 0), new BlockPos(1, 0, 0), new BlockPos(2, 0, 0), new BlockPos(3, 0, 0));
 
         List<List<BlockPos>> clusters = SpeakerClusterer.clusterSpeakers(chain);
 
@@ -82,10 +93,10 @@ class SpeakerClustererTest {
     }
 
     @Test
-    void negativeCoordinatesUseTheSameDistanceBoundary() {
+    void negativeCoordinatesUseTheSameTouchingRule() {
         BlockPos first = new BlockPos(-10, -4, -3);
         BlockPos second = new BlockPos(-8, -2, -3);
 
-        assertEquals(1, SpeakerClusterer.clusterSpeakers(List.of(first, second)).size());
+        assertEquals(2, SpeakerClusterer.clusterSpeakers(List.of(first, second)).size());
     }
 }

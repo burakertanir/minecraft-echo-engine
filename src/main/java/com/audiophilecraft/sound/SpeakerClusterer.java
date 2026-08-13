@@ -12,18 +12,16 @@ import net.minecraft.util.math.BlockPos;
 import net.minecraft.world.World;
 
 /**
- * Stateless utility for grouping speakers by proximity and detecting types.
+ * Stateless utility for grouping speakers by physical contact and detecting types.
  * Extracted from AudioEngine to reduce god-class size.
  */
 public class SpeakerClusterer {
 
-    /** Default proximity threshold (squared distance) for cluster membership.
-     *  Sqrt(8.0) ≈ 2.83 blocks radius. Named CLUSTER_DISTANCE_SQ to clarify it's squared. */
-    public static final double CLUSTER_DISTANCE_SQ = 8.0;
-
     /**
-     * Groups speaker positions into clusters based on proximity.
-     * Speakers within sqrt(CLUSTER_DISTANCE_SQ) ≈ 2.83 blocks of any member join the same cluster.
+     * Groups speaker positions into clusters based on physical contact.
+     * Two speakers are connected when they touch: the difference in every axis is at most 1,
+     * so face, edge and corner adjacency all count. A transitive chain of touching speakers
+     * shares one cluster; any empty block between speakers separates clusters.
      * Input is sorted for deterministic output (ConcurrentHashMap iteration is not guaranteed).
      */
     public static List<List<BlockPos>> clusterSpeakers(List<BlockPos> speakers) {
@@ -47,7 +45,7 @@ public class SpeakerClusterer {
 
                 for (int candidateIndex = 0; candidateIndex < sorted.size(); candidateIndex++) {
                     if (visited[candidateIndex]) continue;
-                    if (current.getSquaredDistance(sorted.get(candidateIndex)) <= CLUSTER_DISTANCE_SQ) {
+                    if (touches(current, sorted.get(candidateIndex))) {
                         visited[candidateIndex] = true;
                         pending.addLast(candidateIndex);
                     }
@@ -57,6 +55,13 @@ public class SpeakerClusterer {
             clusters.add(cluster);
         }
         return clusters;
+    }
+
+    /** True when two positions touch: the axis difference is at most 1 in every direction. */
+    private static boolean touches(BlockPos first, BlockPos second) {
+        return Math.abs(first.getX() - second.getX()) <= 1
+                && Math.abs(first.getY() - second.getY()) <= 1
+                && Math.abs(first.getZ() - second.getZ()) <= 1;
     }
 
     /**
