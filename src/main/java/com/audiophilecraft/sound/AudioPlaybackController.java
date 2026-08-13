@@ -783,6 +783,7 @@ final class AudioPlaybackController {
             }
 
             session.setStreamStartTime(System.nanoTime());
+            session.beginEchoFadeIn();
             engine.syncListenerToCamera();
 
             java.nio.IntBuffer sourceIds =
