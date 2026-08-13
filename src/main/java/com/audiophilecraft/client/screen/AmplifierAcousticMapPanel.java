@@ -13,9 +13,12 @@ final class AmplifierAcousticMapPanel {
     private static final int ZONES_PER_PAGE = 4;
     private static final int CONTROL_HEIGHT = 15;
     private static final int AUTO_WIDTH = 34;
+    private static final int ALL_WIDTH = 30;
     private static final int ZONE_WIDTH = 22;
     private static final int ARROW_WIDTH = 16;
     private static final int CONTROL_GAP = 3;
+    private static final int SELECTION_AUTO = -1;
+    private static final int SELECTION_ALL = -2;
 
     private final TextRenderer textRenderer;
     private int zonePageStart;
@@ -70,10 +73,16 @@ final class AmplifierAcousticMapPanel {
         int cursorX = layout.startX() + textRenderer.getWidth(layout.label()) + CONTROL_GAP;
 
         if (contains(mouseX, mouseY, cursorX, layout.y(), AUTO_WIDTH, CONTROL_HEIGHT)) {
-            engine.selectAcousticDebugZone(-1);
+            engine.selectAcousticDebugZone(SELECTION_AUTO);
             return true;
         }
-        cursorX += AUTO_WIDTH;
+        cursorX += AUTO_WIDTH + CONTROL_GAP;
+
+        if (contains(mouseX, mouseY, cursorX, layout.y(), ALL_WIDTH, CONTROL_HEIGHT)) {
+            engine.selectAcousticDebugZone(SELECTION_ALL);
+            return true;
+        }
+        cursorX += ALL_WIDTH;
 
         if (layout.paging()) {
             cursorX += CONTROL_GAP;
@@ -122,10 +131,21 @@ final class AmplifierAcousticMapPanel {
                 layout.y(),
                 AUTO_WIDTH,
                 "AUTO",
-                selectedZoneIndex < 0,
+                selectedZoneIndex == SELECTION_AUTO,
                 true,
                 contains(mouseX, mouseY, cursorX, layout.y(), AUTO_WIDTH, CONTROL_HEIGHT));
-        cursorX += AUTO_WIDTH;
+        cursorX += AUTO_WIDTH + CONTROL_GAP;
+
+        drawSegment(
+                context,
+                cursorX,
+                layout.y(),
+                ALL_WIDTH,
+                "ALL",
+                selectedZoneIndex == SELECTION_ALL,
+                true,
+                contains(mouseX, mouseY, cursorX, layout.y(), ALL_WIDTH, CONTROL_HEIGHT));
+        cursorX += ALL_WIDTH;
 
         if (layout.paging()) {
             cursorX += CONTROL_GAP;
@@ -246,7 +266,7 @@ final class AmplifierAcousticMapPanel {
     }
 
     private int selectorWidth(String label, int visibleZoneCount, boolean paging) {
-        int width = textRenderer.getWidth(label) + CONTROL_GAP + AUTO_WIDTH;
+        int width = textRenderer.getWidth(label) + CONTROL_GAP + AUTO_WIDTH + CONTROL_GAP + ALL_WIDTH;
         if (paging) width += CONTROL_GAP + ARROW_WIDTH + CONTROL_GAP + ARROW_WIDTH;
         if (visibleZoneCount > 0) width += CONTROL_GAP + visibleZoneCount * ZONE_WIDTH;
         return width;

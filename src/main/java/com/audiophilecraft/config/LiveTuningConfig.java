@@ -30,7 +30,7 @@ public class LiveTuningConfig {
     private static volatile LiveTuningConfig INSTANCE;
     private static final Gson GSON = new GsonBuilder().setPrettyPrinting().create();
     private static final String CONFIG_LAYOUT_MARKER = "// DOSYA DUZENI: 3";
-    private static final int CURRENT_CONFIG_VERSION = 1;
+    private static final int CURRENT_CONFIG_VERSION = 2;
     private static final float MIGRATION_EPSILON = 0.0001f;
     private static Path configPath;
     private static long lastModifiedTime = 0;
@@ -53,26 +53,26 @@ public class LiveTuningConfig {
     // ============================================================================
     public float sub_refDist = 13.0f;
     public float sub_baseMaxDist = 140.0f;
-    public float sub_rolloffExponent = 1.6f;
-    public float mid_refDist = 7.0f;
-    public float mid_baseMaxDist = 80.0f;
-    public float mid_rolloffExponent = 1.35f;
+    public float sub_rolloffExponent = 1.0f;
+    public float mid_refDist = 8.0f;
+    public float mid_baseMaxDist = 90.0f;
+    public float mid_rolloffExponent = 1.25f;
     public float line_refDist = 8.0f;
     public float line_baseMaxDist = 90.0f;
-    public float line_rolloffExponent = 1.2f;
+    public float line_rolloffExponent = 1.25f;
     public float distance_softKneeRatio = 0.5f;
-    public float fadeStartPercent = 0.6f;
+    public float fadeStartPercent = 0.65f;
 
     // ============================================================================
     // CATEGORY 2: DIRECTIONALITY
     // ============================================================================
     public float line_hzExp = 1.5f;
     public float line_vtExpBase = 1.5f;
-    public float line_vtExpPerSpeaker = 0.3f;
-    public float line_rearGain = 0.8f;
+    public float line_vtExpPerSpeaker = 0.2f;
+    public float line_rearGain = 0.9f;
     public float mid_hzExp = 2.2f;
     public float mid_vtExp = 2.0f;
-    public float mid_rearGain = 0.7f;
+    public float mid_rearGain = 0.6f;
     public float normal_hzExp = 2.7f;
     public float normal_vtExp = 2.0f;
     public float normal_rearGain = 0.7f;
@@ -97,18 +97,18 @@ public class LiveTuningConfig {
     // CATEGORY 4: PROXIMITY BOOST
     // ============================================================================
     public float prox_sub_maxBoost = 1.5f;
-    public float prox_other_maxBoost = 0.15f;
+    public float prox_other_maxBoost = 0.0f;
 
     // ============================================================================
     // CATEGORY 5: HF DIRECTIONALITY & AIR ABSORPTION
     // ============================================================================
-    public float hf_line_behindFloor = 0.3f;
-    public float hf_line_frontFloor = 0.4f;
-    public float hf_mid_behindFloor = 0.3f;
+    public float hf_line_behindFloor = 0.1f;
+    public float hf_line_frontFloor = 0.3f;
+    public float hf_mid_behindFloor = 0.1f;
     public float hf_mid_frontFloor = 0.4f;
     public float hf_normal_behindFloor = 0.1f;
     public float hf_normal_frontFloor = 0.25f;
-    public float hf_air_absorb_halving_dist = 100.0f;
+    public float hf_air_absorb_halving_dist = 90.0f;
 
     // ============================================================================
     // CATEGORY 6: REVERB MASTER (post-venue-preset multipliers)
@@ -209,7 +209,7 @@ public class LiveTuningConfig {
     public float tier7_lateReverbMul = 1.0f;
     public float tier7_hfMul = 1.0f;
     public float tier7_lfMul = 1.0f;
-    public float tier7_decayMul = 0.22f;
+    public float tier7_decayMul = 0.23f;
     public float tier7_lateReverbRoomScale = 0.35f;
     public float tier7_maxLateMultiplier_highEncl = 2.0f;
     public float tier7_maxLateMultiplier_lowEncl = 2.8f;
@@ -282,7 +282,7 @@ public class LiveTuningConfig {
     // CATEGORY 8: OPEN AIR PHYSICS
     // ============================================================================
     public float openAir_dynamic_gainMul = 0.5f;
-    public float openAir_dynamic_reflGainMul = 0.5f;
+    public float openAir_dynamic_reflGainMul = 0.6f;
     public float openAir_dynamic_lateReverbMul = 0.5f;
     public float openAir_dynamic_hfMul = 1.0f;
     public float openAir_dynamic_lfMul = 1.0f;
@@ -468,6 +468,10 @@ public class LiveTuningConfig {
             migrateVersion0To1(config, sourceJson);
             migratedVersion = 1;
         }
+        if (migratedVersion < 2) {
+            migrateVersion1To2(config, sourceJson);
+            migratedVersion = 2;
+        }
 
         config.config_version = migratedVersion;
         return migratedVersion != sourceVersion;
@@ -535,6 +539,36 @@ public class LiveTuningConfig {
             config.harmonics_midAmount = defaults.harmonics_midAmount;
         if (usesOldDefault(sourceJson, "harmonics_lineAmount", 0.6f))
             config.harmonics_lineAmount = defaults.harmonics_lineAmount;
+    }
+
+    private static void migrateVersion1To2(LiveTuningConfig config, JsonObject sourceJson) {
+        LiveTuningConfig defaults = createDefaults();
+        if (usesOldDefault(sourceJson, "sub_rolloffExponent", 1.6f))
+            config.sub_rolloffExponent = defaults.sub_rolloffExponent;
+        if (usesOldDefault(sourceJson, "mid_refDist", 7.0f)) config.mid_refDist = defaults.mid_refDist;
+        if (usesOldDefault(sourceJson, "mid_baseMaxDist", 80.0f)) config.mid_baseMaxDist = defaults.mid_baseMaxDist;
+        if (usesOldDefault(sourceJson, "mid_rolloffExponent", 1.35f))
+            config.mid_rolloffExponent = defaults.mid_rolloffExponent;
+        if (usesOldDefault(sourceJson, "line_rolloffExponent", 1.2f))
+            config.line_rolloffExponent = defaults.line_rolloffExponent;
+        if (usesOldDefault(sourceJson, "fadeStartPercent", 0.6f)) config.fadeStartPercent = defaults.fadeStartPercent;
+        if (usesOldDefault(sourceJson, "line_vtExpPerSpeaker", 0.3f))
+            config.line_vtExpPerSpeaker = defaults.line_vtExpPerSpeaker;
+        if (usesOldDefault(sourceJson, "line_rearGain", 0.8f)) config.line_rearGain = defaults.line_rearGain;
+        if (usesOldDefault(sourceJson, "mid_rearGain", 0.7f)) config.mid_rearGain = defaults.mid_rearGain;
+        if (usesOldDefault(sourceJson, "prox_other_maxBoost", 0.15f))
+            config.prox_other_maxBoost = defaults.prox_other_maxBoost;
+        if (usesOldDefault(sourceJson, "hf_line_behindFloor", 0.3f))
+            config.hf_line_behindFloor = defaults.hf_line_behindFloor;
+        if (usesOldDefault(sourceJson, "hf_line_frontFloor", 0.4f))
+            config.hf_line_frontFloor = defaults.hf_line_frontFloor;
+        if (usesOldDefault(sourceJson, "hf_mid_behindFloor", 0.3f))
+            config.hf_mid_behindFloor = defaults.hf_mid_behindFloor;
+        if (usesOldDefault(sourceJson, "hf_air_absorb_halving_dist", 100.0f))
+            config.hf_air_absorb_halving_dist = defaults.hf_air_absorb_halving_dist;
+        if (usesOldDefault(sourceJson, "tier7_decayMul", 0.22f)) config.tier7_decayMul = defaults.tier7_decayMul;
+        if (usesOldDefault(sourceJson, "openAir_dynamic_reflGainMul", 0.5f))
+            config.openAir_dynamic_reflGainMul = defaults.openAir_dynamic_reflGainMul;
     }
 
     private static boolean usesOldDefault(JsonObject sourceJson, String fieldName, float oldDefault) {

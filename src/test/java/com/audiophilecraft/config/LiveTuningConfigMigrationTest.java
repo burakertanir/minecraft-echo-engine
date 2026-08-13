@@ -32,8 +32,8 @@ class LiveTuningConfigMigrationTest {
 
         assertTrue(result.migrated());
         assertEquals(0, result.sourceVersion());
-        assertEquals(1, result.config().config_version);
-        assertEquals(0.8f, result.config().line_rearGain);
+        assertEquals(2, result.config().config_version);
+        assertEquals(0.9f, result.config().line_rearGain);
         assertEquals(0.18f, result.config().echo_maxGain);
         assertEquals(-1.0f, result.config().tier6_diffusion);
         assertEquals(original, Files.readString(backupPath(configPath, 0)));
@@ -54,9 +54,57 @@ class LiveTuningConfigMigrationTest {
         LiveTuningConfig.MigrationResult result = LiveTuningConfig.readAndMigrate(configPath);
 
         assertTrue(result.migrated());
+        assertEquals(2, result.config().config_version);
         assertEquals(0.42f, result.config().line_rearGain);
         assertEquals(0.77f, result.config().echo_maxGain);
         assertEquals(0.63f, result.config().tier6_diffusion);
+    }
+
+    @Test
+    void upgradesVersionOneOldDefaultsAndCreatesABackup() throws IOException {
+        String original =
+                """
+                {
+                  "config_version": 1,
+                  "mid_refDist": 7.0,
+                  "sub_rolloffExponent": 1.6,
+                  "hf_line_behindFloor": 0.3,
+                  "prox_other_maxBoost": 0.15
+                }
+                """;
+        Path configPath = writeConfig(original);
+
+        LiveTuningConfig.MigrationResult result = LiveTuningConfig.readAndMigrate(configPath);
+
+        assertTrue(result.migrated());
+        assertEquals(1, result.sourceVersion());
+        assertEquals(2, result.config().config_version);
+        assertEquals(8.0f, result.config().mid_refDist);
+        assertEquals(1.0f, result.config().sub_rolloffExponent);
+        assertEquals(0.1f, result.config().hf_line_behindFloor);
+        assertEquals(0.0f, result.config().prox_other_maxBoost);
+        assertEquals(original, Files.readString(backupPath(configPath, 1)));
+    }
+
+    @Test
+    void preservesUserCustomizedValuesDuringVersionOneMigration() throws IOException {
+        Path configPath = writeConfig(
+                """
+                {
+                  "config_version": 1,
+                  "sub_rolloffExponent": 1.3,
+                  "line_rearGain": 0.95,
+                  "mid_refDist": 9.0
+                }
+                """);
+
+        LiveTuningConfig.MigrationResult result = LiveTuningConfig.readAndMigrate(configPath);
+
+        assertTrue(result.migrated());
+        assertEquals(2, result.config().config_version);
+        assertEquals(1.3f, result.config().sub_rolloffExponent);
+        assertEquals(0.95f, result.config().line_rearGain);
+        assertEquals(9.0f, result.config().mid_refDist);
     }
 
     @Test
@@ -64,7 +112,7 @@ class LiveTuningConfigMigrationTest {
         Path configPath = writeConfig(
                 """
                 {
-                  "config_version": 1,
+                  "config_version": 2,
                   "line_rearGain": 0.51
                 }
                 """);
@@ -72,9 +120,9 @@ class LiveTuningConfigMigrationTest {
         LiveTuningConfig.MigrationResult result = LiveTuningConfig.readAndMigrate(configPath);
 
         assertFalse(result.migrated());
-        assertEquals(1, result.sourceVersion());
+        assertEquals(2, result.sourceVersion());
         assertEquals(0.51f, result.config().line_rearGain);
-        assertFalse(Files.exists(backupPath(configPath, 1)));
+        assertFalse(Files.exists(backupPath(configPath, 2)));
     }
 
     @Test
@@ -109,8 +157,8 @@ class LiveTuningConfigMigrationTest {
 
         assertTrue(result.migrated());
         assertEquals(0, result.sourceVersion());
-        assertEquals(1, result.config().config_version);
-        assertEquals(0.8f, result.config().line_rearGain);
+        assertEquals(2, result.config().config_version);
+        assertEquals(0.9f, result.config().line_rearGain);
         assertTrue(Files.exists(backupPath(configPath, 0)));
     }
 
@@ -119,7 +167,7 @@ class LiveTuningConfigMigrationTest {
         Path configPath = writeConfig(
                 """
                 {
-                  "config_version": 1,
+                  "config_version": 2,
                   "documentation_url": "https://example.com/audio//stream",
                   "line_rearGain": 0.37 // trailing comment
                 }

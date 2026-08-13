@@ -275,6 +275,10 @@ final class AcousticZoneResolver {
             return debugResult;
         }
 
+        List<EmitterGroup> groups() {
+            return groups;
+        }
+
         boolean containsAny(Set<EmitterGroup> candidates) {
             for (EmitterGroup group : groups) {
                 if (candidates.contains(group)) return true;
@@ -289,6 +293,20 @@ final class AcousticZoneResolver {
             }
             return nearest;
         }
+    }
+
+    /** Combined debug snapshot for zones shown together in one heatmap view. */
+    record DebugMerge(AcousticScanResult scanResult, List<BlockPos> speakers) {}
+
+    /** Merges the given zones into one debug-only snapshot using their real scan results. */
+    static DebugMerge mergeZonesForDebug(List<AcousticZone> zones) {
+        if (zones.isEmpty()) return null;
+        List<EmitterGroup> groups = new ArrayList<>();
+        for (AcousticZone zone : zones) {
+            groups.addAll(zone.groups());
+        }
+        AcousticZone merged = createZone(groups);
+        return new DebugMerge(merged.debugResult(), merged.speakerPositions());
     }
 
     private record ScanBounds(double minX, double minY, double minZ, double maxX, double maxY, double maxZ) {
