@@ -14,6 +14,9 @@ import com.sedmelluq.discord.lavaplayer.track.AudioTrack;
 import com.sedmelluq.discord.lavaplayer.track.AudioTrackInfo;
 import com.sedmelluq.discord.lavaplayer.track.playback.AudioFrame;
 import dev.lavalink.youtube.YoutubeAudioSourceManager;
+import dev.lavalink.youtube.clients.AndroidMusicWithThumbnail;
+import dev.lavalink.youtube.clients.AndroidVrWithThumbnail;
+import dev.lavalink.youtube.clients.WebWithThumbnail;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
 import java.nio.ShortBuffer;
@@ -104,8 +107,11 @@ public class InternetAudioLoader {
         // LavaPlayer defaults to Opus which is encoded — we need raw PCM for OpenAL
         playerManager.getConfiguration().setOutputFormat(StandardAudioDataFormats.COMMON_PCM_S16_BE);
         // Register YouTube source using the dedicated plugin (not the deprecated
-        // built-in one)
-        playerManager.registerSourceManager(new YoutubeAudioSourceManager());
+        // built-in one). Client order = attempt order: the Android music client is
+        // tried first because it avoids most "login required" walls, then the VR
+        // client, with plain web as the final fallback.
+        playerManager.registerSourceManager(new YoutubeAudioSourceManager(
+                new AndroidMusicWithThumbnail(), new AndroidVrWithThumbnail(), new WebWithThumbnail()));
         // Register other remote sources (SoundCloud, HTTP, etc.)
         playerManager.registerSourceManager(SoundCloudAudioSourceManager.createDefault());
         playerManager.registerSourceManager(new HttpAudioSourceManager());
