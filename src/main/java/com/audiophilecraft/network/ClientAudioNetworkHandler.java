@@ -6,6 +6,7 @@ import static com.audiophilecraft.network.ModMessages.S2C_PLAY_TRACK;
 import static com.audiophilecraft.network.ModMessages.S2C_PLAY_URL;
 import static com.audiophilecraft.network.ModMessages.S2C_PREP_SEEK;
 import static com.audiophilecraft.network.ModMessages.S2C_SEEK_TRACK;
+import static com.audiophilecraft.network.ModMessages.S2C_SPEAKER_OWNERS;
 import static com.audiophilecraft.network.ModMessages.S2C_START_PLAYBACK;
 import static com.audiophilecraft.network.ModMessages.S2C_STOP_AUDIO;
 import static com.audiophilecraft.network.ModMessages.S2C_SYNC_CHANNEL_MASK;
@@ -123,6 +124,22 @@ final class ClientAudioNetworkHandler {
     }
 
     private static void registerControlSyncPackets() {
+        ClientPlayNetworking.registerGlobalReceiver(S2C_SPEAKER_OWNERS, (client, handler, buf, responseSender) -> {
+            int count = buf.readInt();
+            if (count < 0 || count > 256) return;
+            List<ModMessages.SpeakerOwner> owners = new ArrayList<>(count);
+            for (int index = 0; index < count; index++) {
+                UUID uuid = buf.readUuid();
+                String name = buf.readString(64);
+                int speakerCount = buf.readInt();
+                if (name.isEmpty() || speakerCount < 0) return;
+                owners.add(new ModMessages.SpeakerOwner(uuid, name, speakerCount));
+            }
+            client.execute(() -> {
+                if (client.currentScreen instanceof AmplifierScreen screen) screen.updateSpeakerOwners(owners);
+            });
+        });
+
         ClientPlayNetworking.registerGlobalReceiver(S2C_SYNC_INPUT_GAIN, (client, handler, buf, responseSender) -> {
             UUID sessionUUID = buf.readUuid();
             int handOrdinal = buf.readInt();

@@ -3,6 +3,7 @@ package com.audiophilecraft.client.screen;
 import com.audiophilecraft.screen.AmplifierScreenHandler;
 import com.audiophilecraft.sound.AudioEngine;
 import com.audiophilecraft.sound.PeakMeter;
+import java.util.List;
 import net.minecraft.client.gui.DrawContext;
 import net.minecraft.client.gui.screen.ingame.HandledScreen;
 import net.minecraft.client.gui.widget.ClickableWidget;
@@ -38,7 +39,12 @@ public class AmplifierScreen extends HandledScreen<AmplifierScreenHandler> {
 
         if (playbackPanel == null) {
             playbackPanel = new AmplifierPlaybackPanel(
-                    theme, textRenderer, this::getHandOrdinal, currentPower, currentInputGain);
+                    theme,
+                    textRenderer,
+                    this::getHandOrdinal,
+                    currentPower,
+                    currentInputGain,
+                    handler.getSelectedOwner());
         }
         if (mixerPanel == null) {
             mixerPanel = new AmplifierMixerPanel(theme, textRenderer);
@@ -83,6 +89,10 @@ public class AmplifierScreen extends HandledScreen<AmplifierScreenHandler> {
     public void updateInputGain(float gain) {
         currentInputGain = gain;
         if (playbackPanel != null) playbackPanel.updateInputGain(gain);
+    }
+
+    public void updateSpeakerOwners(List<com.audiophilecraft.network.ModMessages.SpeakerOwner> owners) {
+        if (playbackPanel != null) playbackPanel.updateSpeakerOwners(owners);
     }
 
     @Override

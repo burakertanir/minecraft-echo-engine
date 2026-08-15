@@ -88,6 +88,8 @@ public class InternetAudioLoader {
     private InternetAudioLoader() {
         // Force IPv4 to prevent Java network hangs on Windows (IPv6 timeouts)
         System.setProperty("java.net.preferIPv4Stack", "true");
+        // Do not cache DNS lookups so every reset can resolve a fresh YouTube edge
+        java.security.Security.setProperty("networkaddress.cache.ttl", "0");
         decoderExecutor = new ThreadPoolExecutor(
                 DECODER_THREAD_COUNT,
                 DECODER_THREAD_COUNT,
@@ -131,6 +133,23 @@ public class InternetAudioLoader {
         }
         if (loader != null) {
             loader.shutdown();
+        }
+    }
+
+    /**
+     * Destroys the current singleton so the next {@link #getInstance()} call
+     * creates a brand-new {@link DefaultAudioPlayerManager} with fresh source
+     * managers. Use this to recover from YouTube bot-protection / login-wall
+     * errors that leave the internal HTTP session in a broken state.
+     *
+     * <p>All active streaming requests are cancelled before shutdown.
+     * The decoder executor and player manager are fully terminated.
+     */
+    public static synchronized void resetInstance() {
+        if (INSTANCE != null) {
+            INSTANCE.shutdown();
+            INSTANCE = null;
+            AudiophileCraft.LOGGER.info("InternetAudioLoader instance reset (will recreate on next use).");
         }
     }
 

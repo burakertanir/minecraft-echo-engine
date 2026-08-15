@@ -1,6 +1,7 @@
 package com.audiophilecraft.network;
 
 import static com.audiophilecraft.network.ModMessages.C2S_CHANNEL_MASK;
+import static com.audiophilecraft.network.ModMessages.C2S_GET_SPEAKER_OWNERS;
 import static com.audiophilecraft.network.ModMessages.C2S_PLAYBACK_READY;
 import static com.audiophilecraft.network.ModMessages.C2S_PLAY_URL;
 import static com.audiophilecraft.network.ModMessages.C2S_SEEK_READY;
@@ -12,11 +13,13 @@ import static com.audiophilecraft.network.ModMessages.C2S_UPDATE_EQ_Q;
 import static com.audiophilecraft.network.ModMessages.C2S_UPDATE_INPUT_GAIN;
 import static com.audiophilecraft.network.ModMessages.C2S_UPDATE_MIXER_GAIN;
 import static com.audiophilecraft.network.ModMessages.C2S_UPDATE_POWER;
+import static com.audiophilecraft.network.ModMessages.C2S_UPDATE_SELECTED_OWNER;
 import static com.audiophilecraft.network.ModMessages.C2S_UPDATE_SPEAKER_SHIFT;
 import static com.audiophilecraft.network.ModMessages.C2S_UPDATE_TILT;
 import static com.audiophilecraft.network.ModMessages.S2C_PLAY_TRACK;
 import static com.audiophilecraft.network.ModMessages.S2C_PLAY_URL;
 import static com.audiophilecraft.network.ModMessages.S2C_PREP_SEEK;
+import static com.audiophilecraft.network.ModMessages.S2C_SPEAKER_OWNERS;
 import static com.audiophilecraft.network.ModMessages.S2C_START_PLAYBACK;
 import static com.audiophilecraft.network.ModMessages.S2C_STOP_AUDIO;
 import static com.audiophilecraft.network.ModMessages.S2C_SYNC_CHANNEL_MASK;
@@ -34,6 +37,8 @@ import com.audiophilecraft.item.AmplifierTabletItem;
 import com.audiophilecraft.registry.SpeakerRegistry;
 import com.audiophilecraft.sound.SpeakerClusterer;
 import com.audiophilecraft.sound.SpeakerPlaybackData;
+import com.mojang.authlib.GameProfile;
+import java.util.Collections;
 import java.util.List;
 import java.util.Set;
 import java.util.UUID;
@@ -55,9 +60,13 @@ import net.minecraft.util.math.BlockPos;
 final class ServerAudioNetworkHandler {
     static final long SYNC_TIMEOUT_MS = 30_000L;
     private static final int SYNC_MAINTENANCE_INTERVAL_TICKS = 20;
+    private static final long OWNER_LIST_REQUEST_INTERVAL_MS = 2_000L;
+    private static final int MAX_SPEAKER_OWNERS_PER_PACKET = 64;
 
     private static final ConcurrentHashMap<UUID, PendingSync> pendingPlayReady = new ConcurrentHashMap<>();
     private static final ConcurrentHashMap<UUID, PendingSync> pendingSeekReady = new ConcurrentHashMap<>();
+    private static final ConcurrentHashMap<UUID, Long> lastOwnerListRequests = new ConcurrentHashMap<>();
+    private static final ConcurrentHashMap<UUID, SessionClaim> activeSessionSpeakers = new ConcurrentHashMap<>();
     private static int syncMaintenanceTicks;
 
     private ServerAudioNetworkHandler() {}
@@ -86,12 +95,14 @@ final class ServerAudioNetworkHandler {
     static void clearPendingSyncs() {
         pendingPlayReady.clear();
         pendingSeekReady.clear();
+        activeSessionSpeakers.clear();
         syncMaintenanceTicks = 0;
     }
 
     static void cleanupDisconnectedPlayer(UUID playerUUID, MinecraftServer server) {
         for (PendingSync sync : pendingPlayReady.values()) sync.waitingPlayers().remove(playerUUID);
         for (PendingSync sync : pendingSeekReady.values()) sync.waitingPlayers().remove(playerUUID);
+        lastOwnerListRequests.remove(playerUUID);
 
         long now = System.currentTimeMillis();
         completeDueSyncs(server, pendingPlayReady, S2C_START_PLAYBACK, "Playback", now);
@@ -133,36 +144,140 @@ final class ServerAudioNetworkHandler {
     private static void registerPlaybackPackets() {
         ServerPlayNetworking.registerGlobalReceiver(C2S_PLAY_URL, (server, player, handler, buf, responseSender) -> {
             int handOrdinal = buf.readInt();
+            if (!buf.isReadable(16)) return;
+            UUID selectedOwner = buf.readUuid();
             String url = buf.readString(2048);
             if (!ModMessages.isValidHandOrdinal(handOrdinal) || !ModMessages.isValidAudioUrl(url)) return;
             server.execute(() -> {
                 ItemStack stack = getTabletStack(player, handOrdinal);
                 if (!(stack.getItem() instanceof AmplifierTabletItem)) return;
 
-                UUID ownerUUID = player.getUuid();
+                UUID sessionUUID = player.getUuid();
+                UUID speakerOwner = player.getUuid();
+                if (selectedOwner != null
+                        && !SpeakerRegistry.findSpeakersByOwner(
+                                        player.getWorld().getRegistryKey(), selectedOwner)
+                                .isEmpty()) {
+                    speakerOwner = selectedOwner;
+                }
                 Identifier playbackDimension =
                         player.getWorld().getRegistryKey().getValue();
                 List<SpeakerPlaybackData> speakers =
-                        SpeakerRegistry.findPlaybackDataByOwner(player.getWorld(), ownerUUID);
+                        SpeakerRegistry.findPlaybackDataByOwner(player.getWorld(), speakerOwner);
+                stopOverlappingSessions(server, sessionUUID, speakers, playbackDimension);
                 float power = AmplifierTabletItem.getSpeakerPower(stack);
                 float inputGain = AmplifierTabletItem.getInputGain(stack);
                 Set<UUID> waitingPlayers = ConcurrentHashMap.newKeySet();
                 for (ServerPlayerEntity onlinePlayer : server.getPlayerManager().getPlayerList()) {
                     if (!isPlayerInDimension(onlinePlayer, playbackDimension)) continue;
-                    sendPlayUrl(onlinePlayer, playbackDimension, ownerUUID, url, speakers, power, inputGain);
+                    sendPlayUrl(onlinePlayer, playbackDimension, sessionUUID, url, speakers, power, inputGain);
                     waitingPlayers.add(onlinePlayer.getUuid());
                 }
                 pendingPlayReady.put(
-                        ownerUUID, new PendingSync(waitingPlayers, System.currentTimeMillis(), playbackDimension));
+                        sessionUUID, new PendingSync(waitingPlayers, System.currentTimeMillis(), playbackDimension));
             });
         });
 
         ServerPlayNetworking.registerGlobalReceiver(
                 C2S_PLAYBACK_READY, (server, player, handler, buf, responseSender) -> {
+                    if (!buf.isReadable(16)) return;
                     UUID sessionUUID = buf.readUuid();
                     server.execute(() -> completePendingSync(
                             pendingPlayReady, sessionUUID, player.getUuid(), server, S2C_START_PLAYBACK));
                 });
+
+        ServerPlayNetworking.registerGlobalReceiver(
+                C2S_GET_SPEAKER_OWNERS, (server, player, handler, buf, responseSender) -> {
+                    long now = System.currentTimeMillis();
+                    Long lastRequest = lastOwnerListRequests.put(player.getUuid(), now);
+                    if (lastRequest != null && now - lastRequest < OWNER_LIST_REQUEST_INTERVAL_MS) return;
+                    server.execute(() -> {
+                        List<ModMessages.SpeakerOwner> owners = resolveSpeakerOwners(server, player);
+                        if (owners.size() > MAX_SPEAKER_OWNERS_PER_PACKET) {
+                            owners = owners.subList(0, MAX_SPEAKER_OWNERS_PER_PACKET);
+                        }
+                        PacketByteBuf response = PacketByteBufs.create();
+                        response.writeInt(owners.size());
+                        for (ModMessages.SpeakerOwner owner : owners) {
+                            response.writeUuid(owner.uuid());
+                            response.writeString(owner.name());
+                            response.writeInt(owner.speakerCount());
+                        }
+                        ServerPlayNetworking.send(player, S2C_SPEAKER_OWNERS, response);
+                    });
+                });
+
+        ServerPlayNetworking.registerGlobalReceiver(
+                C2S_UPDATE_SELECTED_OWNER, (server, player, handler, buf, responseSender) -> {
+                    int handOrdinal = buf.readInt();
+                    if (!buf.isReadable(16)) return;
+                    UUID selectedOwner = buf.readUuid();
+                    if (!ModMessages.isValidHandOrdinal(handOrdinal)) return;
+                    server.execute(() -> {
+                        ItemStack stack = getTabletStack(player, handOrdinal);
+                        if (!(stack.getItem() instanceof AmplifierTabletItem)) return;
+                        if (selectedOwner != null
+                                && SpeakerRegistry.findSpeakersByOwner(
+                                                player.getWorld().getRegistryKey(), selectedOwner)
+                                        .isEmpty()) {
+                            return;
+                        }
+                        AmplifierTabletItem.setSelectedOwner(stack, selectedOwner);
+                    });
+                });
+    }
+
+    private static void stopOverlappingSessions(
+            MinecraftServer server,
+            UUID newSessionUUID,
+            List<SpeakerPlaybackData> speakers,
+            Identifier playbackDimension) {
+        if (speakers == null || speakers.isEmpty()) return;
+
+        Set<BlockPos> newPositions = ConcurrentHashMap.newKeySet();
+        for (SpeakerPlaybackData speaker : speakers) newPositions.add(speaker.position());
+
+        for (var entry : activeSessionSpeakers.entrySet()) {
+            UUID existingSession = entry.getKey();
+            if (existingSession.equals(newSessionUUID)) continue;
+            SessionClaim existingClaim = entry.getValue();
+            if (existingClaim == null
+                    || !playbackDimension.equals(existingClaim.dimension())
+                    || Collections.disjoint(existingClaim.positions(), newPositions)) {
+                continue;
+            }
+            broadcastToDimension(server, playbackDimension, S2C_STOP_AUDIO, buf -> buf.writeUuid(existingSession));
+            activeSessionSpeakers.remove(existingSession, existingClaim);
+            pendingPlayReady.remove(existingSession);
+            pendingSeekReady.remove(existingSession);
+        }
+        activeSessionSpeakers.put(newSessionUUID, new SessionClaim(playbackDimension, newPositions));
+    }
+
+    private static List<ModMessages.SpeakerOwner> resolveSpeakerOwners(
+            MinecraftServer server, ServerPlayerEntity player) {
+        List<ModMessages.SpeakerOwner> owners = new java.util.ArrayList<>();
+        for (SpeakerRegistry.OwnerEntry entry : SpeakerRegistry.findSpeakerOwners(player.getWorld())) {
+            UUID ownerUUID = entry.ownerUUID();
+            String name = null;
+            ServerPlayerEntity onlinePlayer = server.getPlayerManager().getPlayer(ownerUUID);
+            if (onlinePlayer != null) {
+                name = onlinePlayer.getGameProfile().getName();
+            } else {
+                GameProfile cachedProfile =
+                        server.getUserCache().getByUuid(ownerUUID).orElse(null);
+                if (cachedProfile != null && cachedProfile.getName() != null) {
+                    name = cachedProfile.getName();
+                }
+            }
+            if (name == null) {
+                String shortUuid = ownerUUID.toString().substring(0, 8);
+                name = "Player-" + shortUuid;
+            }
+            owners.add(new ModMessages.SpeakerOwner(ownerUUID, name, entry.speakerCount()));
+        }
+        owners.sort((a, b) -> a.name().compareToIgnoreCase(b.name()));
+        return owners;
     }
 
     private static void registerTabletControlPackets() {
@@ -323,14 +438,17 @@ final class ServerAudioNetworkHandler {
         });
 
         ServerPlayNetworking.registerGlobalReceiver(C2S_SEEK_READY, (server, player, handler, buf, responseSender) -> {
+            if (!buf.isReadable(16)) return;
             UUID sessionUUID = buf.readUuid();
             server.execute(
                     () -> completePendingSync(pendingSeekReady, sessionUUID, player.getUuid(), server, S2C_SYNC_SEEK));
         });
 
         ServerPlayNetworking.registerGlobalReceiver(C2S_STOP_AUDIO, (server, player, handler, buf, responseSender) -> {
-            server.execute(
-                    () -> broadcastToAll(server, S2C_STOP_AUDIO, syncBuf -> syncBuf.writeUuid(player.getUuid())));
+            server.execute(() -> {
+                activeSessionSpeakers.remove(player.getUuid());
+                broadcastToAll(server, S2C_STOP_AUDIO, syncBuf -> syncBuf.writeUuid(player.getUuid()));
+            });
         });
 
         ServerPlayNetworking.registerGlobalReceiver(
@@ -496,4 +614,6 @@ final class ServerAudioNetworkHandler {
     record PendingSync(Set<UUID> waitingPlayers, long startedAtMs, Identifier dimension) {}
 
     record DueSync(UUID sessionUUID, PendingSync state, boolean timedOut) {}
+
+    record SessionClaim(Identifier dimension, Set<BlockPos> positions) {}
 }

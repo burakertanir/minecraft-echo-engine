@@ -1,6 +1,7 @@
 package com.audiophilecraft.item;
 
 import com.audiophilecraft.screen.AmplifierScreenHandler;
+import java.util.UUID;
 import net.fabricmc.fabric.api.screenhandler.v1.ExtendedScreenHandlerFactory;
 import net.minecraft.entity.player.PlayerEntity;
 import net.minecraft.entity.player.PlayerInventory;
@@ -45,12 +46,16 @@ public class AmplifierTabletItem extends Item {
                     NbtCompound nbt = stack.getNbt();
                     float inputGain = 1.0f;
                     float speakerPower = 1.0f;
+                    UUID selectedOwner = null;
                     if (nbt != null) {
                         if (nbt.contains("InputGain")) inputGain = nbt.getFloat("InputGain");
                         if (nbt.contains("SpeakerPower")) speakerPower = nbt.getFloat("SpeakerPower");
+                        if (nbt.containsUuid("SelectedOwner")) selectedOwner = nbt.getUuid("SelectedOwner");
                     }
                     buf.writeFloat(inputGain);
                     buf.writeFloat(speakerPower);
+                    buf.writeBoolean(selectedOwner != null);
+                    if (selectedOwner != null) buf.writeUuid(selectedOwner);
                 }
             });
         }
@@ -83,6 +88,23 @@ public class AmplifierTabletItem extends Item {
     public static void setInputGain(ItemStack stack, float gain) {
         NbtCompound nbt = stack.getOrCreateNbt();
         nbt.putFloat("InputGain", Math.max(0.0f, Math.min(gain, 3.0f)));
+    }
+
+    // --- Selected Speaker Owner (persisted across screen open/close) ---
+
+    public static UUID getSelectedOwner(ItemStack stack) {
+        NbtCompound nbt = stack.getNbt();
+        if (nbt != null && nbt.containsUuid("SelectedOwner")) {
+            return nbt.getUuid("SelectedOwner");
+        }
+        return null;
+    }
+
+    public static void setSelectedOwner(ItemStack stack, UUID owner) {
+        NbtCompound nbt = stack.getOrCreateNbt();
+        if (owner != null) {
+            nbt.putUuid("SelectedOwner", owner);
+        }
     }
 
     // --- Mixer Gains (persisted across songs and server restarts) ---

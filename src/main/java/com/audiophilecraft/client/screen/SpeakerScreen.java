@@ -380,8 +380,8 @@ public class SpeakerScreen extends HandledScreen<SpeakerScreenHandler> {
         @Override
         protected void updateMessage() {
             int deg = (int) Math.round(this.value * 140.0 - 70.0);
-            this.setMessage(Text.literal(
-                    "Vertical Tilt: " + deg + "° " + (deg < 0 ? "(Aşağı)" : deg > 0 ? "(Yukarı)" : "(Düz)")));
+            this.setMessage(
+                    Text.literal("Vertical Tilt: " + deg + "° " + (deg < 0 ? "(Down)" : deg > 0 ? "(Up)" : "(Flat)")));
         }
 
         @Override

@@ -97,8 +97,7 @@ public class SpeakerRegistry {
         getPlaybackDataMap(world.getRegistryKey()).put(pos.toImmutable(), SpeakerPlaybackData.capture(world, pos));
     }
 
-    /**
-     * Returns authoritative playback metadata for an owner's speakers. Loaded chunks
+    /** Returns authoritative playback metadata for an owner's speakers. Loaded chunks
      * refresh the cache; unloaded chunks use the last server-side snapshot.
      */
     public static List<SpeakerPlaybackData> findPlaybackDataByOwner(World world, UUID ownerUUID) {
@@ -122,6 +121,24 @@ public class SpeakerRegistry {
         result.sort(Comparator.comparingLong(data -> data.position().asLong()));
         return result;
     }
+
+    /** Returns the distinct owners of speakers in the given world's dimension, with speaker counts. */
+    public static List<OwnerEntry> findSpeakerOwners(World world) {
+        if (world == null) return Collections.emptyList();
+        RegistryKey<World> dimension = world.getRegistryKey();
+        Map<UUID, Integer> counts = new java.util.HashMap<>();
+        for (UUID owner : getOwnerMap(dimension).values()) {
+            counts.merge(owner, 1, Integer::sum);
+        }
+        List<OwnerEntry> result = new ArrayList<>();
+        for (Map.Entry<UUID, Integer> entry : counts.entrySet()) {
+            result.add(new OwnerEntry(entry.getKey(), entry.getValue()));
+        }
+        result.sort(Comparator.comparingInt(OwnerEntry::speakerCount).reversed());
+        return result;
+    }
+
+    public record OwnerEntry(UUID ownerUUID, int speakerCount) {}
 
     /** Find all speakers within radius of a given position, scoped to the world's dimension. */
     public static List<BlockPos> findSpeakersInRange(World world, BlockPos center, double maxRange) {

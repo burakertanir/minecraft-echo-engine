@@ -8,12 +8,14 @@ import com.audiophilecraft.util.YouTubeSearcher;
 import com.mojang.blaze3d.systems.RenderSystem;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.UUID;
 import java.util.function.Consumer;
 import java.util.function.IntSupplier;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import net.fabricmc.fabric.api.client.networking.v1.ClientPlayNetworking;
 import net.fabricmc.fabric.api.networking.v1.PacketByteBufs;
+import net.minecraft.client.MinecraftClient;
 import net.minecraft.client.font.TextRenderer;
 import net.minecraft.client.gui.DrawContext;
 import net.minecraft.client.gui.widget.ClickableWidget;
@@ -40,6 +42,7 @@ final class AmplifierPlaybackPanel {
     private TextFieldWidget urlField;
     private AmplifierTheme.ThemedButton playButton;
     private AmplifierTheme.ThemedButton stopButton;
+    private AmplifierTheme.ThemedButton ownerButton;
     private PowerSlider powerSlider;
     private InputGainSlider inputGainSlider;
     private SeekBarWidget seekBar;
@@ -53,17 +56,23 @@ final class AmplifierPlaybackPanel {
     private volatile boolean searching;
     private volatile List<YouTubeSearcher.SearchResult> searchResults = new ArrayList<>();
 
+    private volatile List<ModMessages.SpeakerOwner> speakerOwners = new ArrayList<>();
+    private UUID selectedOwner;
+    private boolean ownerDropdownOpen;
+
     AmplifierPlaybackPanel(
             AmplifierTheme theme,
             TextRenderer textRenderer,
             IntSupplier handOrdinal,
             float initialPower,
-            float initialInputGain) {
+            float initialInputGain,
+            UUID initialOwner) {
         this.theme = theme;
         this.textRenderer = textRenderer;
         this.handOrdinal = handOrdinal;
         this.currentPower = initialPower;
         this.currentInputGain = initialInputGain;
+        this.selectedOwner = initialOwner;
     }
 
     void initialize(
@@ -94,12 +103,29 @@ final class AmplifierPlaybackPanel {
         double initialPowerValue = (currentPower - 0.1f) / 9.9f;
         powerSlider = new PowerSlider(screenX + 40, clusterY + 155, backgroundWidth - 80, 20, initialPowerValue);
 
+        MinecraftClient client = MinecraftClient.getInstance();
+        if (selectedOwner == null) {
+            selectedOwner = client.player != null ? client.player.getUuid() : null;
+        }
+        int ownerY = Math.max(screenY + 4, clusterY - 26);
+        ownerButton = theme.button(
+                textRenderer,
+                screenX + 44,
+                ownerY,
+                backgroundWidth - 88,
+                18,
+                Text.literal("Owner: ..."),
+                button -> ownerDropdownOpen = !ownerDropdownOpen);
+        ClientPlayNetworking.send(ModMessages.C2S_GET_SPEAKER_OWNERS, PacketByteBufs.create());
+        updateOwnerButtonLabel();
+
         addWidget.accept(urlField);
         addWidget.accept(playButton);
         addWidget.accept(stopButton);
         addWidget.accept(seekBar);
         addWidget.accept(inputGainSlider);
         addWidget.accept(powerSlider);
+        addWidget.accept(ownerButton);
     }
 
     void setVisible(boolean visible) {
@@ -109,6 +135,7 @@ final class AmplifierPlaybackPanel {
         if (powerSlider != null) powerSlider.visible = visible;
         if (playButton != null) playButton.visible = visible;
         if (stopButton != null) stopButton.visible = visible;
+        if (ownerButton != null) ownerButton.visible = visible;
     }
 
     void tick() {
@@ -140,6 +167,7 @@ final class AmplifierPlaybackPanel {
     void renderOverlay(DrawContext context, int mouseX, int mouseY) {
         renderTrackInfo(context);
         renderSearchDropdown(context, mouseX, mouseY);
+        renderOwnerDropdown(context, mouseX, mouseY);
     }
 
     void renderLoadingIndicator(DrawContext context) {
@@ -154,6 +182,29 @@ final class AmplifierPlaybackPanel {
     }
 
     boolean mouseClicked(double mouseX, double mouseY) {
+        if (ownerDropdownOpen && ownerButton != null) {
+            int dropX = ownerButton.getX();
+            int dropY = ownerButton.getY() + ownerButton.getHeight() + 1;
+            int dropWidth = ownerButton.getWidth();
+            int itemHeight = 18;
+            if (mouseY > dropY) {
+                if (!speakerOwners.isEmpty()
+                        && mouseX >= dropX
+                        && mouseX <= dropX + dropWidth
+                        && mouseY <= dropY + speakerOwners.size() * itemHeight) {
+                    int index = (int) ((mouseY - dropY) / itemHeight);
+                    if (index >= 0 && index < speakerOwners.size()) {
+                        selectedOwner = speakerOwners.get(index).uuid();
+                        updateOwnerButtonLabel();
+                        ownerDropdownOpen = false;
+                        persistSelectedOwner();
+                        return true;
+                    }
+                } else {
+                    ownerDropdownOpen = false;
+                }
+            }
+        }
         if (!dropdownOpen || urlField == null || !urlField.isFocused() || searchResults.isEmpty()) return false;
         int dropX = urlField.getX() - 5;
         int dropY = urlField.getY() + urlField.getHeight() + 1;
@@ -376,6 +427,12 @@ final class AmplifierPlaybackPanel {
         if (url.isEmpty()) return 0;
         PacketByteBuf buffer = PacketByteBufs.create();
         buffer.writeInt(handOrdinal.getAsInt());
+        buffer.writeUuid(
+                selectedOwner != null
+                        ? selectedOwner
+                        : MinecraftClient.getInstance().player != null
+                                ? MinecraftClient.getInstance().player.getUuid()
+                                : UUID.randomUUID());
         buffer.writeString(url);
         ClientPlayNetworking.send(ModMessages.C2S_PLAY_URL, buffer);
         return 2500;
@@ -478,6 +535,82 @@ final class AmplifierPlaybackPanel {
         context.fill(x, y + height, x + width, y + height + 1, theme.color());
         context.fill(x, y, x + 1, y + height, theme.color());
         context.fill(x + width - 1, y, x + width, y + height, theme.color());
+    }
+
+    private void renderOwnerDropdown(DrawContext context, int mouseX, int mouseY) {
+        if (!ownerDropdownOpen || ownerButton == null) return;
+        context.getMatrices().push();
+        context.getMatrices().translate(0.0f, 0.0f, 300.0f);
+        int dropX = ownerButton.getX();
+        int dropY = ownerButton.getY() + ownerButton.getHeight() + 1;
+        int dropWidth = ownerButton.getWidth();
+        int itemHeight = 18;
+        if (speakerOwners.isEmpty()) {
+            context.fill(dropX, dropY, dropX + dropWidth, dropY + itemHeight, 0xDD000000);
+            context.drawText(textRenderer, "No speakers in this world...", dropX + 5, dropY + 5, 0xFFAAAAAA, false);
+            drawDropdownBorder(context, dropX, dropY, dropWidth, itemHeight);
+        } else {
+            int totalHeight = speakerOwners.size() * itemHeight;
+            context.fill(dropX, dropY, dropX + dropWidth, dropY + totalHeight, 0xFA050505);
+            for (int index = 0; index < speakerOwners.size(); index++) {
+                ModMessages.SpeakerOwner owner = speakerOwners.get(index);
+                int itemY = dropY + index * itemHeight;
+                boolean selected = owner.uuid().equals(selectedOwner);
+                if (mouseX >= dropX && mouseX <= dropX + dropWidth && mouseY >= itemY && mouseY < itemY + itemHeight) {
+                    context.fill(dropX, itemY, dropX + dropWidth, itemY + itemHeight, 0x44FFFFFF);
+                }
+                String label = textRenderer.trimToWidth(owner.name(), dropWidth - 40);
+                context.drawText(textRenderer, label, dropX + 5, itemY + 5, 0xFFFFFFFF, false);
+                context.drawText(
+                        textRenderer,
+                        "(" + owner.speakerCount() + ")",
+                        dropX + dropWidth - 5 - textRenderer.getWidth("(" + owner.speakerCount() + ")"),
+                        itemY + 5,
+                        selected ? theme.color() : 0xFFAAAAAA,
+                        false);
+            }
+            drawDropdownBorder(context, dropX, dropY, dropWidth, totalHeight);
+        }
+        context.getMatrices().pop();
+    }
+
+    void updateSpeakerOwners(List<ModMessages.SpeakerOwner> owners) {
+        speakerOwners = new ArrayList<>(owners);
+        MinecraftClient client = MinecraftClient.getInstance();
+        UUID ownUuid = client.player != null ? client.player.getUuid() : null;
+        if (selectedOwner == null || !containsOwner(selectedOwner)) {
+            selectedOwner = ownUuid != null && containsOwner(ownUuid) ? ownUuid : null;
+        }
+        updateOwnerButtonLabel();
+    }
+
+    private boolean containsOwner(UUID uuid) {
+        for (ModMessages.SpeakerOwner owner : speakerOwners) {
+            if (owner.uuid().equals(uuid)) return true;
+        }
+        return false;
+    }
+
+    private void updateOwnerButtonLabel() {
+        if (ownerButton == null) return;
+        String name = "You";
+        if (selectedOwner != null) {
+            for (ModMessages.SpeakerOwner owner : speakerOwners) {
+                if (owner.uuid().equals(selectedOwner)) {
+                    name = owner.name();
+                    break;
+                }
+            }
+        }
+        ownerButton.setMessage(Text.literal("\u25BE " + textRenderer.trimToWidth(name, ownerButton.getWidth() - 28)));
+    }
+
+    private void persistSelectedOwner() {
+        if (selectedOwner == null) return;
+        PacketByteBuf buffer = PacketByteBufs.create();
+        buffer.writeInt(handOrdinal.getAsInt());
+        buffer.writeUuid(selectedOwner);
+        ClientPlayNetworking.send(ModMessages.C2S_UPDATE_SELECTED_OWNER, buffer);
     }
 
     private static String extractYouTubeId(String url) {

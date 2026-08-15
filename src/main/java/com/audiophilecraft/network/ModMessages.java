@@ -45,6 +45,10 @@ public final class ModMessages {
     public static final Identifier C2S_SEEK_READY = id("c2s_seek_ready");
     public static final Identifier S2C_SYNC_SEEK = id("s2c_sync_seek");
 
+    public static final Identifier C2S_GET_SPEAKER_OWNERS = id("c2s_get_speaker_owners");
+    public static final Identifier S2C_SPEAKER_OWNERS = id("s2c_speaker_owners");
+    public static final Identifier C2S_UPDATE_SELECTED_OWNER = id("c2s_update_selected_owner");
+
     private ModMessages() {}
 
     public static void registerC2SPackets() {
@@ -90,6 +94,8 @@ public final class ModMessages {
         ServerAudioNetworkHandler.sendPlayUrl(player, playbackDimension, ownerUUID, url, speakers, power, inputGain);
     }
 
+    public record SpeakerOwner(UUID uuid, String name, int speakerCount) {}
+
     static boolean isValidHandOrdinal(int handOrdinal) {
         return handOrdinal >= 0 && handOrdinal < Hand.values().length;
     }
@@ -110,7 +116,7 @@ public final class ModMessages {
         return currentDimension != null && currentDimension.equals(packetDimension);
     }
 
-    static boolean isValidAudioUrl(String value) {
+    public static boolean isValidAudioUrl(String value) {
         if (value == null || value.isBlank() || value.length() > 2048) return false;
         try {
             java.net.URI uri = java.net.URI.create(value);

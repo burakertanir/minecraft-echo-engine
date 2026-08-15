@@ -50,6 +50,14 @@ final class AudioPlaybackController {
     private static final int VENUE_SCAN_NEIGHBORHOOD_BLOCKS = 64;
     private static final int ACOUSTIC_DEBUG_ALL_INDEX = -2;
     private static final Long ACOUSTIC_DEBUG_ALL = Long.MIN_VALUE;
+    private static final int MAX_URL_RETRIES = 7;
+    private static final long URL_RETRY_DELAY_MS = 4000L;
+    private static final java.util.concurrent.ExecutorService URL_RETRY_EXECUTOR =
+            java.util.concurrent.Executors.newSingleThreadExecutor(task -> {
+                Thread thread = new Thread(task, "AudiophileCraft-URLRetry");
+                thread.setDaemon(true);
+                return thread;
+            });
     private volatile boolean dynamicVenueScanInProgress;
     private long lastDynamicVenueCheckNanos;
 
@@ -162,6 +170,18 @@ final class AudioPlaybackController {
             float inputGain,
             boolean startImmediately,
             Consumer<UUID> onReadyCallback) {
+        playFromUrlWithRetry(sessionUUID, url, speakers, power, inputGain, startImmediately, onReadyCallback, 0);
+    }
+
+    private void playFromUrlWithRetry(
+            UUID sessionUUID,
+            String url,
+            List<SpeakerPlaybackData> speakers,
+            float power,
+            float inputGain,
+            boolean startImmediately,
+            Consumer<UUID> onReadyCallback,
+            int retryCount) {
         cancelUrlRequest(sessionUUID);
         InternetAudioLoader loader = InternetAudioLoader.getInstance();
         PlaybackSession existingSession = sessions.get(sessionUUID);
@@ -226,20 +246,72 @@ final class AudioPlaybackController {
             public void onFailed(long requestId, String reason) {
                 if (!activeUrlRequestIds.remove(sessionUUID, requestId)) return;
                 AudiophileCraft.LOGGER.warn("URL request {} failed for session {}: {}", requestId, sessionUUID, reason);
-                MinecraftClient.getInstance().execute(() -> {
-                    if (MinecraftClient.getInstance().player != null) {
-                        MinecraftClient.getInstance()
-                                .player
-                                .sendMessage(
-                                        Text.literal("HATA (CRITICAL DECODE ERROR): " + reason)
-                                                .formatted(Formatting.RED),
-                                        false);
-                    }
-                });
+
+                int nextRetry = retryCount + 1;
+                if (nextRetry <= MAX_URL_RETRIES) {
+                    // Reset LavaPlayer to clear corrupted YouTube source manager state
+                    AudiophileCraft.LOGGER.info(
+                            "Resetting LavaPlayer and scheduling retry {}/{} for session {} in {}ms.",
+                            nextRetry,
+                            MAX_URL_RETRIES,
+                            sessionUUID,
+                            URL_RETRY_DELAY_MS);
+                    InternetAudioLoader.resetInstance();
+
+                    // Schedule the retry after the delay on the main thread
+                    scheduleRetry(
+                            sessionUUID, url, speakers, power, inputGain, startImmediately, onReadyCallback, nextRetry);
+                } else {
+                    // All retries exhausted — show final error
+                    MinecraftClient.getInstance().execute(() -> {
+                        if (MinecraftClient.getInstance().player != null) {
+                            MinecraftClient.getInstance()
+                                    .player
+                                    .sendMessage(
+                                            Text.literal("❌ ERROR (CRITICAL DECODE ERROR): " + reason + " ["
+                                                            + MAX_URL_RETRIES + " attempts failed]")
+                                                    .formatted(Formatting.RED),
+                                            false);
+                        }
+                    });
+                }
             }
         });
         activeUrlRequestIds.put(sessionUUID, startedRequestId);
-        AudiophileCraft.LOGGER.debug("URL request {} started for session {}.", startedRequestId, sessionUUID);
+        AudiophileCraft.LOGGER.debug(
+                "URL request {} started for session {} (retry {}).", startedRequestId, sessionUUID, retryCount);
+    }
+
+    private void scheduleRetry(
+            UUID sessionUUID,
+            String url,
+            List<SpeakerPlaybackData> speakers,
+            float power,
+            float inputGain,
+            boolean startImmediately,
+            Consumer<UUID> onReadyCallback,
+            int retryCount) {
+        // Use a dedicated single-thread executor for retry scheduling to avoid
+        // blocking any game or decoder thread during the delay.
+        URL_RETRY_EXECUTOR.execute(() -> {
+            try {
+                Thread.sleep(URL_RETRY_DELAY_MS);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                return;
+            }
+            // Dispatch the actual retry on the main Minecraft thread
+            MinecraftClient.getInstance().execute(() -> {
+                // Guard: if the session was cancelled or a new track started during the delay, abort
+                if (activeUrlRequestIds.containsKey(sessionUUID)) {
+                    AudiophileCraft.LOGGER.debug(
+                            "Retry aborted for session {}: a new request was started during the delay.", sessionUUID);
+                    return;
+                }
+                playFromUrlWithRetry(
+                        sessionUUID, url, speakers, power, inputGain, startImmediately, onReadyCallback, retryCount);
+            });
+        });
     }
 
     void createSourcesFromClusters(

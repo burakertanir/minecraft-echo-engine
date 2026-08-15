@@ -1,14 +1,26 @@
 package com.audiophilecraft.command;
 
+import com.audiophilecraft.network.ModMessages;
+import com.audiophilecraft.registry.SpeakerRegistry;
+import com.audiophilecraft.sound.InternetAudioLoader;
+import com.audiophilecraft.sound.SpeakerPlaybackData;
 import com.mojang.brigadier.CommandDispatcher;
+import com.mojang.brigadier.arguments.StringArgumentType;
+import java.util.List;
+import java.util.Set;
+import java.util.UUID;
+import java.util.concurrent.ConcurrentHashMap;
 import net.fabricmc.fabric.api.command.v2.CommandRegistrationCallback;
 import net.minecraft.block.BlockState;
 import net.minecraft.block.Blocks;
 import net.minecraft.command.CommandRegistryAccess;
+import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.command.CommandManager;
 import net.minecraft.server.command.ServerCommandSource;
 import net.minecraft.server.network.ServerPlayerEntity;
 import net.minecraft.text.Text;
+import net.minecraft.util.Formatting;
+import net.minecraft.util.Identifier;
 import net.minecraft.util.math.BlockPos;
 import net.minecraft.world.World;
 
@@ -31,7 +43,7 @@ public class TestFacilityCommand {
                     World world = player.getWorld();
                     BlockPos startPos = player.getBlockPos().add(5, 0, 0); // Start slightly away
 
-                    context.getSource().sendMessage(Text.literal("§aTest Haritası İnşa Ediliyor... (Biraz kasabilir)"));
+                    context.getSource().sendMessage(Text.literal("§aBuilding test map... (may lag)"));
 
                     // Dim: width, height, length
                     int[][] dimensions = {
@@ -96,8 +108,178 @@ public class TestFacilityCommand {
                         currentOrigin = currentOrigin.add(w + 10, 0, 0); // 10 blocks gap between tiers
                     }
 
-                    context.getSource().sendMessage(Text.literal("§aTüm Tier Plazmaları Başarıyla Oluşturuldu!"));
+                    context.getSource().sendMessage(Text.literal("§aAll tier enclosures built successfully!"));
                     return 1;
-                })));
+                }))
+                // ─── TEST: LavaPlayer reset + retry flow ───
+                .then(CommandManager.literal("test_retry").executes(context -> {
+                    ServerPlayerEntity player = context.getSource().getPlayer();
+                    if (player == null) return 0;
+
+                    context.getSource().sendMessage(Text.literal("§e[TEST] Starting LavaPlayer reset test..."));
+
+                    // Step 1: Report current state
+                    boolean wasInitialized;
+                    synchronized (InternetAudioLoader.class) {
+                        wasInitialized = true;
+                        try {
+                            InternetAudioLoader.getInstance();
+                        } catch (Exception e) {
+                            wasInitialized = false;
+                        }
+                    }
+                    context.getSource().sendMessage(Text.literal("§7  LavaPlayer instance exists: " + wasInitialized));
+
+                    // Step 2: Force reset
+                    long resetStart = System.currentTimeMillis();
+                    InternetAudioLoader.resetInstance();
+                    long resetDuration = System.currentTimeMillis() - resetStart;
+                    context.getSource()
+                            .sendMessage(Text.literal("§a  ✅ resetInstance() completed (" + resetDuration + "ms)"));
+
+                    // Step 3: Recreate and verify
+                    long recreateStart = System.currentTimeMillis();
+                    InternetAudioLoader newLoader = InternetAudioLoader.getInstance();
+                    long recreateDuration = System.currentTimeMillis() - recreateStart;
+                    context.getSource()
+                            .sendMessage(Text.literal("§a  ✅ New instance created (" + recreateDuration + "ms)"));
+
+                    // Step 4: Quick resolve test (non-blocking, just checks that YouTube source works)
+                    context.getSource()
+                            .sendMessage(Text.literal("§7  Testing whether the YouTube source manager works..."));
+                    long testStart = System.currentTimeMillis();
+                    var testTracks = newLoader.loadItemBlocking("ytsearch:test audio 10 seconds", 10_000);
+                    long testDuration = System.currentTimeMillis() - testStart;
+                    if (!testTracks.isEmpty()) {
+                        context.getSource()
+                                .sendMessage(Text.literal("§a  ✅ YouTube resolve succeeded! (" + testDuration
+                                        + "ms) Track: " + testTracks.get(0).getInfo().title));
+                    } else {
+                        context.getSource()
+                                .sendMessage(Text.literal("§c  ❌ YouTube resolve failed! (" + testDuration + "ms) "
+                                        + "Check your network connection or YouTube access."));
+                    }
+
+                    context.getSource().sendMessage(Text.literal("§e[TEST] LavaPlayer reset test finished."));
+                    return 1;
+                }))
+                // ─── TEST: Multiplayer sync status ───
+                .then(CommandManager.literal("sync_status").executes(context -> {
+                    MinecraftServer server = context.getSource().getServer();
+                    int onlinePlayers =
+                            server.getPlayerManager().getPlayerList().size();
+
+                    context.getSource()
+                            .sendMessage(Text.literal("§6═══ Multiplayer Sync Status ═══")
+                                    .formatted(Formatting.GOLD));
+                    context.getSource().sendMessage(Text.literal("§7Online players: §f" + onlinePlayers));
+
+                    // Count players per dimension
+                    java.util.Map<String, Integer> dimCounts = new java.util.HashMap<>();
+                    for (ServerPlayerEntity p : server.getPlayerManager().getPlayerList()) {
+                        String dimName =
+                                p.getWorld().getRegistryKey().getValue().toString();
+                        dimCounts.merge(dimName, 1, Integer::sum);
+                    }
+                    for (var entry : dimCounts.entrySet()) {
+                        context.getSource()
+                                .sendMessage(
+                                        Text.literal("§7  " + entry.getKey() + ": §f" + entry.getValue() + " players"));
+                    }
+
+                    // Sync timeout info
+                    context.getSource().sendMessage(Text.literal("§7Sync timeout: §f" + (30_000 / 1000) + "s"));
+                    context.getSource().sendMessage(Text.literal("§7Retry settings: §fmax=" + 7 + ", delay=4s"));
+                    context.getSource()
+                            .sendMessage(Text.literal(
+                                    "§7Worst-case retry duration: §f~" + (7 * 4 + 8) + "s (above timeout=30s ⚠)"));
+
+                    // Simulate: what would happen if X players fail
+                    if (onlinePlayers > 1) {
+                        context.getSource().sendMessage(Text.literal(""));
+                        context.getSource().sendMessage(Text.literal("§6─── Scenario Analysis ───"));
+                        context.getSource()
+                                .sendMessage(Text.literal("§7All succeed: §aEveryone starts ~at the same time"));
+                        context.getSource()
+                                .sendMessage(
+                                        Text.literal("§71 player retries: §eEveryone waits ~4-8s, then sync starts"));
+                        context.getSource()
+                                .sendMessage(
+                                        Text.literal("§7Everyone retries: §eEveryone waits ~4-8s, then sync starts"));
+                        context.getSource()
+                                .sendMessage(Text.literal(
+                                        "§71 player 7x retry: §eWaits ~28-44s (may exceed timeout=30s ⚠)"));
+                    }
+
+                    return 1;
+                }))
+                // ─── TEST: Broadcast URL to all players (sync test) ───
+                .then(CommandManager.literal("test_sync_url")
+                        .then(CommandManager.argument("url", StringArgumentType.greedyString())
+                                .executes(context -> {
+                                    ServerPlayerEntity player =
+                                            context.getSource().getPlayer();
+                                    if (player == null) return 0;
+
+                                    String url = StringArgumentType.getString(context, "url");
+                                    if (!ModMessages.isValidAudioUrl(url)) {
+                                        context.getSource().sendMessage(Text.literal("§cInvalid URL: " + url));
+                                        return 0;
+                                    }
+
+                                    MinecraftServer server = context.getSource().getServer();
+                                    UUID ownerUUID = player.getUuid();
+                                    Identifier playbackDimension =
+                                            player.getWorld().getRegistryKey().getValue();
+                                    List<SpeakerPlaybackData> speakers =
+                                            SpeakerRegistry.findPlaybackDataByOwner(player.getWorld(), ownerUUID);
+
+                                    if (speakers.isEmpty()) {
+                                        context.getSource()
+                                                .sendMessage(
+                                                        Text.literal("§cNo speakers found! Place speakers first."));
+                                        return 0;
+                                    }
+
+                                    // Count and list players who will receive the packet
+                                    Set<UUID> waitingPlayers = ConcurrentHashMap.newKeySet();
+                                    long sendStart = System.currentTimeMillis();
+
+                                    for (ServerPlayerEntity onlinePlayer :
+                                            server.getPlayerManager().getPlayerList()) {
+                                        if (!onlinePlayer
+                                                .getWorld()
+                                                .getRegistryKey()
+                                                .getValue()
+                                                .equals(playbackDimension)) continue;
+                                        ModMessages.sendPlayUrl(
+                                                onlinePlayer, playbackDimension, ownerUUID, url, speakers, 1.0f, 1.0f);
+                                        waitingPlayers.add(onlinePlayer.getUuid());
+                                    }
+
+                                    long sendDuration = System.currentTimeMillis() - sendStart;
+
+                                    context.getSource().sendMessage(Text.literal("§6═══ Sync URL Test Started ═══"));
+                                    context.getSource().sendMessage(Text.literal("§7URL: §f" + url));
+                                    context.getSource()
+                                            .sendMessage(Text.literal("§7Speaker count: §f" + speakers.size()));
+                                    context.getSource()
+                                            .sendMessage(Text.literal(
+                                                    "§7Players receiving the packet: §f" + waitingPlayers.size()));
+                                    context.getSource()
+                                            .sendMessage(
+                                                    Text.literal("§7Packet send duration: §f" + sendDuration + "ms"));
+                                    context.getSource()
+                                            .sendMessage(Text.literal("§eServer is waiting for all C2S_PLAYBACK_READY "
+                                                    + "packets... (timeout=30s)"));
+                                    context.getSource()
+                                            .sendMessage(Text.literal("§7Clients retrying will not send READY yet."));
+                                    context.getSource()
+                                            .sendMessage(
+                                                    Text.literal(
+                                                            "§7Once all clients are ready, S2C_START_PLAYBACK will be broadcast."));
+
+                                    return 1;
+                                }))));
     }
 }

@@ -1,6 +1,7 @@
 package com.audiophilecraft.screen;
 
 import com.audiophilecraft.registry.ModScreenHandlers;
+import java.util.UUID;
 import net.minecraft.entity.player.PlayerEntity;
 import net.minecraft.entity.player.PlayerInventory;
 import net.minecraft.item.ItemStack;
@@ -14,6 +15,7 @@ public class AmplifierScreenHandler extends ScreenHandler {
     private Hand hand;
     private float inputGain = 1.0f;
     private float speakerPower = 1.0f;
+    private UUID selectedOwner;
 
     // Client constructor (reads from PacketByteBuf)
     public AmplifierScreenHandler(int syncId, PlayerInventory inventory, PacketByteBuf buf) {
@@ -22,6 +24,7 @@ public class AmplifierScreenHandler extends ScreenHandler {
         this.hand = Hand.values()[handOrdinal];
         this.inputGain = buf.readFloat();
         this.speakerPower = buf.readFloat();
+        if (buf.readBoolean()) this.selectedOwner = buf.readUuid();
     }
 
     // Server constructor
@@ -49,6 +52,10 @@ public class AmplifierScreenHandler extends ScreenHandler {
 
     public void setSpeakerPower(float power) {
         this.speakerPower = power;
+    }
+
+    public UUID getSelectedOwner() {
+        return selectedOwner;
     }
 
     @Override
