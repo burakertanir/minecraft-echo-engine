@@ -308,12 +308,11 @@ final class ServerAudioNetworkHandler {
             speakerCounts.put(entry.ownerUUID(), entry.speakerCount());
         }
 
-        Set<UUID> candidates = new HashSet<>(accessState.getSharedOwners());
-        candidates.addAll(speakerCounts.keySet());
+        Set<UUID> onlinePlayerIds = new HashSet<>();
         for (ServerPlayerEntity onlinePlayer : server.getPlayerManager().getPlayerList()) {
-            candidates.add(onlinePlayer.getUuid());
+            onlinePlayerIds.add(onlinePlayer.getUuid());
         }
-        candidates.add(player.getUuid());
+        Set<UUID> candidates = visibleOwnerIds(player.getUuid(), speakerCounts.keySet(), onlinePlayerIds);
 
         List<ModMessages.SpeakerOwner> owners = new ArrayList<>();
         for (UUID ownerUUID : candidates) {
@@ -331,6 +330,14 @@ final class ServerAudioNetworkHandler {
             return first.name().compareToIgnoreCase(second.name());
         });
         return owners;
+    }
+
+    static Set<UUID> visibleOwnerIds(UUID requestingPlayer, Set<UUID> speakerOwnerIds, Set<UUID> onlinePlayerIds) {
+        Set<UUID> visibleOwners = new HashSet<>();
+        if (speakerOwnerIds != null) visibleOwners.addAll(speakerOwnerIds);
+        if (onlinePlayerIds != null) visibleOwners.addAll(onlinePlayerIds);
+        if (requestingPlayer != null) visibleOwners.add(requestingPlayer);
+        return visibleOwners;
     }
 
     private static String resolveOwnerName(MinecraftServer server, UUID ownerUUID) {

@@ -15,6 +15,20 @@ import org.junit.jupiter.api.Test;
 
 class ServerAudioNetworkHandlerSyncTest {
     @Test
+    void ownerListIncludesOnlyOnlinePlayersOrOwnersWithSpeakers() {
+        UUID requestingPlayer = UUID.randomUUID();
+        UUID offlineSpeakerOwner = UUID.randomUUID();
+        UUID onlinePlayerWithoutSpeakers = UUID.randomUUID();
+        UUID offlinePlayerWithoutSpeakers = UUID.randomUUID();
+
+        Set<UUID> visibleOwners = ServerAudioNetworkHandler.visibleOwnerIds(
+                requestingPlayer, Set.of(offlineSpeakerOwner), Set.of(onlinePlayerWithoutSpeakers));
+
+        assertEquals(Set.of(requestingPlayer, offlineSpeakerOwner, onlinePlayerWithoutSpeakers), visibleOwners);
+        assertFalse(visibleOwners.contains(offlinePlayerWithoutSpeakers));
+    }
+
+    @Test
     void activeSyncRemainsPendingBeforeTheTimeout() {
         ConcurrentHashMap<UUID, ServerAudioNetworkHandler.PendingSync> pending = new ConcurrentHashMap<>();
         UUID sessionUUID = UUID.randomUUID();
