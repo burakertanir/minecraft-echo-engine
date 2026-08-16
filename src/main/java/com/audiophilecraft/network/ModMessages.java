@@ -48,6 +48,8 @@ public final class ModMessages {
     public static final Identifier C2S_GET_SPEAKER_OWNERS = id("c2s_get_speaker_owners");
     public static final Identifier S2C_SPEAKER_OWNERS = id("s2c_speaker_owners");
     public static final Identifier C2S_UPDATE_SELECTED_OWNER = id("c2s_update_selected_owner");
+    public static final Identifier C2S_UPDATE_SPEAKER_ACCESS = id("c2s_update_speaker_access");
+    public static final Identifier C2S_UPDATE_PLACEMENT_OWNER = id("c2s_update_placement_owner");
 
     private ModMessages() {}
 
@@ -94,7 +96,11 @@ public final class ModMessages {
         ServerAudioNetworkHandler.sendPlayUrl(player, playbackDimension, ownerUUID, url, speakers, power, inputGain);
     }
 
-    public record SpeakerOwner(UUID uuid, String name, int speakerCount) {}
+    public record SpeakerOwner(UUID uuid, String name, int speakerCount, boolean shared) {
+        public boolean selectableBy(UUID viewer) {
+            return viewer != null && (viewer.equals(uuid) || shared);
+        }
+    }
 
     static boolean isValidHandOrdinal(int handOrdinal) {
         return handOrdinal >= 0 && handOrdinal < Hand.values().length;

@@ -366,7 +366,7 @@ temizlenmelidir. Basarisiz source'lar map icinde yarim birakilmaz.
 | Parca | Sorumluluk |
 |---|---|
 | `StreamSource` | Lifecycle, metadata, leader/follower propagation snapshot'i. |
-| `StreamAudioRenderer` | Alti OpenAL streaming buffer'i, queue refill, seek ve propagation delay. |
+| `StreamAudioRenderer` | Sekiz OpenAL streaming buffer'i, queue refill, seek ve propagation delay. |
 | `StreamDSPPipeline` | Crossover, 5-band EQ, Q ve harmonic saturator. |
 | `SourceSpatialController` | Directionality, distance response, gain, HRTF pozisyonu, occlusion ve sendler. |
 | `OpenALSourceResources` | Source/filter ID sahipligi, attach/detach ve native silme. |

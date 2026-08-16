@@ -91,8 +91,9 @@ public class AmplifierScreen extends HandledScreen<AmplifierScreenHandler> {
         if (playbackPanel != null) playbackPanel.updateInputGain(gain);
     }
 
-    public void updateSpeakerOwners(List<com.audiophilecraft.network.ModMessages.SpeakerOwner> owners) {
-        if (playbackPanel != null) playbackPanel.updateSpeakerOwners(owners);
+    public void updateSpeakerOwners(
+            List<com.audiophilecraft.network.ModMessages.SpeakerOwner> owners, java.util.UUID placementOwner) {
+        if (playbackPanel != null) playbackPanel.updateSpeakerOwners(owners, placementOwner);
     }
 
     @Override
@@ -149,6 +150,12 @@ public class AmplifierScreen extends HandledScreen<AmplifierScreenHandler> {
         }
         if (playbackPanel.mouseClicked(mouseX, mouseY)) return true;
         return super.mouseClicked(mouseX, mouseY, button);
+    }
+
+    @Override
+    public boolean mouseScrolled(double mouseX, double mouseY, double amount) {
+        if (!mixerOpen && !mapOpen && playbackPanel.mouseScrolled(mouseX, mouseY, amount)) return true;
+        return super.mouseScrolled(mouseX, mouseY, amount);
     }
 
     @Override

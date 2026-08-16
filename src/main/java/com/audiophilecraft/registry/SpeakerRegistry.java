@@ -52,6 +52,8 @@ public class SpeakerRegistry {
         getSet(dimension).add(immutable);
         if (owner != null) {
             getOwnerMap(dimension).put(immutable, owner);
+        } else {
+            getOwnerMap(dimension).remove(immutable);
         }
     }
 

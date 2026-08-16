@@ -216,7 +216,7 @@ loom {
 	}
     runs {
         client {
-            programArgs "--username", "testkullanici"
+            programArgs "--username", "DevBurak"
         }
 		gameTest {
 			server()

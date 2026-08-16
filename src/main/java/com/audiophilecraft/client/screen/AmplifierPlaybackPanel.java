@@ -30,6 +30,8 @@ import net.minecraft.util.Util;
 final class AmplifierPlaybackPanel {
     private static final Pattern YOUTUBE_ID_PATTERN =
             Pattern.compile("(?<=v=|v\\/|vi=|vi\\/|youtu.be\\/|\\/v\\/|embed\\/)([a-zA-Z0-9_-]{11})");
+    private static final int MAX_VISIBLE_OWNER_ROWS = 8;
+    private static final long OWNER_REFRESH_INTERVAL_MS = 5_000L;
 
     private static String activePlayUrl = "";
     private static String activeDisplayTitle = "";
@@ -43,6 +45,8 @@ final class AmplifierPlaybackPanel {
     private AmplifierTheme.ThemedButton playButton;
     private AmplifierTheme.ThemedButton stopButton;
     private AmplifierTheme.ThemedButton ownerButton;
+    private AmplifierTheme.ThemedButton accessButton;
+    private AmplifierTheme.ThemedButton placementButton;
     private PowerSlider powerSlider;
     private InputGainSlider inputGainSlider;
     private SeekBarWidget seekBar;
@@ -58,7 +62,10 @@ final class AmplifierPlaybackPanel {
 
     private volatile List<ModMessages.SpeakerOwner> speakerOwners = new ArrayList<>();
     private UUID selectedOwner;
+    private UUID placementOwner;
     private boolean ownerDropdownOpen;
+    private int ownerScrollOffset;
+    private long lastOwnerRefreshMs;
 
     AmplifierPlaybackPanel(
             AmplifierTheme theme,
@@ -107,17 +114,39 @@ final class AmplifierPlaybackPanel {
         if (selectedOwner == null) {
             selectedOwner = client.player != null ? client.player.getUuid() : null;
         }
-        int ownerY = Math.max(screenY + 4, clusterY - 26);
+        int ownerY = Math.max(screenY + 4, clusterY - 48);
+        int ownershipX = urlField.getX() - 5;
+        int ownershipWidth = urlField.getWidth() + 10;
         ownerButton = theme.button(
                 textRenderer,
-                screenX + 44,
+                ownershipX,
                 ownerY,
-                backgroundWidth - 88,
+                ownershipWidth,
                 18,
                 Text.literal("Owner: ..."),
                 button -> ownerDropdownOpen = !ownerDropdownOpen);
-        ClientPlayNetworking.send(ModMessages.C2S_GET_SPEAKER_OWNERS, PacketByteBufs.create());
+        int actionY = ownerY + 21;
+        int availableWidth = ownershipWidth;
+        int actionWidth = (availableWidth - 4) / 2;
+        accessButton = theme.button(
+                textRenderer,
+                ownershipX,
+                actionY,
+                actionWidth,
+                18,
+                Text.literal("Access: Private"),
+                button -> toggleOwnAccess());
+        placementButton = theme.button(
+                textRenderer,
+                ownershipX + actionWidth + 4,
+                actionY,
+                availableWidth - actionWidth - 4,
+                18,
+                Text.literal("Build: You"),
+                button -> togglePlacementTarget());
+        requestSpeakerOwners();
         updateOwnerButtonLabel();
+        updateSharingButtonLabels();
 
         addWidget.accept(urlField);
         addWidget.accept(playButton);
@@ -126,6 +155,8 @@ final class AmplifierPlaybackPanel {
         addWidget.accept(inputGainSlider);
         addWidget.accept(powerSlider);
         addWidget.accept(ownerButton);
+        addWidget.accept(accessButton);
+        addWidget.accept(placementButton);
     }
 
     void setVisible(boolean visible) {
@@ -136,6 +167,8 @@ final class AmplifierPlaybackPanel {
         if (playButton != null) playButton.visible = visible;
         if (stopButton != null) stopButton.visible = visible;
         if (ownerButton != null) ownerButton.visible = visible;
+        if (accessButton != null) accessButton.visible = visible;
+        if (placementButton != null) placementButton.visible = visible;
     }
 
     void tick() {
@@ -145,8 +178,10 @@ final class AmplifierPlaybackPanel {
             playButton.setMessage(Text.literal(playing ? "\u23F8" : "\u25B6"));
         }
 
-        if (urlField == null) return;
         long now = System.currentTimeMillis();
+        if (now - lastOwnerRefreshMs >= OWNER_REFRESH_INTERVAL_MS) requestSpeakerOwners();
+
+        if (urlField == null) return;
         String currentText = urlField.getText().trim();
         if (dropdownOpen && currentText.length() >= 3 && now - lastTypedTime > 500) {
             if (!currentText.equals(lastSearchedQuery) && !searching) {
@@ -168,6 +203,7 @@ final class AmplifierPlaybackPanel {
         renderTrackInfo(context);
         renderSearchDropdown(context, mouseX, mouseY);
         renderOwnerDropdown(context, mouseX, mouseY);
+        renderPlacementWarning(context);
     }
 
     void renderLoadingIndicator(DrawContext context) {
@@ -187,15 +223,19 @@ final class AmplifierPlaybackPanel {
             int dropY = ownerButton.getY() + ownerButton.getHeight() + 1;
             int dropWidth = ownerButton.getWidth();
             int itemHeight = 18;
-            if (mouseY > dropY) {
+            int visibleRows = Math.min(MAX_VISIBLE_OWNER_ROWS, speakerOwners.size());
+            if (mouseY >= dropY) {
                 if (!speakerOwners.isEmpty()
                         && mouseX >= dropX
                         && mouseX <= dropX + dropWidth
-                        && mouseY <= dropY + speakerOwners.size() * itemHeight) {
-                    int index = (int) ((mouseY - dropY) / itemHeight);
+                        && mouseY < dropY + visibleRows * itemHeight) {
+                    int index = ownerScrollOffset + (int) ((mouseY - dropY) / itemHeight);
                     if (index >= 0 && index < speakerOwners.size()) {
-                        selectedOwner = speakerOwners.get(index).uuid();
+                        ModMessages.SpeakerOwner owner = speakerOwners.get(index);
+                        if (!owner.selectableBy(ownUuid())) return true;
+                        selectedOwner = owner.uuid();
                         updateOwnerButtonLabel();
+                        updateSharingButtonLabels();
                         ownerDropdownOpen = false;
                         persistSelectedOwner();
                         return true;
@@ -233,6 +273,19 @@ final class AmplifierPlaybackPanel {
             dropdownOpen = false;
         }
         return false;
+    }
+
+    boolean mouseScrolled(double mouseX, double mouseY, double amount) {
+        if (!ownerDropdownOpen || ownerButton == null || speakerOwners.size() <= MAX_VISIBLE_OWNER_ROWS) return false;
+        int dropX = ownerButton.getX();
+        int dropY = ownerButton.getY() + ownerButton.getHeight() + 1;
+        int dropHeight = MAX_VISIBLE_OWNER_ROWS * 18;
+        if (mouseX < dropX || mouseX > dropX + ownerButton.getWidth() || mouseY < dropY || mouseY > dropY + dropHeight)
+            return false;
+
+        int maxOffset = speakerOwners.size() - MAX_VISIBLE_OWNER_ROWS;
+        ownerScrollOffset = Math.max(0, Math.min(maxOffset, ownerScrollOffset + (amount < 0 ? 1 : -1)));
+        return true;
     }
 
     boolean mouseDragged(double mouseX, double mouseY, int button, double deltaX, double deltaY) {
@@ -547,46 +600,82 @@ final class AmplifierPlaybackPanel {
         int itemHeight = 18;
         if (speakerOwners.isEmpty()) {
             context.fill(dropX, dropY, dropX + dropWidth, dropY + itemHeight, 0xDD000000);
-            context.drawText(textRenderer, "No speakers in this world...", dropX + 5, dropY + 5, 0xFFAAAAAA, false);
+            context.drawText(textRenderer, "No systems found...", dropX + 5, dropY + 5, 0xFFAAAAAA, false);
             drawDropdownBorder(context, dropX, dropY, dropWidth, itemHeight);
         } else {
-            int totalHeight = speakerOwners.size() * itemHeight;
+            int visibleRows = Math.min(MAX_VISIBLE_OWNER_ROWS, speakerOwners.size());
+            int totalHeight = visibleRows * itemHeight;
             context.fill(dropX, dropY, dropX + dropWidth, dropY + totalHeight, 0xFA050505);
-            for (int index = 0; index < speakerOwners.size(); index++) {
+            for (int row = 0; row < visibleRows; row++) {
+                int index = ownerScrollOffset + row;
                 ModMessages.SpeakerOwner owner = speakerOwners.get(index);
-                int itemY = dropY + index * itemHeight;
+                int itemY = dropY + row * itemHeight;
                 boolean selected = owner.uuid().equals(selectedOwner);
-                if (mouseX >= dropX && mouseX <= dropX + dropWidth && mouseY >= itemY && mouseY < itemY + itemHeight) {
-                    context.fill(dropX, itemY, dropX + dropWidth, itemY + itemHeight, 0x44FFFFFF);
+                boolean selectable = owner.selectableBy(ownUuid());
+                boolean hovered = mouseX >= dropX
+                        && mouseX <= dropX + dropWidth
+                        && mouseY >= itemY
+                        && mouseY < itemY + itemHeight;
+                if (selected) {
+                    context.fill(dropX, itemY, dropX + dropWidth, itemY + itemHeight, withAlpha(theme.color(), 0x33));
                 }
-                String label = textRenderer.trimToWidth(owner.name(), dropWidth - 40);
-                context.drawText(textRenderer, label, dropX + 5, itemY + 5, 0xFFFFFFFF, false);
+                if (hovered && selectable) {
+                    context.fill(dropX, itemY, dropX + dropWidth, itemY + itemHeight, 0x22FFFFFF);
+                }
+                String status = (owner.shared() ? "Shared" : "Private") + " · " + owner.speakerCount();
+                String label = textRenderer.trimToWidth(
+                        owner.name(), Math.max(20, dropWidth - textRenderer.getWidth(status) - 15));
+                context.drawText(
+                        textRenderer, label, dropX + 5, itemY + 5, selectable ? 0xFFFFFFFF : 0xFF777777, false);
                 context.drawText(
                         textRenderer,
-                        "(" + owner.speakerCount() + ")",
-                        dropX + dropWidth - 5 - textRenderer.getWidth("(" + owner.speakerCount() + ")"),
+                        status,
+                        dropX + dropWidth - 5 - textRenderer.getWidth(status),
                         itemY + 5,
-                        selected ? theme.color() : 0xFFAAAAAA,
+                        selected ? theme.color() : (selectable ? 0xFFAAAAAA : 0xFF666666),
                         false);
+            }
+            if (ownerScrollOffset > 0) {
+                context.drawText(textRenderer, "▲", dropX + 2, dropY + 1, theme.color(), false);
+            }
+            if (ownerScrollOffset + visibleRows < speakerOwners.size()) {
+                context.drawText(textRenderer, "▼", dropX + 2, dropY + totalHeight - 9, theme.color(), false);
             }
             drawDropdownBorder(context, dropX, dropY, dropWidth, totalHeight);
         }
         context.getMatrices().pop();
     }
 
-    void updateSpeakerOwners(List<ModMessages.SpeakerOwner> owners) {
+    private static int withAlpha(int color, int alpha) {
+        return (alpha << 24) | (color & 0x00FFFFFF);
+    }
+
+    void updateSpeakerOwners(List<ModMessages.SpeakerOwner> owners, UUID authoritativePlacementOwner) {
         speakerOwners = new ArrayList<>(owners);
         MinecraftClient client = MinecraftClient.getInstance();
         UUID ownUuid = client.player != null ? client.player.getUuid() : null;
-        if (selectedOwner == null || !containsOwner(selectedOwner)) {
+        UUID previousSelection = selectedOwner;
+        if (selectedOwner == null || !isSelectableOwner(selectedOwner, ownUuid)) {
             selectedOwner = ownUuid != null && containsOwner(ownUuid) ? ownUuid : null;
         }
+        placementOwner = authoritativePlacementOwner != null ? authoritativePlacementOwner : ownUuid;
+        ownerScrollOffset =
+                Math.max(0, Math.min(ownerScrollOffset, Math.max(0, speakerOwners.size() - MAX_VISIBLE_OWNER_ROWS)));
         updateOwnerButtonLabel();
+        updateSharingButtonLabels();
+        if (selectedOwner != null && !selectedOwner.equals(previousSelection)) persistSelectedOwner();
     }
 
     private boolean containsOwner(UUID uuid) {
         for (ModMessages.SpeakerOwner owner : speakerOwners) {
             if (owner.uuid().equals(uuid)) return true;
+        }
+        return false;
+    }
+
+    private boolean isSelectableOwner(UUID uuid, UUID viewer) {
+        for (ModMessages.SpeakerOwner owner : speakerOwners) {
+            if (owner.uuid().equals(uuid)) return owner.selectableBy(viewer);
         }
         return false;
     }
@@ -602,7 +691,8 @@ final class AmplifierPlaybackPanel {
                 }
             }
         }
-        ownerButton.setMessage(Text.literal("\u25BE " + textRenderer.trimToWidth(name, ownerButton.getWidth() - 28)));
+        ownerButton.setMessage(
+                Text.literal("\u25BE System: " + textRenderer.trimToWidth(name, ownerButton.getWidth() - 58)));
     }
 
     private void persistSelectedOwner() {
@@ -611,6 +701,94 @@ final class AmplifierPlaybackPanel {
         buffer.writeInt(handOrdinal.getAsInt());
         buffer.writeUuid(selectedOwner);
         ClientPlayNetworking.send(ModMessages.C2S_UPDATE_SELECTED_OWNER, buffer);
+    }
+
+    private void toggleOwnAccess() {
+        UUID ownUuid = ownUuid();
+        if (ownUuid == null) return;
+
+        boolean makeShared = true;
+        for (ModMessages.SpeakerOwner owner : speakerOwners) {
+            if (owner.uuid().equals(ownUuid)) {
+                makeShared = !owner.shared();
+                break;
+            }
+        }
+        PacketByteBuf buffer = PacketByteBufs.create();
+        buffer.writeInt(handOrdinal.getAsInt());
+        buffer.writeBoolean(makeShared);
+        ClientPlayNetworking.send(ModMessages.C2S_UPDATE_SPEAKER_ACCESS, buffer);
+    }
+
+    private void togglePlacementTarget() {
+        UUID ownUuid = ownUuid();
+        if (ownUuid == null || selectedOwner == null) return;
+
+        UUID requestedOwner =
+                selectedOwner.equals(placementOwner) && !selectedOwner.equals(ownUuid) ? ownUuid : selectedOwner;
+        PacketByteBuf buffer = PacketByteBufs.create();
+        buffer.writeInt(handOrdinal.getAsInt());
+        buffer.writeUuid(requestedOwner);
+        ClientPlayNetworking.send(ModMessages.C2S_UPDATE_PLACEMENT_OWNER, buffer);
+    }
+
+    private void updateSharingButtonLabels() {
+        UUID ownUuid = ownUuid();
+        if (accessButton != null) {
+            boolean shared = false;
+            if (ownUuid != null) {
+                for (ModMessages.SpeakerOwner owner : speakerOwners) {
+                    if (owner.uuid().equals(ownUuid)) {
+                        shared = owner.shared();
+                        break;
+                    }
+                }
+            }
+            accessButton.setMessage(Text.literal("Access: " + (shared ? "Shared" : "Private")));
+            accessButton.active = ownUuid != null && containsOwner(ownUuid);
+        }
+
+        if (placementButton != null) {
+            String label;
+            if (selectedOwner == null || selectedOwner.equals(ownUuid)) {
+                label = "Build: You";
+            } else if (selectedOwner.equals(placementOwner)) {
+                label = "Building: " + ownerName(selectedOwner);
+            } else {
+                label = "Build for " + ownerName(selectedOwner);
+            }
+            placementButton.setMessage(Text.literal(textRenderer.trimToWidth(label, placementButton.getWidth() - 10)));
+            placementButton.active = selectedOwner != null && isSelectableOwner(selectedOwner, ownUuid);
+        }
+    }
+
+    private void renderPlacementWarning(DrawContext context) {
+        UUID ownUuid = ownUuid();
+        if (powerSlider == null || placementOwner == null || placementOwner.equals(ownUuid)) return;
+        String warning = "BUILD MODE: new speakers belong to " + ownerName(placementOwner);
+        context.drawCenteredTextWithShadow(
+                textRenderer,
+                textRenderer.trimToWidth(warning, powerSlider.getWidth()),
+                powerSlider.getX() + powerSlider.getWidth() / 2,
+                powerSlider.getY() + powerSlider.getHeight() + 5,
+                theme.color());
+    }
+
+    private String ownerName(UUID ownerUuid) {
+        for (ModMessages.SpeakerOwner owner : speakerOwners) {
+            if (owner.uuid().equals(ownerUuid)) return owner.name();
+        }
+        return ownerUuid != null ? "Player-" + ownerUuid.toString().substring(0, 8) : "You";
+    }
+
+    private UUID ownUuid() {
+        MinecraftClient client = MinecraftClient.getInstance();
+        return client.player != null ? client.player.getUuid() : null;
+    }
+
+    private void requestSpeakerOwners() {
+        lastOwnerRefreshMs = System.currentTimeMillis();
+        ClientPlayNetworking.send(ModMessages.C2S_GET_SPEAKER_OWNERS, PacketByteBufs.create());
     }
 
     private static String extractYouTubeId(String url) {

@@ -30,7 +30,7 @@ import org.lwjgl.system.MemoryUtil;
  * cleanup ordering across the main and audio threads.
  */
 final class StreamAudioRenderer {
-    private static final int BUFFER_COUNT = 6;
+    private static final int BUFFER_COUNT = 8;
     private static final int STREAM_BUFFER_SIZE = 1024;
     private static final double RESUME_DECLICK_SECONDS = 0.008;
 

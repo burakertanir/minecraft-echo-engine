@@ -5,10 +5,12 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import java.util.List;
 import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import net.minecraft.util.Identifier;
+import net.minecraft.util.math.BlockPos;
 import org.junit.jupiter.api.Test;
 
 class ServerAudioNetworkHandlerSyncTest {
@@ -128,6 +130,27 @@ class ServerAudioNetworkHandlerSyncTest {
 
         assertEquals(0, removed);
         assertEquals(Set.of(firstPlayer, secondPlayer), sync.waitingPlayers());
+    }
+
+    @Test
+    void makingSystemPrivateTargetsOnlyForeignSessionsUsingThatOwnersSpeakers() {
+        UUID owner = UUID.randomUUID();
+        UUID foreignController = UUID.randomUUID();
+        UUID unrelatedController = UUID.randomUUID();
+        Identifier overworld = new Identifier("minecraft", "overworld");
+        ConcurrentHashMap<UUID, ServerAudioNetworkHandler.SessionClaim> claims = new ConcurrentHashMap<>();
+        claims.put(owner, new ServerAudioNetworkHandler.SessionClaim(overworld, owner, Set.of(new BlockPos(1, 2, 3))));
+        claims.put(
+                foreignController,
+                new ServerAudioNetworkHandler.SessionClaim(overworld, owner, Set.of(new BlockPos(4, 5, 6))));
+        claims.put(
+                unrelatedController,
+                new ServerAudioNetworkHandler.SessionClaim(
+                        overworld, UUID.randomUUID(), Set.of(new BlockPos(7, 8, 9))));
+
+        List<UUID> unauthorized = ServerAudioNetworkHandler.findUnauthorizedSessionsForOwner(claims, owner);
+
+        assertEquals(List.of(foreignController), unauthorized);
     }
 
     private static ServerAudioNetworkHandler.PendingSync pendingSync(long startedAtMs, Set<UUID> waitingPlayers) {

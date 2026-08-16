@@ -1,7 +1,9 @@
 package com.audiophilecraft.block;
 
 import com.audiophilecraft.block.entity.SpeakerBlockEntity;
+import com.audiophilecraft.registry.SpeakerAccessState;
 import com.audiophilecraft.registry.SpeakerRegistry;
+import java.util.UUID;
 import net.minecraft.block.Block;
 import net.minecraft.block.BlockEntityProvider;
 import net.minecraft.block.BlockState;
@@ -11,9 +13,11 @@ import net.minecraft.entity.player.PlayerEntity;
 import net.minecraft.item.ItemPlacementContext;
 import net.minecraft.item.ItemStack;
 import net.minecraft.screen.NamedScreenHandlerFactory;
+import net.minecraft.server.network.ServerPlayerEntity;
 import net.minecraft.state.StateManager;
 import net.minecraft.state.property.DirectionProperty;
 import net.minecraft.state.property.Properties;
+import net.minecraft.text.Text;
 import net.minecraft.util.ActionResult;
 import net.minecraft.util.Hand;
 import net.minecraft.util.hit.BlockHitResult;
@@ -51,13 +55,13 @@ public class SpeakerBlock extends Block implements BlockEntityProvider {
     public void onPlaced(
             World world, BlockPos pos, BlockState state, @Nullable LivingEntity placer, ItemStack itemStack) {
         if (!world.isClient) {
-            // Register in global registry with owner UUID and dimension
-            if (placer instanceof net.minecraft.entity.player.PlayerEntity player) {
-                SpeakerRegistry.registerSpeaker(world, pos, player.getUuid());
-                net.minecraft.block.entity.BlockEntity be = world.getBlockEntity(pos);
-                if (be instanceof com.audiophilecraft.block.entity.SpeakerBlockEntity speaker) {
-                    speaker.setOwnerUUID(player.getUuid());
+            if (placer instanceof ServerPlayerEntity player) {
+                UUID owner = SpeakerAccessState.get(player.getServer()).resolvePlacementOwner(player.getUuid());
+                BlockEntity blockEntity = world.getBlockEntity(pos);
+                if (blockEntity instanceof SpeakerBlockEntity speaker) {
+                    speaker.setOwnerUUID(owner);
                 }
+                SpeakerRegistry.registerSpeaker(world, pos, owner);
             } else {
                 SpeakerRegistry.registerSpeaker(world.getRegistryKey(), pos);
             }
@@ -87,6 +91,14 @@ public class SpeakerBlock extends Block implements BlockEntityProvider {
     public ActionResult onUse(
             BlockState state, World world, BlockPos pos, PlayerEntity player, Hand hand, BlockHitResult hit) {
         if (!world.isClient) {
+            if (player instanceof ServerPlayerEntity serverPlayer) {
+                UUID owner = SpeakerRegistry.getOwner(world.getRegistryKey(), pos);
+                if (owner != null
+                        && !SpeakerAccessState.get(serverPlayer.getServer()).canAccess(serverPlayer.getUuid(), owner)) {
+                    serverPlayer.sendMessage(Text.literal("This speaker system is private."), true);
+                    return ActionResult.CONSUME;
+                }
+            }
             NamedScreenHandlerFactory screenHandlerFactory = state.createScreenHandlerFactory(world, pos);
 
             if (screenHandlerFactory != null) {

@@ -104,6 +104,8 @@ public class AmplifierTabletItem extends Item {
         NbtCompound nbt = stack.getOrCreateNbt();
         if (owner != null) {
             nbt.putUuid("SelectedOwner", owner);
+        } else {
+            nbt.remove("SelectedOwner");
         }
     }
 

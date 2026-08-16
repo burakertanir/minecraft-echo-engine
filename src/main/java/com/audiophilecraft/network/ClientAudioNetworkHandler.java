@@ -125,18 +125,12 @@ final class ClientAudioNetworkHandler {
 
     private static void registerControlSyncPackets() {
         ClientPlayNetworking.registerGlobalReceiver(S2C_SPEAKER_OWNERS, (client, handler, buf, responseSender) -> {
-            int count = buf.readInt();
-            if (count < 0 || count > 256) return;
-            List<ModMessages.SpeakerOwner> owners = new ArrayList<>(count);
-            for (int index = 0; index < count; index++) {
-                UUID uuid = buf.readUuid();
-                String name = buf.readString(64);
-                int speakerCount = buf.readInt();
-                if (name.isEmpty() || speakerCount < 0) return;
-                owners.add(new ModMessages.SpeakerOwner(uuid, name, speakerCount));
-            }
+            SpeakerOwnerListCodec.SpeakerOwnerList ownerList = SpeakerOwnerListCodec.read(buf);
+            if (ownerList == null) return;
             client.execute(() -> {
-                if (client.currentScreen instanceof AmplifierScreen screen) screen.updateSpeakerOwners(owners);
+                if (client.currentScreen instanceof AmplifierScreen screen) {
+                    screen.updateSpeakerOwners(ownerList.owners(), ownerList.placementOwner());
+                }
             });
         });
 

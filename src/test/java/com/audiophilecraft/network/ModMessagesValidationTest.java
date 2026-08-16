@@ -3,11 +3,25 @@ package com.audiophilecraft.network;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import java.util.UUID;
 import net.minecraft.util.Hand;
 import net.minecraft.util.Identifier;
 import org.junit.jupiter.api.Test;
 
 class ModMessagesValidationTest {
+    @Test
+    void privateOwnersAreVisibleDataButOnlySelectableByThemselves() {
+        UUID ownerUuid = UUID.randomUUID();
+        UUID viewerUuid = UUID.randomUUID();
+        ModMessages.SpeakerOwner privateOwner = new ModMessages.SpeakerOwner(ownerUuid, "Private", 3, false);
+        ModMessages.SpeakerOwner sharedOwner = new ModMessages.SpeakerOwner(ownerUuid, "Shared", 3, true);
+
+        assertTrue(privateOwner.selectableBy(ownerUuid));
+        assertFalse(privateOwner.selectableBy(viewerUuid));
+        assertFalse(privateOwner.selectableBy(null));
+        assertTrue(sharedOwner.selectableBy(viewerUuid));
+    }
+
     @Test
     void acceptsOnlySupportedAudioUrlSchemesWithAHost() {
         assertTrue(ModMessages.isValidAudioUrl("https://example.com/audio.ogg"));
