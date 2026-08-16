@@ -188,11 +188,10 @@ public class TestFacilityCommand {
                     }
 
                     // Sync timeout info
-                    context.getSource().sendMessage(Text.literal("§7Sync timeout: §f" + (30_000 / 1000) + "s"));
-                    context.getSource().sendMessage(Text.literal("§7Retry settings: §fmax=" + 7 + ", delay=4s"));
-                    context.getSource()
-                            .sendMessage(Text.literal(
-                                    "§7Worst-case retry duration: §f~" + (7 * 4 + 8) + "s (above timeout=30s ⚠)"));
+                    context.getSource().sendMessage(Text.literal("§7Seek sync timeout: §f30s"));
+                    context.getSource().sendMessage(Text.literal("§7Playback prepare timeout: §f60s"));
+                    context.getSource().sendMessage(Text.literal("§7Retry settings: §finitial attempt + 7 retries"));
+                    context.getSource().sendMessage(Text.literal("§7Retry waits: §f~0.50-6.25s each, 22s base total"));
 
                     // Simulate: what would happen if X players fail
                     if (onlinePlayers > 1) {
@@ -201,14 +200,10 @@ public class TestFacilityCommand {
                         context.getSource()
                                 .sendMessage(Text.literal("§7All succeed: §aEveryone starts ~at the same time"));
                         context.getSource()
-                                .sendMessage(
-                                        Text.literal("§71 player retries: §eEveryone waits ~4-8s, then sync starts"));
+                                .sendMessage(Text.literal("§71 player retries: §eOthers wait for its terminal result"));
                         context.getSource()
-                                .sendMessage(
-                                        Text.literal("§7Everyone retries: §eEveryone waits ~4-8s, then sync starts"));
-                        context.getSource()
-                                .sendMessage(Text.literal(
-                                        "§71 player 7x retry: §eWaits ~28-44s (may exceed timeout=30s ⚠)"));
+                                .sendMessage(Text.literal("§7Some fail: §eOnly READY clients start this song"));
+                        context.getSource().sendMessage(Text.literal("§7Everyone fails: §cThe session is cancelled"));
                     }
 
                     return 1;
@@ -270,14 +265,14 @@ public class TestFacilityCommand {
                                             .sendMessage(
                                                     Text.literal("§7Packet send duration: §f" + sendDuration + "ms"));
                                     context.getSource()
-                                            .sendMessage(Text.literal("§eServer is waiting for all C2S_PLAYBACK_READY "
-                                                    + "packets... (timeout=30s)"));
+                                            .sendMessage(Text.literal("§eClients will report READY or FAILED "
+                                                    + "after initial attempt + up to 7 retries."));
                                     context.getSource()
-                                            .sendMessage(Text.literal("§7Clients retrying will not send READY yet."));
+                                            .sendMessage(Text.literal("§7This direct diagnostic packet does not create "
+                                                    + "the normal server playback barrier."));
                                     context.getSource()
-                                            .sendMessage(
-                                                    Text.literal(
-                                                            "§7Once all clients are ready, S2C_START_PLAYBACK will be broadcast."));
+                                            .sendMessage(Text.literal(
+                                                    "§7Use normal tablet playback to verify synchronized start."));
 
                                     return 1;
                                 }))));

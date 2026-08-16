@@ -18,6 +18,10 @@ import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ThreadLocalRandom;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.Consumer;
 import net.minecraft.client.MinecraftClient;
 import net.minecraft.text.Text;
@@ -43,6 +47,8 @@ final class AudioPlaybackController {
     private volatile Long requestedAcousticZoneId;
     private Long publishedAcousticZoneId;
     private final ConcurrentHashMap<UUID, Long> activeUrlRequestIds = new ConcurrentHashMap<>();
+    private final ConcurrentHashMap<UUID, Long> activeUrlGenerations = new ConcurrentHashMap<>();
+    private final AtomicLong nextUrlGeneration = new AtomicLong(1L);
 
     private static final long DYNAMIC_VENUE_CHECK_INTERVAL_NANOS = 500_000_000L;
     private static final double DYNAMIC_VENUE_SCAN_RADIUS_SQ = 192.0 * 192.0;
@@ -50,10 +56,11 @@ final class AudioPlaybackController {
     private static final int VENUE_SCAN_NEIGHBORHOOD_BLOCKS = 64;
     private static final int ACOUSTIC_DEBUG_ALL_INDEX = -2;
     private static final Long ACOUSTIC_DEBUG_ALL = Long.MIN_VALUE;
-    private static final int MAX_URL_RETRIES = 7;
-    private static final long URL_RETRY_DELAY_MS = 4000L;
-    private static final java.util.concurrent.ExecutorService URL_RETRY_EXECUTOR =
-            java.util.concurrent.Executors.newSingleThreadExecutor(task -> {
+    static final int MAX_URL_RETRIES = 7;
+    private static final long RETRY_JITTER_MS = 250L;
+    private static final long[] URL_RETRY_BASE_DELAYS_MS = {750L, 1_250L, 2_000L, 3_000L, 4_000L, 5_000L, 6_000L};
+    private static final java.util.concurrent.ScheduledExecutorService URL_RETRY_EXECUTOR =
+            java.util.concurrent.Executors.newSingleThreadScheduledExecutor(task -> {
                 Thread thread = new Thread(task, "AudiophileCraft-URLRetry");
                 thread.setDaemon(true);
                 return thread;
@@ -129,6 +136,7 @@ final class AudioPlaybackController {
     }
 
     void cancelUrlRequest(UUID sessionUUID) {
+        activeUrlGenerations.remove(sessionUUID);
         Long requestId = activeUrlRequestIds.remove(sessionUUID);
         if (requestId != null) {
             InternetAudioLoader.getInstance().cancelStreamingRequest(requestId);
@@ -136,6 +144,7 @@ final class AudioPlaybackController {
     }
 
     void cancelAllUrlRequests() {
+        activeUrlGenerations.clear();
         if (activeUrlRequestIds.isEmpty()) return;
         InternetAudioLoader loader = InternetAudioLoader.getInstance();
         for (Map.Entry<UUID, Long> entry : activeUrlRequestIds.entrySet()) {
@@ -153,13 +162,17 @@ final class AudioPlaybackController {
         cancelAllUrlRequests();
     }
 
-    private boolean isActiveUrlRequest(UUID sessionUUID, long requestId) {
+    private boolean isActiveUrlRequest(UUID sessionUUID, long requestId, long generation) {
         Long activeRequestId = activeUrlRequestIds.get(sessionUUID);
-        return activeRequestId != null && activeRequestId.longValue() == requestId;
+        Long activeGeneration = activeUrlGenerations.get(sessionUUID);
+        return activeRequestId != null
+                && activeRequestId.longValue() == requestId
+                && activeGeneration != null
+                && activeGeneration.longValue() == generation;
     }
 
     void playFromUrl(UUID sessionUUID, String url, List<BlockPos> speakers, float power, float inputGain) {
-        playFromUrlWithSpeakerData(sessionUUID, url, captureSpeakerData(speakers), power, inputGain, true, null);
+        playFromUrlWithSpeakerData(sessionUUID, url, captureSpeakerData(speakers), power, inputGain, true, null, null);
     }
 
     void playFromUrlWithSpeakerData(
@@ -170,7 +183,33 @@ final class AudioPlaybackController {
             float inputGain,
             boolean startImmediately,
             Consumer<UUID> onReadyCallback) {
-        playFromUrlWithRetry(sessionUUID, url, speakers, power, inputGain, startImmediately, onReadyCallback, 0);
+        playFromUrlWithSpeakerData(
+                sessionUUID, url, speakers, power, inputGain, startImmediately, onReadyCallback, null);
+    }
+
+    void playFromUrlWithSpeakerData(
+            UUID sessionUUID,
+            String url,
+            List<SpeakerPlaybackData> speakers,
+            float power,
+            float inputGain,
+            boolean startImmediately,
+            Consumer<UUID> onReadyCallback,
+            Consumer<UUID> onFailedCallback) {
+        cancelUrlRequest(sessionUUID);
+        long generation = nextUrlGeneration.getAndIncrement();
+        activeUrlGenerations.put(sessionUUID, generation);
+        playFromUrlWithRetry(
+                sessionUUID,
+                url,
+                speakers,
+                power,
+                inputGain,
+                startImmediately,
+                onReadyCallback,
+                onFailedCallback,
+                0,
+                generation);
     }
 
     private void playFromUrlWithRetry(
@@ -181,102 +220,160 @@ final class AudioPlaybackController {
             float inputGain,
             boolean startImmediately,
             Consumer<UUID> onReadyCallback,
-            int retryCount) {
-        cancelUrlRequest(sessionUUID);
+            Consumer<UUID> onFailedCallback,
+            int retryCount,
+            long generation) {
         InternetAudioLoader loader = InternetAudioLoader.getInstance();
         PlaybackSession existingSession = sessions.get(sessionUUID);
         if (existingSession != null) {
             engine.stopSessionContents(existingSession);
         }
+        AtomicBoolean prepared = new AtomicBoolean(false);
+        AtomicInteger latestDecodedFrames = new AtomicInteger(0);
 
-        long startedRequestId = loader.loadTrackStreaming(url, new InternetAudioLoader.StreamingCallback() {
-            @Override
-            public void onReady(
-                    long requestId,
-                    short[] pcmInterleaved,
-                    int decodedFrames,
-                    int totalExpected,
-                    int sampleRate,
-                    String title) {
-                if (!isActiveUrlRequest(sessionUUID, requestId)) {
-                    AudiophileCraft.LOGGER.debug(
-                            "Ignoring stale URL request {} for session {}.", requestId, sessionUUID);
-                    return;
-                }
-
-                AudiophileCraft.LOGGER.debug("URL request {} is ready for session {}.", requestId, sessionUUID);
-
-                PlaybackSession session = sessions.computeIfAbsent(sessionUUID, key -> new PlaybackSession(engine));
-                engine.stopSessionContents(session);
-                engine.loadPersistedEqIntoSession(session, sessionUUID);
-                session.setPlayUrl(url);
-                session.getStreamBuffers().clear();
-                installSharedStereoBuffer(
-                        session, "url_stream", pcmInterleaved, decodedFrames, totalExpected, sampleRate);
-
-                resetGlobalVenueState(positionsOf(speakers));
-                finalizePlaybackPipeline(sessionUUID, speakers, power, inputGain, startImmediately);
-                if (!startImmediately && onReadyCallback != null) {
-                    onReadyCallback.accept(sessionUUID);
-                }
-            }
-
-            @Override
-            public void onMoreData(long requestId, int totalDecoded) {
-                if (!isActiveUrlRequest(sessionUUID, requestId)) return;
-                PlaybackSession session = sessions.get(sessionUUID);
-                if (session != null) {
-                    AudioStreamBuffer buffer = session.getStreamBuffers().get(AudioEngine.TYPE_NORMAL);
-                    if (buffer != null) buffer.updateDecodedLength(totalDecoded);
-                }
-            }
-
-            @Override
-            public void onComplete(long requestId, int totalDecodedFrames) {
-                if (!activeUrlRequestIds.remove(sessionUUID, requestId)) return;
-                PlaybackSession session = sessions.get(sessionUUID);
-                if (session != null) {
-                    AudioStreamBuffer buffer = session.getStreamBuffers().get(AudioEngine.TYPE_NORMAL);
-                    if (buffer != null) buffer.completeStreaming(totalDecodedFrames);
-                }
-                AudiophileCraft.LOGGER.debug("URL request {} completed for session {}.", requestId, sessionUUID);
-            }
-
-            @Override
-            public void onFailed(long requestId, String reason) {
-                if (!activeUrlRequestIds.remove(sessionUUID, requestId)) return;
-                AudiophileCraft.LOGGER.warn("URL request {} failed for session {}: {}", requestId, sessionUUID, reason);
-
-                int nextRetry = retryCount + 1;
-                if (nextRetry <= MAX_URL_RETRIES) {
-                    // Reset LavaPlayer to clear corrupted YouTube source manager state
-                    AudiophileCraft.LOGGER.info(
-                            "Resetting LavaPlayer and scheduling retry {}/{} for session {} in {}ms.",
-                            nextRetry,
-                            MAX_URL_RETRIES,
-                            sessionUUID,
-                            URL_RETRY_DELAY_MS);
-                    InternetAudioLoader.resetInstance();
-
-                    // Schedule the retry after the delay on the main thread
-                    scheduleRetry(
-                            sessionUUID, url, speakers, power, inputGain, startImmediately, onReadyCallback, nextRetry);
-                } else {
-                    // All retries exhausted — show final error
-                    MinecraftClient.getInstance().execute(() -> {
-                        if (MinecraftClient.getInstance().player != null) {
-                            MinecraftClient.getInstance()
-                                    .player
-                                    .sendMessage(
-                                            Text.literal("❌ ERROR (CRITICAL DECODE ERROR): " + reason + " ["
-                                                            + MAX_URL_RETRIES + " attempts failed]")
-                                                    .formatted(Formatting.RED),
-                                            false);
+        long startedRequestId = loader.loadTrackStreaming(
+                url,
+                new InternetAudioLoader.StreamingCallback() {
+                    @Override
+                    public void onReady(
+                            long requestId,
+                            short[] pcmInterleaved,
+                            int decodedFrames,
+                            int totalExpected,
+                            int sampleRate,
+                            String title) {
+                        if (!isActiveUrlRequest(sessionUUID, requestId, generation)) {
+                            AudiophileCraft.LOGGER.debug(
+                                    "Ignoring stale URL request {} for session {}.", requestId, sessionUUID);
+                            return;
                         }
-                    });
-                }
-            }
-        });
+
+                        AudiophileCraft.LOGGER.debug("URL request {} is ready for session {}.", requestId, sessionUUID);
+
+                        latestDecodedFrames.set(decodedFrames);
+                        try {
+                            PlaybackSession session =
+                                    sessions.computeIfAbsent(sessionUUID, key -> new PlaybackSession(engine));
+                            engine.stopSessionContents(session);
+                            engine.loadPersistedEqIntoSession(session, sessionUUID);
+                            session.setPlayUrl(url);
+                            session.getStreamBuffers().clear();
+                            installSharedStereoBuffer(
+                                    session, "url_stream", pcmInterleaved, decodedFrames, totalExpected, sampleRate);
+
+                            resetGlobalVenueState(positionsOf(speakers));
+                            finalizePlaybackPipeline(sessionUUID, speakers, power, inputGain, startImmediately);
+                            if (!startImmediately && onReadyCallback != null) {
+                                onReadyCallback.accept(sessionUUID);
+                            }
+                            prepared.set(true);
+                        } catch (Throwable pipelineFailure) {
+                            AudiophileCraft.LOGGER.error(
+                                    "Failed to prepare URL request {} for session {}.",
+                                    requestId,
+                                    sessionUUID,
+                                    pipelineFailure);
+                            loader.cancelStreamingRequest(requestId);
+                            onFailed(requestId, "Audio pipeline setup failed: " + pipelineFailure);
+                        }
+                    }
+
+                    @Override
+                    public void onMoreData(long requestId, int totalDecoded) {
+                        if (!isActiveUrlRequest(sessionUUID, requestId, generation)) return;
+                        latestDecodedFrames.set(totalDecoded);
+                        PlaybackSession session = sessions.get(sessionUUID);
+                        if (session != null) {
+                            AudioStreamBuffer buffer =
+                                    session.getStreamBuffers().get(AudioEngine.TYPE_NORMAL);
+                            if (buffer != null) buffer.updateDecodedLength(totalDecoded);
+                        }
+                    }
+
+                    @Override
+                    public void onComplete(long requestId, int totalDecodedFrames) {
+                        if (!isActiveUrlRequest(sessionUUID, requestId, generation)) return;
+                        if (!activeUrlRequestIds.remove(sessionUUID, requestId)) return;
+                        activeUrlGenerations.remove(sessionUUID, generation);
+                        PlaybackSession session = sessions.get(sessionUUID);
+                        if (session != null) {
+                            AudioStreamBuffer buffer =
+                                    session.getStreamBuffers().get(AudioEngine.TYPE_NORMAL);
+                            if (buffer != null) buffer.completeStreaming(totalDecodedFrames);
+                        }
+                        AudiophileCraft.LOGGER.debug(
+                                "URL request {} completed for session {}.", requestId, sessionUUID);
+                    }
+
+                    @Override
+                    public void onFailed(long requestId, String reason) {
+                        if (!isActiveUrlRequest(sessionUUID, requestId, generation)) return;
+                        if (!activeUrlRequestIds.remove(sessionUUID, requestId)) return;
+                        if (prepared.get()) {
+                            activeUrlGenerations.remove(sessionUUID, generation);
+                            PlaybackSession session = sessions.get(sessionUUID);
+                            if (session != null) {
+                                AudioStreamBuffer buffer =
+                                        session.getStreamBuffers().get(AudioEngine.TYPE_NORMAL);
+                                if (buffer != null) buffer.completeStreaming(latestDecodedFrames.get());
+                            }
+                            AudiophileCraft.LOGGER.warn(
+                                    "URL request {} ended after READY for session {}; keeping {} decoded frames and preserving its READY result: {}",
+                                    requestId,
+                                    sessionUUID,
+                                    latestDecodedFrames.get(),
+                                    reason);
+                            return;
+                        }
+                        AudiophileCraft.LOGGER.warn(
+                                "URL request {} failed for session {}: {}", requestId, sessionUUID, reason);
+
+                        int nextRetry = retryCount + 1;
+                        if (nextRetry <= MAX_URL_RETRIES) {
+                            long retryDelayMs = retryDelayMs(nextRetry);
+                            AudiophileCraft.LOGGER.info(
+                                    "Scheduling URL retry {}/{} for session {} in {}ms{}.",
+                                    nextRetry,
+                                    MAX_URL_RETRIES,
+                                    sessionUUID,
+                                    retryDelayMs,
+                                    shouldUseCleanPlayerManager(nextRetry)
+                                            ? " with a clean source-manager candidate"
+                                            : "");
+
+                            scheduleRetry(
+                                    sessionUUID,
+                                    url,
+                                    speakers,
+                                    power,
+                                    inputGain,
+                                    startImmediately,
+                                    onReadyCallback,
+                                    onFailedCallback,
+                                    nextRetry,
+                                    generation,
+                                    retryDelayMs);
+                        } else {
+                            activeUrlGenerations.remove(sessionUUID, generation);
+                            if (!startImmediately && onFailedCallback != null) {
+                                onFailedCallback.accept(sessionUUID);
+                            }
+                            MinecraftClient.getInstance().execute(() -> {
+                                if (MinecraftClient.getInstance().player != null) {
+                                    MinecraftClient.getInstance()
+                                            .player
+                                            .sendMessage(
+                                                    Text.literal("❌ ERROR (CRITICAL DECODE ERROR): " + reason + " ["
+                                                                    + "initial attempt + " + MAX_URL_RETRIES
+                                                                    + " retries failed]")
+                                                            .formatted(Formatting.RED),
+                                                    false);
+                                }
+                            });
+                        }
+                    }
+                },
+                shouldUseCleanPlayerManager(retryCount));
         activeUrlRequestIds.put(sessionUUID, startedRequestId);
         AudiophileCraft.LOGGER.debug(
                 "URL request {} started for session {} (retry {}).", startedRequestId, sessionUUID, retryCount);
@@ -290,28 +387,50 @@ final class AudioPlaybackController {
             float inputGain,
             boolean startImmediately,
             Consumer<UUID> onReadyCallback,
-            int retryCount) {
-        // Use a dedicated single-thread executor for retry scheduling to avoid
-        // blocking any game or decoder thread during the delay.
-        URL_RETRY_EXECUTOR.execute(() -> {
-            try {
-                Thread.sleep(URL_RETRY_DELAY_MS);
-            } catch (InterruptedException e) {
-                Thread.currentThread().interrupt();
-                return;
-            }
-            // Dispatch the actual retry on the main Minecraft thread
-            MinecraftClient.getInstance().execute(() -> {
-                // Guard: if the session was cancelled or a new track started during the delay, abort
-                if (activeUrlRequestIds.containsKey(sessionUUID)) {
-                    AudiophileCraft.LOGGER.debug(
-                            "Retry aborted for session {}: a new request was started during the delay.", sessionUUID);
-                    return;
-                }
-                playFromUrlWithRetry(
-                        sessionUUID, url, speakers, power, inputGain, startImmediately, onReadyCallback, retryCount);
-            });
-        });
+            Consumer<UUID> onFailedCallback,
+            int retryCount,
+            long generation,
+            long retryDelayMs) {
+        URL_RETRY_EXECUTOR.schedule(
+                () -> MinecraftClient.getInstance().execute(() -> {
+                    Long activeGeneration = activeUrlGenerations.get(sessionUUID);
+                    if (activeGeneration == null
+                            || activeGeneration.longValue() != generation
+                            || activeUrlRequestIds.containsKey(sessionUUID)) {
+                        AudiophileCraft.LOGGER.debug(
+                                "Retry aborted for session {}: the request was cancelled or superseded.", sessionUUID);
+                        return;
+                    }
+                    playFromUrlWithRetry(
+                            sessionUUID,
+                            url,
+                            speakers,
+                            power,
+                            inputGain,
+                            startImmediately,
+                            onReadyCallback,
+                            onFailedCallback,
+                            retryCount,
+                            generation);
+                }),
+                retryDelayMs,
+                java.util.concurrent.TimeUnit.MILLISECONDS);
+    }
+
+    static long retryBaseDelayMs(int retryCount) {
+        if (retryCount < 1 || retryCount > URL_RETRY_BASE_DELAYS_MS.length) {
+            throw new IllegalArgumentException("retryCount must be between 1 and " + URL_RETRY_BASE_DELAYS_MS.length);
+        }
+        return URL_RETRY_BASE_DELAYS_MS[retryCount - 1];
+    }
+
+    static boolean shouldUseCleanPlayerManager(int retryCount) {
+        return retryCount >= 1;
+    }
+
+    private static long retryDelayMs(int retryCount) {
+        long jitter = ThreadLocalRandom.current().nextLong(-RETRY_JITTER_MS, RETRY_JITTER_MS + 1L);
+        return Math.max(250L, retryBaseDelayMs(retryCount) + jitter);
     }
 
     void createSourcesFromClusters(
@@ -431,7 +550,7 @@ final class AudioPlaybackController {
 
                     echoSendFilterId = alGenFilters();
                     alFilteri(echoSendFilterId, AL_FILTER_TYPE, AL_FILTER_LOWPASS);
-                    alFilterf(echoSendFilterId, AL_LOWPASS_GAIN, 1.0f);
+                    alFilterf(echoSendFilterId, AL_LOWPASS_GAIN, 0.0f);
                     alFilterf(echoSendFilterId, AL_LOWPASS_GAINHF, 1.0f);
                     if (effects.getSlapbackAuxSlotId() != 0) {
                         alSource3i(
@@ -855,7 +974,6 @@ final class AudioPlaybackController {
             }
 
             session.setStreamStartTime(System.nanoTime());
-            session.beginEchoFadeIn();
             engine.syncListenerToCamera();
 
             java.nio.IntBuffer sourceIds =

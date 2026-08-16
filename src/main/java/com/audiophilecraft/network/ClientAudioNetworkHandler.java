@@ -1,5 +1,6 @@
 package com.audiophilecraft.network;
 
+import static com.audiophilecraft.network.ModMessages.C2S_PLAYBACK_FAILED;
 import static com.audiophilecraft.network.ModMessages.C2S_PLAYBACK_READY;
 import static com.audiophilecraft.network.ModMessages.C2S_SEEK_READY;
 import static com.audiophilecraft.network.ModMessages.S2C_PLAY_TRACK;
@@ -64,7 +65,7 @@ final class ClientAudioNetworkHandler {
 
             client.execute(() -> {
                 if (!isCurrentDimension(client, packet.playbackDimension())) {
-                    sendPlaybackReady(packet.sessionUUID());
+                    sendPlaybackFailed(packet.sessionUUID());
                     return;
                 }
                 AudioEngine.getInstance()
@@ -75,7 +76,8 @@ final class ClientAudioNetworkHandler {
                                 packet.power(),
                                 packet.inputGain(),
                                 false,
-                                ClientAudioNetworkHandler::sendPlaybackReady);
+                                ClientAudioNetworkHandler::sendPlaybackReady,
+                                ClientAudioNetworkHandler::sendPlaybackFailed);
             });
         });
 
@@ -221,6 +223,12 @@ final class ClientAudioNetworkHandler {
         PacketByteBuf readyBuf = PacketByteBufs.create();
         readyBuf.writeUuid(sessionUUID);
         ClientPlayNetworking.send(C2S_PLAYBACK_READY, readyBuf);
+    }
+
+    private static void sendPlaybackFailed(UUID sessionUUID) {
+        PacketByteBuf failedBuf = PacketByteBufs.create();
+        failedBuf.writeUuid(sessionUUID);
+        ClientPlayNetworking.send(C2S_PLAYBACK_FAILED, failedBuf);
     }
 
     private static List<BlockPos> readSpeakerPositions(PacketByteBuf buf) {

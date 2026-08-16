@@ -135,15 +135,15 @@ final class AmplifierPlaybackPanel {
                 actionWidth,
                 18,
                 Text.literal("Access: Private"),
-                button -> toggleOwnAccess());
+                button -> toggleSelectedAccess());
         placementButton = theme.button(
                 textRenderer,
                 ownershipX + actionWidth + 4,
                 actionY,
                 availableWidth - actionWidth - 4,
                 18,
-                Text.literal("Build: You"),
-                button -> togglePlacementTarget());
+                Text.literal("Building as: You"),
+                button -> selectPlacementTarget());
         requestSpeakerOwners();
         updateOwnerButtonLabel();
         updateSharingButtonLabels();
@@ -682,17 +682,9 @@ final class AmplifierPlaybackPanel {
 
     private void updateOwnerButtonLabel() {
         if (ownerButton == null) return;
-        String name = "You";
-        if (selectedOwner != null) {
-            for (ModMessages.SpeakerOwner owner : speakerOwners) {
-                if (owner.uuid().equals(selectedOwner)) {
-                    name = owner.name();
-                    break;
-                }
-            }
-        }
+        String name = displayOwnerName(selectedOwner);
         ownerButton.setMessage(
-                Text.literal("\u25BE System: " + textRenderer.trimToWidth(name, ownerButton.getWidth() - 58)));
+                Text.literal("\u25BE Speakers: " + textRenderer.trimToWidth(name, ownerButton.getWidth() - 68)));
     }
 
     private void persistSelectedOwner() {
@@ -703,13 +695,13 @@ final class AmplifierPlaybackPanel {
         ClientPlayNetworking.send(ModMessages.C2S_UPDATE_SELECTED_OWNER, buffer);
     }
 
-    private void toggleOwnAccess() {
+    private void toggleSelectedAccess() {
         UUID ownUuid = ownUuid();
-        if (ownUuid == null) return;
+        if (!SpeakerOwnershipUiState.canEditAccess(ownUuid, selectedOwner)) return;
 
         boolean makeShared = true;
         for (ModMessages.SpeakerOwner owner : speakerOwners) {
-            if (owner.uuid().equals(ownUuid)) {
+            if (owner.uuid().equals(selectedOwner)) {
                 makeShared = !owner.shared();
                 break;
             }
@@ -720,12 +712,11 @@ final class AmplifierPlaybackPanel {
         ClientPlayNetworking.send(ModMessages.C2S_UPDATE_SPEAKER_ACCESS, buffer);
     }
 
-    private void togglePlacementTarget() {
+    private void selectPlacementTarget() {
         UUID ownUuid = ownUuid();
-        if (ownUuid == null || selectedOwner == null) return;
-
-        UUID requestedOwner =
-                selectedOwner.equals(placementOwner) && !selectedOwner.equals(ownUuid) ? ownUuid : selectedOwner;
+        UUID requestedOwner = SpeakerOwnershipUiState.requestedPlacementOwner(
+                ownUuid, selectedOwner, placementOwner, isSelectableOwner(selectedOwner, ownUuid));
+        if (requestedOwner == null) return;
         PacketByteBuf buffer = PacketByteBufs.create();
         buffer.writeInt(handOrdinal.getAsInt());
         buffer.writeUuid(requestedOwner);
@@ -735,30 +726,20 @@ final class AmplifierPlaybackPanel {
     private void updateSharingButtonLabels() {
         UUID ownUuid = ownUuid();
         if (accessButton != null) {
-            boolean shared = false;
-            if (ownUuid != null) {
-                for (ModMessages.SpeakerOwner owner : speakerOwners) {
-                    if (owner.uuid().equals(ownUuid)) {
-                        shared = owner.shared();
-                        break;
-                    }
-                }
-            }
-            accessButton.setMessage(Text.literal("Access: " + (shared ? "Shared" : "Private")));
-            accessButton.active = ownUuid != null && containsOwner(ownUuid);
+            ModMessages.SpeakerOwner selected = findOwner(selectedOwner);
+            boolean editable = SpeakerOwnershipUiState.canEditAccess(ownUuid, selectedOwner);
+            boolean shared = selected != null && selected.shared();
+            String prefix = editable ? "Sharing: " : "Access: ";
+            accessButton.setMessage(Text.literal(prefix + (shared ? "Shared" : "Private")));
+            accessButton.active = editable && selected != null;
         }
 
         if (placementButton != null) {
-            String label;
-            if (selectedOwner == null || selectedOwner.equals(ownUuid)) {
-                label = "Build: You";
-            } else if (selectedOwner.equals(placementOwner)) {
-                label = "Building: " + ownerName(selectedOwner);
-            } else {
-                label = "Build for " + ownerName(selectedOwner);
-            }
+            boolean selectable = selectedOwner != null && isSelectableOwner(selectedOwner, ownUuid);
+            boolean alreadyActive = selectedOwner != null && selectedOwner.equals(placementOwner);
+            String label = (alreadyActive ? "Building as: " : "Build as: ") + displayOwnerName(selectedOwner);
             placementButton.setMessage(Text.literal(textRenderer.trimToWidth(label, placementButton.getWidth() - 10)));
-            placementButton.active = selectedOwner != null && isSelectableOwner(selectedOwner, ownUuid);
+            placementButton.active = selectable && !alreadyActive;
         }
     }
 
@@ -779,6 +760,20 @@ final class AmplifierPlaybackPanel {
             if (owner.uuid().equals(ownerUuid)) return owner.name();
         }
         return ownerUuid != null ? "Player-" + ownerUuid.toString().substring(0, 8) : "You";
+    }
+
+    private String displayOwnerName(UUID ownerUuid) {
+        UUID ownUuid = ownUuid();
+        if (ownerUuid == null || ownerUuid.equals(ownUuid)) return "You";
+        return ownerName(ownerUuid);
+    }
+
+    private ModMessages.SpeakerOwner findOwner(UUID ownerUuid) {
+        if (ownerUuid == null) return null;
+        for (ModMessages.SpeakerOwner owner : speakerOwners) {
+            if (owner.uuid().equals(ownerUuid)) return owner;
+        }
+        return null;
     }
 
     private UUID ownUuid() {

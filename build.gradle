@@ -44,6 +44,7 @@ configurations {
 }
 
 def lavaplayerVersion = "2.2.6"
+def youtubeSourceVersion = "1.18.2"
 def strippedLavaplayerEntries = [
 	// Deprecated built-in YouTube implementation rejected by CurseForge.
 	'com/sedmelluq/discord/lavaplayer/source/youtube/**',
@@ -101,9 +102,9 @@ dependencies {
 	include("com.fasterxml.jackson.core:jackson-annotations:${jacksonVersion}")
 
 	// YouTube Source Plugin — Replaces deprecated built-in YouTube source
-	implementation("dev.lavalink.youtube:v2:1.18.1")
-	include("dev.lavalink.youtube:v2:1.18.1")
-	include("dev.lavalink.youtube:common:1.18.1")
+	implementation("dev.lavalink.youtube:v2:${youtubeSourceVersion}")
+	include("dev.lavalink.youtube:v2:${youtubeSourceVersion}")
+	include("dev.lavalink.youtube:common:${youtubeSourceVersion}")
 	include("com.grack:nanojson:1.7")
 
 	// Lavaplayer Natives (Required for audio decoding, otherwise playback silently fails)
@@ -142,6 +143,35 @@ tasks.withType(Test).configureEach {
 		def directory = unitTestWorkingDirectory.get().asFile
 		directory.mkdirs()
 		workingDir = directory
+	}
+}
+
+def youtubeStressRuns = providers.gradleProperty('youtubeStressRuns').orElse('50')
+def youtubeStressRetries = providers.gradleProperty('youtubeStressRetries').orElse('7')
+def youtubeStressFreshManager = providers.gradleProperty('youtubeStressFreshManager').orElse('false')
+def youtubeStressUrl = providers.gradleProperty('youtubeStressUrl')
+	.orElse('https://www.youtube.com/watch?v=7hLLOHFmGMU')
+tasks.register('youtubeStressTest', Test) {
+	group = 'verification'
+	description = 'Runs repeated real YouTube ten-second PCM prebuffer probes outside Minecraft.'
+	testClassesDirs = sourceSets.test.output.classesDirs
+	classpath = sourceSets.test.runtimeClasspath
+	filter {
+		includeTestsMatching 'com.audiophilecraft.sound.YouTubePlaybackStressTest'
+	}
+	doFirst {
+		environment 'AUDIOPHILECRAFT_YOUTUBE_STRESS_RUNS', youtubeStressRuns.get()
+		environment 'AUDIOPHILECRAFT_YOUTUBE_STRESS_RETRIES', youtubeStressRetries.get()
+		environment 'AUDIOPHILECRAFT_YOUTUBE_STRESS_FRESH_MANAGER', youtubeStressFreshManager.get()
+		environment 'AUDIOPHILECRAFT_YOUTUBE_STRESS_URL', youtubeStressUrl.get()
+		environment 'AUDIOPHILECRAFT_YOUTUBE_STRESS_REPORT',
+			layout.buildDirectory.file("reports/youtube-stress/results-${youtubeStressRuns.get()}-runs-${youtubeStressRetries.get()}-retries-${youtubeStressFreshManager.get() == 'true' ? 'fresh' : 'shared'}.csv").get().asFile.absolutePath
+	}
+	outputs.upToDateWhen { false }
+	testLogging {
+		events 'passed', 'failed', 'skipped'
+		showStandardStreams = true
+		exceptionFormat = 'full'
 	}
 }
 

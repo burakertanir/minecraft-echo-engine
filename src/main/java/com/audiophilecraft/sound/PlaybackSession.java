@@ -44,11 +44,6 @@ public class PlaybackSession {
     private volatile boolean isPlaying = false;
     private long pauseStartTimestamp = 0;
 
-    // Echo fade-in clock: fresh per stream start, ramps the echo send from
-    // silence so the shared EFX echo effect can never blast its first taps.
-    private static final double ECHO_FADE_IN_SECONDS = 0.25;
-    private volatile long echoFadeStartNanos = 0L;
-
     // Playback control
     private volatile boolean isPaused = false;
     private volatile boolean isManuallyPaused = false;
@@ -166,27 +161,6 @@ public class PlaybackSession {
 
     public void setPauseStartTimestamp(long t) {
         this.pauseStartTimestamp = t;
-    }
-
-    public void beginEchoFadeIn() {
-        echoFadeStartNanos = System.nanoTime();
-    }
-
-    public void resetEchoFadeIn() {
-        echoFadeStartNanos = 0L;
-    }
-
-    /**
-     * Smoothstep fade factor (0..1) for the echo send during the first moments
-     * of a stream; 0 before playback starts, 1 once the fade completes.
-     */
-    public float echoFadeInFactor() {
-        long start = echoFadeStartNanos;
-        if (start <= 0L) return 0.0f;
-        double elapsed = (System.nanoTime() - start) / 1_000_000_000.0;
-        if (elapsed >= ECHO_FADE_IN_SECONDS) return 1.0f;
-        double progress = elapsed / ECHO_FADE_IN_SECONDS;
-        return (float) (progress * progress * (3.0 - 2.0 * progress));
     }
 
     // --- Control ---
@@ -337,7 +311,6 @@ public class PlaybackSession {
         isPaused = false;
         isManuallyPaused = false;
         streamStartTime = 0;
-        echoFadeStartNanos = 0L;
         playUrl = ""; // Clear stale URL so the UI won't confuse "same URL stopped" with "still active"
 
         for (StreamSource source : streamSources) {
@@ -364,7 +337,6 @@ public class PlaybackSession {
         isSeeking = false;
         streamStartTime = 0L;
         pauseStartTimestamp = 0L;
-        echoFadeStartNanos = 0L;
         playUrl = "";
 
         for (StreamSource source : streamSources) {

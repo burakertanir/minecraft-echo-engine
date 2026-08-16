@@ -147,6 +147,115 @@ class ServerAudioNetworkHandlerSyncTest {
     }
 
     @Test
+    void playbackBarrierCompletesAfterEveryPlayerReportsReadyOrFailed() {
+        UUID readyPlayer = UUID.randomUUID();
+        UUID failedPlayer = UUID.randomUUID();
+        ServerAudioNetworkHandler.PendingPlaybackSync sync =
+                pendingPlaybackSync(1_000L, Set.of(readyPlayer, failedPlayer));
+
+        assertFalse(ServerAudioNetworkHandler.markPlaybackResult(sync, readyPlayer, true));
+        assertEquals(Set.of(readyPlayer), sync.readyPlayers());
+        assertEquals(Set.of(failedPlayer), sync.waitingPlayers());
+
+        assertTrue(ServerAudioNetworkHandler.markPlaybackResult(sync, failedPlayer, false));
+        assertTrue(sync.waitingPlayers().isEmpty());
+        assertEquals(Set.of(readyPlayer), sync.readyPlayers());
+        assertEquals(Set.of(failedPlayer), sync.failedPlayers());
+    }
+
+    @Test
+    void duplicateOrUnexpectedPlaybackResultCannotChangeTheTerminalOutcome() {
+        UUID expectedPlayer = UUID.randomUUID();
+        UUID unexpectedPlayer = UUID.randomUUID();
+        ServerAudioNetworkHandler.PendingPlaybackSync sync = pendingPlaybackSync(1_000L, Set.of(expectedPlayer));
+
+        assertFalse(ServerAudioNetworkHandler.markPlaybackResult(sync, unexpectedPlayer, true));
+        assertTrue(sync.readyPlayers().isEmpty());
+        assertTrue(sync.failedPlayers().isEmpty());
+
+        assertTrue(ServerAudioNetworkHandler.markPlaybackResult(sync, expectedPlayer, false));
+        assertFalse(ServerAudioNetworkHandler.markPlaybackResult(sync, expectedPlayer, true));
+        assertTrue(sync.readyPlayers().isEmpty());
+        assertEquals(Set.of(expectedPlayer), sync.failedPlayers());
+    }
+
+    @Test
+    void allFailedPlaybackHasNoReadyClients() {
+        UUID firstPlayer = UUID.randomUUID();
+        UUID secondPlayer = UUID.randomUUID();
+        ServerAudioNetworkHandler.PendingPlaybackSync sync =
+                pendingPlaybackSync(1_000L, Set.of(firstPlayer, secondPlayer));
+
+        assertFalse(ServerAudioNetworkHandler.markPlaybackResult(sync, firstPlayer, false));
+        assertTrue(ServerAudioNetworkHandler.markPlaybackResult(sync, secondPlayer, false));
+
+        assertTrue(sync.waitingPlayers().isEmpty());
+        assertTrue(sync.readyPlayers().isEmpty());
+        assertEquals(Set.of(firstPlayer, secondPlayer), sync.failedPlayers());
+    }
+
+    @Test
+    void pendingPlaybackUsesTheLongerRetryAwareTimeoutBoundary() {
+        assertEquals(30_000L, ServerAudioNetworkHandler.SYNC_TIMEOUT_MS);
+        assertEquals(60_000L, ServerAudioNetworkHandler.PLAYBACK_PREPARE_TIMEOUT_MS);
+
+        ConcurrentHashMap<UUID, ServerAudioNetworkHandler.PendingPlaybackSync> pending = new ConcurrentHashMap<>();
+        UUID sessionUUID = UUID.randomUUID();
+        ServerAudioNetworkHandler.PendingPlaybackSync sync = pendingPlaybackSync(1_000L, Set.of(UUID.randomUUID()));
+        pending.put(sessionUUID, sync);
+
+        assertTrue(ServerAudioNetworkHandler.removeDuePlaybackSyncs(
+                        pending, 1_000L + ServerAudioNetworkHandler.PLAYBACK_PREPARE_TIMEOUT_MS)
+                .isEmpty());
+        var due = ServerAudioNetworkHandler.removeDuePlaybackSyncs(
+                pending, 1_001L + ServerAudioNetworkHandler.PLAYBACK_PREPARE_TIMEOUT_MS);
+
+        assertEquals(1, due.size());
+        assertSame(sync, due.get(0).state());
+        assertTrue(due.get(0).timedOut());
+        assertTrue(pending.isEmpty());
+    }
+
+    @Test
+    void playbackDimensionPruningRemovesWaitingReadyAndFailedClients() {
+        UUID waitingPlayer = UUID.randomUUID();
+        UUID readyPlayer = UUID.randomUUID();
+        UUID failedPlayer = UUID.randomUUID();
+        UUID retainedPlayer = UUID.randomUUID();
+        ServerAudioNetworkHandler.PendingPlaybackSync sync =
+                pendingPlaybackSync(1_000L, Set.of(waitingPlayer, readyPlayer, failedPlayer, retainedPlayer));
+        assertFalse(ServerAudioNetworkHandler.markPlaybackResult(sync, readyPlayer, true));
+        assertFalse(ServerAudioNetworkHandler.markPlaybackResult(sync, failedPlayer, false));
+
+        int removed = ServerAudioNetworkHandler.prunePlaybackPlayersOutsideDimension(sync, playerUUID -> {
+            if (playerUUID.equals(retainedPlayer)) return new Identifier("minecraft", "overworld");
+            return null;
+        });
+
+        assertEquals(3, removed);
+        assertEquals(Set.of(retainedPlayer), sync.waitingPlayers());
+        assertTrue(sync.readyPlayers().isEmpty());
+        assertTrue(sync.failedPlayers().isEmpty());
+    }
+
+    @Test
+    void playbackWithNoRemainingWaitersBecomesDueWithoutBeingTimedOut() {
+        ConcurrentHashMap<UUID, ServerAudioNetworkHandler.PendingPlaybackSync> pending = new ConcurrentHashMap<>();
+        UUID sessionUUID = UUID.randomUUID();
+        UUID readyPlayer = UUID.randomUUID();
+        ServerAudioNetworkHandler.PendingPlaybackSync sync = pendingPlaybackSync(10_000L, Set.of(readyPlayer));
+        assertTrue(ServerAudioNetworkHandler.markPlaybackResult(sync, readyPlayer, true));
+        pending.put(sessionUUID, sync);
+
+        var due = ServerAudioNetworkHandler.removeDuePlaybackSyncs(pending, 10_000L);
+
+        assertEquals(1, due.size());
+        assertFalse(due.get(0).timedOut());
+        assertEquals(Set.of(readyPlayer), due.get(0).state().readyPlayers());
+        assertTrue(pending.isEmpty());
+    }
+
+    @Test
     void makingSystemPrivateTargetsOnlyForeignSessionsUsingThatOwnersSpeakers() {
         UUID owner = UUID.randomUUID();
         UUID foreignController = UUID.randomUUID();
@@ -172,5 +281,17 @@ class ServerAudioNetworkHandlerSyncTest {
         concurrentWaitingPlayers.addAll(waitingPlayers);
         return new ServerAudioNetworkHandler.PendingSync(
                 concurrentWaitingPlayers, startedAtMs, new Identifier("minecraft", "overworld"));
+    }
+
+    private static ServerAudioNetworkHandler.PendingPlaybackSync pendingPlaybackSync(
+            long startedAtMs, Set<UUID> waitingPlayers) {
+        Set<UUID> concurrentWaitingPlayers = ConcurrentHashMap.newKeySet();
+        concurrentWaitingPlayers.addAll(waitingPlayers);
+        return new ServerAudioNetworkHandler.PendingPlaybackSync(
+                concurrentWaitingPlayers,
+                ConcurrentHashMap.newKeySet(),
+                ConcurrentHashMap.newKeySet(),
+                startedAtMs,
+                new Identifier("minecraft", "overworld"));
     }
 }

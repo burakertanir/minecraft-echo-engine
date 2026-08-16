@@ -207,6 +207,7 @@ public class AudioEngine {
     }
 
     public synchronized void stopSession(UUID sessionId) {
+        playback.cancelUrlRequest(sessionId);
         runtime.stopSession(sessionId);
     }
 
@@ -296,6 +297,19 @@ public class AudioEngine {
             java.util.function.Consumer<UUID> onReadyCallback) {
         playback.playFromUrlWithSpeakerData(
                 sessionId, url, speakers, power, inputGain, startImmediately, onReadyCallback);
+    }
+
+    public void playFromUrl(
+            UUID sessionId,
+            String url,
+            List<SpeakerPlaybackData> speakers,
+            float power,
+            float inputGain,
+            boolean startImmediately,
+            java.util.function.Consumer<UUID> onReadyCallback,
+            java.util.function.Consumer<UUID> onFailedCallback) {
+        playback.playFromUrlWithSpeakerData(
+                sessionId, url, speakers, power, inputGain, startImmediately, onReadyCallback, onFailedCallback);
     }
 
     public void createSourcesFromClusters(

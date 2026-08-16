@@ -40,6 +40,7 @@ public final class ModMessages {
     public static final Identifier S2C_SYNC_CHANNEL_MASK = id("s2c_sync_channel_mask");
 
     public static final Identifier C2S_PLAYBACK_READY = id("c2s_playback_ready");
+    public static final Identifier C2S_PLAYBACK_FAILED = id("c2s_playback_failed");
     public static final Identifier S2C_START_PLAYBACK = id("s2c_start_playback");
     public static final Identifier S2C_PREP_SEEK = id("s2c_prep_seek");
     public static final Identifier C2S_SEEK_READY = id("c2s_seek_ready");

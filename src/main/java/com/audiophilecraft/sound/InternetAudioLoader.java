@@ -6,6 +6,7 @@ import com.sedmelluq.discord.lavaplayer.player.AudioLoadResultHandler;
 import com.sedmelluq.discord.lavaplayer.player.AudioPlayer;
 import com.sedmelluq.discord.lavaplayer.player.AudioPlayerManager;
 import com.sedmelluq.discord.lavaplayer.player.DefaultAudioPlayerManager;
+import com.sedmelluq.discord.lavaplayer.player.event.AudioEventAdapter;
 import com.sedmelluq.discord.lavaplayer.source.http.HttpAudioSourceManager;
 import com.sedmelluq.discord.lavaplayer.source.soundcloud.SoundCloudAudioSourceManager;
 import com.sedmelluq.discord.lavaplayer.tools.FriendlyException;
@@ -14,8 +15,10 @@ import com.sedmelluq.discord.lavaplayer.track.AudioTrack;
 import com.sedmelluq.discord.lavaplayer.track.AudioTrackInfo;
 import com.sedmelluq.discord.lavaplayer.track.playback.AudioFrame;
 import dev.lavalink.youtube.YoutubeAudioSourceManager;
-import dev.lavalink.youtube.clients.AndroidMusicWithThumbnail;
 import dev.lavalink.youtube.clients.AndroidVrWithThumbnail;
+import dev.lavalink.youtube.clients.MusicWithThumbnail;
+import dev.lavalink.youtube.clients.TvHtml5SimplyWithThumbnail;
+import dev.lavalink.youtube.clients.WebEmbeddedWithThumbnail;
 import dev.lavalink.youtube.clients.WebWithThumbnail;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
@@ -33,6 +36,7 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
+import java.util.concurrent.atomic.AtomicReference;
 
 /**
  * Internet Audio Loader — LavaPlayer integration for URL-based music streaming.
@@ -48,7 +52,7 @@ public class InternetAudioLoader {
 
     private static InternetAudioLoader INSTANCE;
 
-    private final AudioPlayerManager playerManager;
+    private final RotatingResourcePool<AudioPlayerManager> playerManagers;
     private final ConcurrentHashMap<Long, StreamingRequestState> streamingRequests = new ConcurrentHashMap<>();
     private final AtomicInteger nextDecoderThreadId = new AtomicInteger(1);
     private final AtomicBoolean shutdownStarted = new AtomicBoolean(false);
@@ -56,13 +60,18 @@ public class InternetAudioLoader {
 
     private static final class StreamingRequestState {
         private final long id;
+        private final RotatingResourcePool.Lease<AudioPlayerManager> playerManagerLease;
+        private final AudioPlayerManager requestPlayerManager;
         private final AtomicBoolean cancelled = new AtomicBoolean(false);
+        private final AtomicBoolean playerManagerReleased = new AtomicBoolean(false);
         private volatile Future<?> loadTask;
         private volatile Future<?> decodeTask;
         private volatile AudioPlayer player;
 
-        private StreamingRequestState(long id) {
+        private StreamingRequestState(long id, RotatingResourcePool.Lease<AudioPlayerManager> playerManagerLease) {
             this.id = id;
+            this.playerManagerLease = playerManagerLease;
+            this.requestPlayerManager = playerManagerLease.resource();
         }
 
         private boolean isCancelled() {
@@ -79,7 +88,20 @@ public class InternetAudioLoader {
             if (currentPlayer != null) {
                 currentPlayer.stopTrack();
             }
+            releasePlayerManager();
             return true;
+        }
+
+        private boolean promotePlayerManager() {
+            return playerManagerLease.promote();
+        }
+
+        private boolean usesCandidatePlayerManager() {
+            return playerManagerLease.isCandidate();
+        }
+
+        private void releasePlayerManager() {
+            if (playerManagerReleased.compareAndSet(false, true)) playerManagerLease.close();
         }
     }
 
@@ -88,8 +110,6 @@ public class InternetAudioLoader {
     private InternetAudioLoader() {
         // Force IPv4 to prevent Java network hangs on Windows (IPv6 timeouts)
         System.setProperty("java.net.preferIPv4Stack", "true");
-        // Do not cache DNS lookups so every reset can resolve a fresh YouTube edge
-        java.security.Security.setProperty("networkaddress.cache.ttl", "0");
         decoderExecutor = new ThreadPoolExecutor(
                 DECODER_THREAD_COUNT,
                 DECODER_THREAD_COUNT,
@@ -104,19 +124,32 @@ public class InternetAudioLoader {
                 },
                 new ThreadPoolExecutor.AbortPolicy());
 
-        playerManager = new DefaultAudioPlayerManager();
+        playerManagers =
+                new RotatingResourcePool<>(InternetAudioLoader::createPlayerManager, AudioPlayerManager::shutdown);
+    }
+
+    private static AudioPlayerManager createPlayerManager() {
+        AudioPlayerManager manager = new DefaultAudioPlayerManager();
         // CRITICAL: Set output format to raw PCM (not Opus!)
         // LavaPlayer defaults to Opus which is encoded — we need raw PCM for OpenAL
-        playerManager.getConfiguration().setOutputFormat(StandardAudioDataFormats.COMMON_PCM_S16_BE);
-        // Register YouTube source using the dedicated plugin (not the deprecated
-        // built-in one). Client order = attempt order: the Android music client is
-        // tried first because it avoids most "login required" walls, then the VR
-        // client, with plain web as the final fallback.
-        playerManager.registerSourceManager(new YoutubeAudioSourceManager(
-                new AndroidMusicWithThumbnail(), new AndroidVrWithThumbnail(), new WebWithThumbnail()));
+        manager.getConfiguration().setOutputFormat(StandardAudioDataFormats.COMMON_PCM_S16_BE);
+        // Mirror youtube-source's anonymous default rotation while preserving the
+        // thumbnail metadata used by the tablet. TVHTML5_SIMPLY is an additional
+        // non-OAuth playback fallback for videos rejected by the other clients.
+        manager.registerSourceManager(createYoutubeSourceManager());
         // Register other remote sources (SoundCloud, HTTP, etc.)
-        playerManager.registerSourceManager(SoundCloudAudioSourceManager.createDefault());
-        playerManager.registerSourceManager(new HttpAudioSourceManager());
+        manager.registerSourceManager(SoundCloudAudioSourceManager.createDefault());
+        manager.registerSourceManager(new HttpAudioSourceManager());
+        return manager;
+    }
+
+    static YoutubeAudioSourceManager createYoutubeSourceManager() {
+        return new YoutubeAudioSourceManager(
+                new MusicWithThumbnail(),
+                new AndroidVrWithThumbnail(),
+                new WebWithThumbnail(),
+                new WebEmbeddedWithThumbnail(),
+                new TvHtml5SimplyWithThumbnail());
     }
 
     public static synchronized InternetAudioLoader getInstance() {
@@ -179,10 +212,15 @@ public class InternetAudioLoader {
         void onFailed(long requestId, String reason);
     }
 
-    private void startLegacyDecode(AudioTrack track, TrackLoadCallback callback) {
+    private void startLegacyDecode(
+            AudioTrack track,
+            TrackLoadCallback callback,
+            RotatingResourcePool.Lease<AudioPlayerManager> playerManagerLease) {
         try {
-            decoderExecutor.execute(() -> decodeTrack(track, callback));
+            decoderExecutor.execute(
+                    () -> decodeTrack(track, callback, playerManagerLease.resource(), playerManagerLease));
         } catch (RejectedExecutionException e) {
+            playerManagerLease.close();
             callback.onFailed("Decoder queue is full or shutting down");
         }
     }
@@ -197,43 +235,59 @@ public class InternetAudioLoader {
      * @param callback Called on completion or failure
      */
     public void loadTrack(String url, TrackLoadCallback callback) {
-
-        playerManager.loadItem(url, new AudioLoadResultHandler() {
-            @Override
-            public void trackLoaded(AudioTrack track) {
-                // Decode on a separate thread to avoid blocking
-                startLegacyDecode(track, callback);
-            }
-
-            @Override
-            public void playlistLoaded(AudioPlaylist playlist) {
-                // For playlists, just play the first track
-                if (playlist.getTracks().isEmpty()) {
-                    callback.onFailed("Playlist is empty");
-                    return;
+        RotatingResourcePool.Lease<AudioPlayerManager> playerManagerLease = playerManagers.acquireShared();
+        try {
+            playerManagerLease.resource().loadItem(url, new AudioLoadResultHandler() {
+                @Override
+                public void trackLoaded(AudioTrack track) {
+                    // Decode on a separate thread to avoid blocking
+                    startLegacyDecode(track, callback, playerManagerLease);
                 }
 
-                AudioTrack selected = playlist.getSelectedTrack();
-                if (selected == null) {
-                    selected = playlist.getTracks().get(0);
+                @Override
+                public void playlistLoaded(AudioPlaylist playlist) {
+                    // For playlists, just play the first track
+                    if (playlist.getTracks().isEmpty()) {
+                        try {
+                            callback.onFailed("Playlist is empty");
+                        } finally {
+                            playerManagerLease.close();
+                        }
+                        return;
+                    }
+
+                    AudioTrack selected = playlist.getSelectedTrack();
+                    if (selected == null) {
+                        selected = playlist.getTracks().get(0);
+                    }
+
+                    startLegacyDecode(selected, callback, playerManagerLease);
                 }
 
-                final AudioTrack finalTrack = selected;
-                startLegacyDecode(finalTrack, callback);
-            }
+                @Override
+                public void noMatches() {
+                    AudiophileCraft.LOGGER.warn("No internet audio matches found for {}.", url);
+                    try {
+                        callback.onFailed("No matches found for: " + url);
+                    } finally {
+                        playerManagerLease.close();
+                    }
+                }
 
-            @Override
-            public void noMatches() {
-                AudiophileCraft.LOGGER.warn("No internet audio matches found for {}.", url);
-                callback.onFailed("No matches found for: " + url);
-            }
-
-            @Override
-            public void loadFailed(FriendlyException exception) {
-                AudiophileCraft.LOGGER.warn("Internet audio load failed for {}.", url, exception);
-                callback.onFailed("Load failed: " + exception.getMessage());
-            }
-        });
+                @Override
+                public void loadFailed(FriendlyException exception) {
+                    AudiophileCraft.LOGGER.warn("Internet audio load failed for {}.", url, exception);
+                    try {
+                        callback.onFailed("Load failed: " + exception.getMessage());
+                    } finally {
+                        playerManagerLease.close();
+                    }
+                }
+            });
+        } catch (Throwable loadFailure) {
+            playerManagerLease.close();
+            callback.onFailed("Internet load could not start: " + loadFailure);
+        }
     }
 
     /**
@@ -252,43 +306,46 @@ public class InternetAudioLoader {
     public List<AudioTrack> loadItemBlocking(String identifier, long timeoutMs) {
         List<AudioTrack> pending = new java.util.concurrent.CopyOnWriteArrayList<>();
         CountDownLatch done = new CountDownLatch(1);
-        playerManager.loadItem(identifier, new AudioLoadResultHandler() {
-            @Override
-            public void trackLoaded(AudioTrack track) {
-                try {
-                    pending.add(track);
-                } finally {
-                    done.countDown();
-                }
-            }
-
-            @Override
-            public void playlistLoaded(AudioPlaylist playlist) {
-                try {
-                    pending.addAll(playlist.getTracks());
-                    if (pending.isEmpty() && playlist.getSelectedTrack() != null) {
-                        pending.add(playlist.getSelectedTrack());
+        try (RotatingResourcePool.Lease<AudioPlayerManager> playerManagerLease = playerManagers.acquireShared()) {
+            Future<Void> loadTask = playerManagerLease.resource().loadItem(identifier, new AudioLoadResultHandler() {
+                @Override
+                public void trackLoaded(AudioTrack track) {
+                    try {
+                        pending.add(track);
+                    } finally {
+                        done.countDown();
                     }
-                } finally {
+                }
+
+                @Override
+                public void playlistLoaded(AudioPlaylist playlist) {
+                    try {
+                        pending.addAll(playlist.getTracks());
+                        if (pending.isEmpty() && playlist.getSelectedTrack() != null) {
+                            pending.add(playlist.getSelectedTrack());
+                        }
+                    } finally {
+                        done.countDown();
+                    }
+                }
+
+                @Override
+                public void noMatches() {
                     done.countDown();
                 }
-            }
 
-            @Override
-            public void noMatches() {
-                done.countDown();
+                @Override
+                public void loadFailed(FriendlyException exception) {
+                    AudiophileCraft.LOGGER.debug("Blocking internet load failed for {}.", identifier, exception);
+                    done.countDown();
+                }
+            });
+            try {
+                if (!done.await(timeoutMs, TimeUnit.MILLISECONDS)) loadTask.cancel(true);
+            } catch (InterruptedException e) {
+                loadTask.cancel(true);
+                Thread.currentThread().interrupt();
             }
-
-            @Override
-            public void loadFailed(FriendlyException exception) {
-                AudiophileCraft.LOGGER.debug("Blocking internet load failed for {}.", identifier, exception);
-                done.countDown();
-            }
-        });
-        try {
-            done.await(timeoutMs, TimeUnit.MILLISECONDS);
-        } catch (InterruptedException e) {
-            Thread.currentThread().interrupt();
         }
         return new ArrayList<>(pending);
     }
@@ -322,7 +379,32 @@ public class InternetAudioLoader {
         if (state.isCancelled()) return;
         if (streamingRequests.remove(state.id, state)) {
             dispatchIfActive(state, () -> callback.onFailed(state.id, reason));
+            releasePlayerManagerAsync(state);
         }
+    }
+
+    private void releasePlayerManagerAsync(StreamingRequestState state) {
+        try {
+            java.util.concurrent.ForkJoinPool.commonPool().execute(state::releasePlayerManager);
+        } catch (RejectedExecutionException ignored) {
+            state.releasePlayerManager();
+        }
+    }
+
+    private void failStreamingRequestFromDecoderWorker(
+            StreamingRequestState state, StreamingCallback callback, String reason) {
+        if (state.isCancelled()) return;
+        if (streamingRequests.remove(state.id, state)) {
+            dispatchFromDecoderWorker(() -> {
+                if (!state.isCancelled()) callback.onFailed(state.id, reason);
+            });
+            releasePlayerManagerAsync(state);
+        }
+    }
+
+    private void dispatchFromDecoderWorker(Runnable callback) {
+        java.util.concurrent.ForkJoinPool.commonPool().execute(() -> net.minecraft.client.MinecraftClient.getInstance()
+                .execute(callback));
     }
 
     private void dispatchIfActive(StreamingRequestState state, Runnable callback) {
@@ -332,37 +414,56 @@ public class InternetAudioLoader {
     }
 
     public long loadTrackStreaming(String url, StreamingCallback callback) {
+        return loadTrackStreaming(url, callback, false);
+    }
+
+    long loadTrackStreaming(String url, StreamingCallback callback, boolean cleanCandidatePlayerManager) {
         long requestId = nextStreamingRequestId.getAndIncrement();
-        StreamingRequestState state = new StreamingRequestState(requestId);
+        RotatingResourcePool.Lease<AudioPlayerManager> playerManagerLease;
+        try {
+            playerManagerLease =
+                    cleanCandidatePlayerManager ? playerManagers.acquireCandidate() : playerManagers.acquireShared();
+        } catch (Throwable managerFailure) {
+            dispatchFromDecoderWorker(
+                    () -> callback.onFailed(requestId, "Failed to create internet source manager: " + managerFailure));
+            return requestId;
+        }
+        StreamingRequestState state = new StreamingRequestState(requestId, playerManagerLease);
         streamingRequests.put(requestId, state);
-        Future<Void> loadTask = playerManager.loadItem(url, new AudioLoadResultHandler() {
-            @Override
-            public void trackLoaded(AudioTrack track) {
-                startStreamingDecode(state, track, callback);
-            }
-
-            @Override
-            public void playlistLoaded(AudioPlaylist playlist) {
-                if (playlist.getTracks().isEmpty()) {
-                    failStreamingRequest(state, callback, "Playlist empty");
-                    return;
+        Future<Void> loadTask;
+        try {
+            loadTask = state.requestPlayerManager.loadItem(url, new AudioLoadResultHandler() {
+                @Override
+                public void trackLoaded(AudioTrack track) {
+                    startStreamingDecode(state, track, callback);
                 }
-                AudioTrack s = playlist.getSelectedTrack();
-                if (s == null) s = playlist.getTracks().get(0);
-                final AudioTrack t = s;
-                startStreamingDecode(state, t, callback);
-            }
 
-            @Override
-            public void noMatches() {
-                failStreamingRequest(state, callback, "No matches: " + url);
-            }
+                @Override
+                public void playlistLoaded(AudioPlaylist playlist) {
+                    if (playlist.getTracks().isEmpty()) {
+                        failStreamingRequest(state, callback, "Playlist empty");
+                        return;
+                    }
+                    AudioTrack s = playlist.getSelectedTrack();
+                    if (s == null) s = playlist.getTracks().get(0);
+                    final AudioTrack t = s;
+                    startStreamingDecode(state, t, callback);
+                }
 
-            @Override
-            public void loadFailed(FriendlyException ex) {
-                failStreamingRequest(state, callback, "Load failed: " + ex.getMessage());
-            }
-        });
+                @Override
+                public void noMatches() {
+                    failStreamingRequest(state, callback, "No matches: " + url);
+                }
+
+                @Override
+                public void loadFailed(FriendlyException ex) {
+                    failStreamingRequest(state, callback, "Load failed: " + ex.getMessage());
+                }
+            });
+        } catch (Throwable loadFailure) {
+            failStreamingRequestFromDecoderWorker(state, callback, "Internet load could not start: " + loadFailure);
+            return requestId;
+        }
         state.loadTask = loadTask;
         if (state.isCancelled()) loadTask.cancel(true);
         return requestId;
@@ -376,9 +477,18 @@ public class InternetAudioLoader {
         short[] pcmInterleaved = null;
         int prebufferTarget;
         String title = track.getInfo().title;
-        AudioPlayer player = playerManager.createPlayer();
-        state.player = player;
+        AudioPlayer player = null;
+        AtomicReference<FriendlyException> playbackFailure = new AtomicReference<>();
         try {
+            player = state.requestPlayerManager.createPlayer();
+            player.addListener(new AudioEventAdapter() {
+                @Override
+                public void onTrackException(
+                        AudioPlayer failedPlayer, AudioTrack failedTrack, FriendlyException exception) {
+                    playbackFailure.compareAndSet(null, exception);
+                }
+            });
+            state.player = player;
             player.playTrack(track.makeClone());
             if (state.isCancelled()) return;
             AudioFrame first = player.provide(5000, java.util.concurrent.TimeUnit.MILLISECONDS);
@@ -412,11 +522,27 @@ public class InternetAudioLoader {
             }
             if (state.isCancelled()) return;
             if (totalDecoded == 0) {
+                FriendlyException failure = playbackFailure.get();
+                if (failure != null) {
+                    throw new RuntimeException(
+                            "0 samples decoded. YouTube playback failed: " + failure.getMessage(), failure);
+                }
                 throw new RuntimeException("0 samples decoded. Stream failed to start.");
             }
             final int prebuffered = totalDecoded;
             final int finalSR = sampleRate;
             final short[] pcmFinal = pcmInterleaved;
+            if (state.usesCandidatePlayerManager()) {
+                if (state.promotePlayerManager()) {
+                    AudiophileCraft.LOGGER.info(
+                            "Internet audio request {} promoted its healthy source manager for future tracks.",
+                            requestId);
+                } else {
+                    AudiophileCraft.LOGGER.debug(
+                            "Internet audio request {} became ready after another request had already replaced the shared source manager; keeping this request isolated.",
+                            requestId);
+                }
+            }
             dispatchIfActive(
                     state, () -> callback.onReady(requestId, pcmFinal, prebuffered, totalExpected, finalSR, title));
             while (!state.isCancelled()) {
@@ -443,9 +569,10 @@ public class InternetAudioLoader {
         } finally {
             state.player = null;
             try {
-                player.destroy();
+                if (player != null) player.destroy();
             } finally {
                 streamingRequests.remove(requestId, state);
+                state.releasePlayerManager();
             }
         }
     }
@@ -512,7 +639,11 @@ public class InternetAudioLoader {
      * Decode an AudioTrack to interleaved stereo PCM.
      * This blocks until the entire track is decoded.
      */
-    private void decodeTrack(AudioTrack track, TrackLoadCallback callback) {
+    private void decodeTrack(
+            AudioTrack track,
+            TrackLoadCallback callback,
+            AudioPlayerManager requestPlayerManager,
+            RotatingResourcePool.Lease<AudioPlayerManager> playerManagerLease) {
         try {
             AudioTrackInfo info = track.getInfo();
             String title = info.title;
@@ -521,7 +652,7 @@ public class InternetAudioLoader {
             java.util.List<short[]> chunks = new java.util.ArrayList<>();
             int totalSamples = 0;
 
-            AudioPlayer player = playerManager.createPlayer();
+            AudioPlayer player = requestPlayerManager.createPlayer();
             try {
                 player.playTrack(track);
 
@@ -575,6 +706,8 @@ public class InternetAudioLoader {
         } catch (Throwable e) {
             AudiophileCraft.LOGGER.error("Legacy internet audio decode failed.", e);
             callback.onFailed("Decode error: " + e.toString());
+        } finally {
+            playerManagerLease.close();
         }
     }
 
@@ -588,7 +721,7 @@ public class InternetAudioLoader {
         }
         streamingRequests.clear();
         decoderExecutor.shutdownNow();
-        playerManager.shutdown();
+        playerManagers.close();
         try {
             if (!decoderExecutor.awaitTermination(2, TimeUnit.SECONDS)) {
                 AudiophileCraft.LOGGER.warn("Internet audio decoder executor did not terminate cleanly.");

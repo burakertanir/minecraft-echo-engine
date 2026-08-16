@@ -456,8 +456,7 @@ final class SourceSpatialController {
 
         if (engine.getSlapbackAuxSlotId() != 0 && openAlResources.hasEchoSendFilter()) {
             float echoDistanceFalloff = (float) Math.pow(Math.max(0.001f, attenuation), 0.3f);
-            float echoFadeIn = session.echoFadeInFactor();
-            pendingEchoSendGain = sendGain * engine.getSlapbackGain() * echoDistanceFalloff * echoFadeIn;
+            pendingEchoSendGain = sendGain * engine.getSlapbackGain() * echoDistanceFalloff;
             pendingEchoHighFrequencyGain = reverbHighFrequencyGain * Math.max(0.01f, 1.0f - config.echo_damping);
             pendingEchoContribution =
                     pendingEchoSendGain * Math.max(0.0f, smoothedGain) * Math.max(0.0f, smoothedInputGain);
