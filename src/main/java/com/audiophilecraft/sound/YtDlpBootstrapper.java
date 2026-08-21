@@ -41,9 +41,12 @@ public final class YtDlpBootstrapper {
     private static final String DENO_MAC_X64_URL =
             "https://github.com/denoland/deno/releases/latest/download/deno-x86_64-apple-darwin.zip";
 
+    private static final long UPDATE_CHECK_INTERVAL_MS = 7L * 24L * 60L * 60L * 1000L; // 7 days
+
     private static final Object LOCK = new Object();
     private static CompletableFuture<Boolean> currentBootstrapFuture = null;
     private static final AtomicBoolean bootstrapCompleted = new AtomicBoolean(false);
+    private static final AtomicBoolean updateChecked = new AtomicBoolean(false);
 
     private YtDlpBootstrapper() {}
 
@@ -74,6 +77,7 @@ public final class YtDlpBootstrapper {
         synchronized (LOCK) {
             if (bootstrapCompleted.get() || areToolsPresent()) {
                 bootstrapCompleted.set(true);
+                checkAndUpdateIfOutdatedAsync();
                 return CompletableFuture.completedFuture(true);
             }
             if (currentBootstrapFuture != null && !currentBootstrapFuture.isDone()) {
@@ -138,6 +142,47 @@ public final class YtDlpBootstrapper {
             downloadThread.start();
             return currentBootstrapFuture;
         }
+    }
+
+    /**
+     * Periodically (every 7 days) checks if a newer yt-dlp binary is available
+     * and updates it silently in the background.
+     */
+    private static void checkAndUpdateIfOutdatedAsync() {
+        if (!updateChecked.compareAndSet(false, true)) return;
+
+        Thread updaterThread = new Thread(
+                () -> {
+                    try {
+                        Path toolsDir = getToolsDirectory();
+                        boolean isWin = isWindows();
+                        String ytDlpFilename = isWin ? "yt-dlp.exe" : "yt-dlp";
+                        Path ytDlpTarget = toolsDir.resolve(ytDlpFilename);
+                        if (!Files.isRegularFile(ytDlpTarget)) return;
+
+                        long lastModified = Files.getLastModifiedTime(ytDlpTarget).toMillis();
+                        long age = System.currentTimeMillis() - lastModified;
+                        if (age > UPDATE_CHECK_INTERVAL_MS) {
+                            AudiophileCraft.LOGGER.info(
+                                    "yt-dlp binary is {} days old (older than 7 days). Checking for latest release...",
+                                    age / (1000L * 60L * 60L * 24L));
+                            String ytDlpUrl = getYtDlpDownloadUrl();
+                            downloadHttpFile(ytDlpUrl, ytDlpTarget);
+                            if (!isWin) {
+                                setExecutable(ytDlpTarget);
+                            }
+                            AudiophileCraft.LOGGER.info("yt-dlp successfully updated to latest GitHub release.");
+                        }
+                    } catch (Throwable t) {
+                        AudiophileCraft.LOGGER.debug(
+                                "Background yt-dlp update check completed with no update (continuing with existing binary): {}",
+                                t.getMessage());
+                    }
+                },
+                "AudiophileCraft-YtDlpUpdater");
+
+        updaterThread.setDaemon(true);
+        updaterThread.start();
     }
 
     private static void setExecutable(Path path) {
