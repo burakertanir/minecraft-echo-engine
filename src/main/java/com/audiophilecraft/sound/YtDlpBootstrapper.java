@@ -149,7 +149,7 @@ public final class YtDlpBootstrapper {
         }
     }
 
-    private static void notifyPlayer(String message) {
+    static void notifyPlayer(String message) {
         try {
             MinecraftClient client = MinecraftClient.getInstance();
             if (client != null) {

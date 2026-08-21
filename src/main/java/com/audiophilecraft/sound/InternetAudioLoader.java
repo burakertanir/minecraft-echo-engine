@@ -453,6 +453,7 @@ public class InternetAudioLoader {
         long requestId = nextStreamingRequestId.getAndIncrement();
         if (ytDlpResolver.isYoutubeUrl(url)) {
             if (!ytDlpResolver.isConfigured()) {
+                YtDlpBootstrapper.notifyPlayer("§e[AudiophileCraft] ⏬ Setting up YouTube streaming components (yt-dlp & deno)... Please wait.");
                 // If not configured, trigger bootstrapper to download yt-dlp & deno in background
                 YtDlpBootstrapper.ensureInstalledAsync().thenAccept(success -> {
                     if (success) {
