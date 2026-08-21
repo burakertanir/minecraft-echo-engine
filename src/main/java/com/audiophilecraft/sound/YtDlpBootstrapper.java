@@ -85,7 +85,7 @@ public final class YtDlpBootstrapper {
                     () -> {
                         try {
                             AudiophileCraft.LOGGER.info("Starting automatic download of yt-dlp and deno...");
-                            notifyPlayer("§e[AudiophileCraft] ⏬ YouTube desteği için yt-dlp ve deno indiriliyor (ilk seferlik)...");
+                            notifyPlayer("§e[AudiophileCraft] ⏬ Downloading YouTube streaming components (yt-dlp & deno)...");
 
                             Path toolsDir = getToolsDirectory();
                             Files.createDirectories(toolsDir);
@@ -123,12 +123,12 @@ public final class YtDlpBootstrapper {
                             }
 
                             bootstrapCompleted.set(true);
-                            notifyPlayer("§a[AudiophileCraft] ✅ yt-dlp ve deno başarıyla kuruldu! YouTube desteği hazır.");
+                            notifyPlayer("§a[AudiophileCraft] ✅ YouTube streaming components installed successfully!");
                             AudiophileCraft.LOGGER.info("yt-dlp and deno bootstrapping succeeded.");
                             currentBootstrapFuture.complete(true);
                         } catch (Throwable t) {
                             AudiophileCraft.LOGGER.error("Failed to download yt-dlp or deno", t);
-                            notifyPlayer("§c[AudiophileCraft] ❌ yt-dlp otomatik kurulumu başarısız: " + t.getMessage());
+                            notifyPlayer("§c[AudiophileCraft] ❌ Failed to download YouTube components: " + t.getMessage());
                             currentBootstrapFuture.complete(false);
                         }
                     },
