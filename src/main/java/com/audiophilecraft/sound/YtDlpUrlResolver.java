@@ -187,7 +187,6 @@ public final class YtDlpUrlResolver {
 
         static Config load() {
             Config config = null;
-            boolean configFileFound = false;
             Path configFilePath = null;
             try {
                 configFilePath = FabricLoader.getInstance().getConfigDir().resolve(CONFIG_NAME);
@@ -201,7 +200,6 @@ public final class YtDlpUrlResolver {
                 if (Files.exists(configFilePath)) {
                     String json = Files.readString(configFilePath, StandardCharsets.UTF_8);
                     config = new com.google.gson.Gson().fromJson(json, Config.class);
-                    configFileFound = true;
                 }
             } catch (Exception e) {
                 AudiophileCraft.LOGGER.warn("Failed to read yt-dlp config, will try auto-detection.", e);
@@ -209,34 +207,43 @@ public final class YtDlpUrlResolver {
             if (config == null)
                 config = new Config();
 
-            // If no config file was found, auto-detect yt-dlp and deno on the system.
-            if (!configFileFound) {
-                AudiophileCraft.LOGGER.info("No yt-dlp config file found. Auto-detecting yt-dlp and deno...");
+            boolean updated = false;
+
+            // Validate existing ytDlpPath (if the file was moved/deleted, discard it)
+            if (config.ytDlpPath != null && !isBinaryUsable(config.ytDlpPath)) {
+                AudiophileCraft.LOGGER.warn("Configured yt-dlp path does not exist: {}, re-detecting...", config.ytDlpPath);
+                config.ytDlpPath = null;
+                updated = true;
+            }
+
+            // Validate existing denoPath (if the file was moved/deleted, discard it)
+            if (config.denoPath != null && !isBinaryUsable(config.denoPath)) {
+                AudiophileCraft.LOGGER.warn("Configured deno path does not exist: {}, re-detecting...", config.denoPath);
+                config.denoPath = null;
+                updated = true;
+            }
+
+            // If ytDlpPath is missing, auto-detect
+            if (config.ytDlpPath == null) {
                 config.ytDlpPath = autoDetectBinary("yt-dlp");
+                if (config.ytDlpPath != null) updated = true;
+            }
+
+            // If denoPath is missing, auto-detect
+            if (config.denoPath == null) {
                 config.denoPath = autoDetectBinary("deno");
-                config.useDeno = config.denoPath != null;
+                if (config.denoPath != null) updated = true;
+            }
+            config.useDeno = config.denoPath != null;
 
-                if (config.ytDlpPath != null) {
-                    AudiophileCraft.LOGGER.info(
-                            "Auto-detected yt-dlp at: {}{}",
-                            config.ytDlpPath,
-                            config.denoPath != null ? " (deno at: " + config.denoPath + ")" : " (deno not found)");
-                    // Persist the auto-detected config so subsequent launches are instant.
-                    writeConfig(configFilePath, config);
-                } else {
-                    AudiophileCraft.LOGGER.info(
-                            "yt-dlp not found on this system. YouTube playback will use the built-in source.");
-                }
+            if (updated && config.ytDlpPath != null) {
+                AudiophileCraft.LOGGER.info(
+                        "Auto-detected yt-dlp at: {}{}",
+                        config.ytDlpPath,
+                        config.denoPath != null ? " (deno at: " + config.denoPath + ")" : " (deno not found)");
+                writeConfig(configFilePath, config);
             }
 
-            // Fill in defaults for configs that were loaded from a file but have null
-            // fields.
-            if (configFileFound) {
-                if (config.ytDlpPath == null)
-                    config.ytDlpPath = "yt-dlp";
-                if (config.denoPath == null)
-                    config.denoPath = "deno";
-            }
             if (config.resolveTimeoutMs <= 0)
                 config.resolveTimeoutMs = DEFAULT_RESOLVE_TIMEOUT_MS;
 
@@ -251,6 +258,36 @@ public final class YtDlpUrlResolver {
             if (envUseDeno != null && !envUseDeno.isBlank())
                 config.useDeno = Boolean.parseBoolean(envUseDeno);
             return config;
+        }
+
+        private static boolean isBinaryUsable(String pathOrName) {
+            if (pathOrName == null || pathOrName.isBlank()) return false;
+            try {
+                Path path = Path.of(pathOrName);
+                if (Files.isRegularFile(path)) {
+                    return true;
+                }
+            } catch (Exception ignored) {
+            }
+            // If it's a bare command name on PATH
+            if (!pathOrName.contains("/") && !pathOrName.contains("\\")) {
+                return checkCommandOnPath(pathOrName);
+            }
+            return false;
+        }
+
+        private static boolean checkCommandOnPath(String command) {
+            try {
+                ProcessBuilder pb = new ProcessBuilder(command, "--version");
+                pb.redirectErrorStream(true);
+                Process proc = pb.start();
+                byte[] output = proc.getInputStream().readNBytes(256);
+                boolean exited = proc.waitFor(3, java.util.concurrent.TimeUnit.SECONDS);
+                if (!exited) proc.destroyForcibly();
+                return exited && proc.exitValue() == 0 && output.length > 0;
+            } catch (Exception ignored) {
+                return false;
+            }
         }
 
         /**
@@ -280,7 +317,8 @@ public final class YtDlpUrlResolver {
             }
             for (Path candidate : candidates) {
                 try {
-                    if (Files.isRegularFile(candidate) && Files.isExecutable(candidate)) {
+                    if (Files.isRegularFile(candidate) && (Files.isExecutable(candidate)
+                            || (isWindows && candidate.getFileName().toString().toLowerCase(java.util.Locale.ROOT).endsWith(".exe")))) {
                         return candidate.toAbsolutePath().toString();
                     }
                 } catch (Exception ignored) {
@@ -289,19 +327,8 @@ public final class YtDlpUrlResolver {
             }
 
             // 2. Check system PATH by trying to run the binary.
-            try {
-                ProcessBuilder pb = new ProcessBuilder(exeName, "--version");
-                pb.redirectErrorStream(true);
-                Process proc = pb.start();
-                byte[] output = proc.getInputStream().readNBytes(256);
-                boolean exited = proc.waitFor(5, java.util.concurrent.TimeUnit.SECONDS);
-                if (!exited)
-                    proc.destroyForcibly();
-                if (exited && proc.exitValue() == 0 && output.length > 0) {
-                    return exeName; // Available on PATH
-                }
-            } catch (Exception ignored) {
-                // Binary not on PATH
+            if (checkCommandOnPath(exeName)) {
+                return exeName;
             }
 
             return null;
