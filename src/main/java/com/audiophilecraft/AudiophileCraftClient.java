@@ -70,7 +70,8 @@ public class AudiophileCraftClient implements ClientModInitializer {
             }
         });
 
-        // Stop ALL audio on Disconnect (Main Menu) — prevents audio leaking after server crash/disconnect
+        // Stop ALL audio on Disconnect (Main Menu) — prevents audio leaking after
+        // server crash/disconnect
         net.fabricmc.fabric.api.client.networking.v1.ClientPlayConnectionEvents.DISCONNECT.register(
                 (handler, client) -> {
                     trackedWorld = null;
