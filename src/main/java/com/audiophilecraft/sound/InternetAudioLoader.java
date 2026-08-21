@@ -451,40 +451,61 @@ public class InternetAudioLoader {
 
     long loadTrackStreaming(String url, StreamingCallback callback, boolean cleanCandidatePlayerManager) {
         long requestId = nextStreamingRequestId.getAndIncrement();
-        if (ytDlpResolver.isConfigured() && ytDlpResolver.isYoutubeUrl(url)) {
-            RotatingResourcePool.Lease<AudioPlayerManager> playerManagerLease;
-            try {
-                playerManagerLease = cleanCandidatePlayerManager
-                        ? playerManagers.acquireCandidate()
-                        : playerManagers.acquireShared();
-            } catch (Throwable managerFailure) {
-                dispatchFromDecoderWorker(() -> callback.onFailed(requestId,
-                        "Failed to create internet source manager: " + managerFailure));
+        if (ytDlpResolver.isYoutubeUrl(url)) {
+            if (!ytDlpResolver.isConfigured()) {
+                // If not configured, trigger bootstrapper to download yt-dlp & deno in background
+                YtDlpBootstrapper.ensureInstalledAsync().thenAccept(success -> {
+                    if (success) {
+                        ytDlpResolver.reloadConfig();
+                    }
+                    dispatchFromDecoderWorker(() -> {
+                        if (ytDlpResolver.isConfigured()) {
+                            loadTrackStreamingWithYtDlp(requestId, url, callback, cleanCandidatePlayerManager);
+                        } else {
+                            startStreamingLoad(requestId, url, callback, cleanCandidatePlayerManager);
+                        }
+                    });
+                });
                 return requestId;
             }
-            StreamingRequestState state = new StreamingRequestState(requestId, playerManagerLease);
-            streamingRequests.put(requestId, state);
-            pendingYtDlpResolutions.put(requestId, Boolean.TRUE);
-            ytDlpResolver.resolveAsync(
-                    url,
-                    resolvedUrl -> {
-                        if (!pendingYtDlpResolutions.remove(requestId, Boolean.TRUE))
-                            return;
-                        if (state.isCancelled()) {
-                            callback.onFailed(requestId, "Cancelled before yt-dlp resolution finished");
-                            return;
-                        }
-                        AudiophileCraft.LOGGER.info("yt-dlp resolved {} to a direct stream URL.", url);
-                        beginStreamingLoad(state, resolvedUrl, callback);
-                    },
-                    reason -> {
-                        if (!pendingYtDlpResolutions.remove(requestId, Boolean.TRUE))
-                            return;
-                        failStreamingRequest(state, callback, "yt-dlp resolution failed: " + reason);
-                    });
-            return requestId;
+            return loadTrackStreamingWithYtDlp(requestId, url, callback, cleanCandidatePlayerManager);
         }
         return startStreamingLoad(requestId, url, callback, cleanCandidatePlayerManager);
+    }
+
+    private long loadTrackStreamingWithYtDlp(
+            long requestId, String url, StreamingCallback callback, boolean cleanCandidatePlayerManager) {
+        RotatingResourcePool.Lease<AudioPlayerManager> playerManagerLease;
+        try {
+            playerManagerLease = cleanCandidatePlayerManager
+                    ? playerManagers.acquireCandidate()
+                    : playerManagers.acquireShared();
+        } catch (Throwable managerFailure) {
+            dispatchFromDecoderWorker(() ->
+                    callback.onFailed(requestId, "Failed to create internet source manager: " + managerFailure));
+            return requestId;
+        }
+        StreamingRequestState state = new StreamingRequestState(requestId, playerManagerLease);
+        streamingRequests.put(requestId, state);
+        pendingYtDlpResolutions.put(requestId, Boolean.TRUE);
+        ytDlpResolver.resolveAsync(
+                url,
+                resolvedUrl -> {
+                    if (!pendingYtDlpResolutions.remove(requestId, Boolean.TRUE))
+                        return;
+                    if (state.isCancelled()) {
+                        callback.onFailed(requestId, "Cancelled before yt-dlp resolution finished");
+                        return;
+                    }
+                    AudiophileCraft.LOGGER.info("yt-dlp resolved {} to a direct stream URL.", url);
+                    beginStreamingLoad(state, resolvedUrl, callback);
+                },
+                reason -> {
+                    if (!pendingYtDlpResolutions.remove(requestId, Boolean.TRUE))
+                        return;
+                    failStreamingRequest(state, callback, "yt-dlp resolution failed: " + reason);
+                });
+        return requestId;
     }
 
     private long startStreamingLoad(long requestId, String url, StreamingCallback callback) {

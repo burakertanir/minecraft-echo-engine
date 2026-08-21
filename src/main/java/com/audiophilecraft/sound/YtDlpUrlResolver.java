@@ -33,17 +33,22 @@ public final class YtDlpUrlResolver {
     private static final String CONFIG_NAME = "audiophilecraft_ytdlp.json";
     private static final long DEFAULT_RESOLVE_TIMEOUT_MS = 120_000L;
 
-    private final String ytDlpPath;
-    private final String denoPath;
-    private final boolean useDeno;
-    private final long resolveTimeoutMs;
+    private volatile String ytDlpPath;
+    private volatile String denoPath;
+    private volatile boolean useDeno;
+    private volatile long resolveTimeoutMs;
 
     public YtDlpUrlResolver() {
+        reloadConfig();
+    }
+
+    public synchronized boolean reloadConfig() {
         Config config = Config.load();
         this.ytDlpPath = config.ytDlpPath;
         this.denoPath = config.denoPath;
         this.useDeno = config.useDeno;
         this.resolveTimeoutMs = config.resolveTimeoutMs;
+        return isConfigured();
     }
 
     public boolean isConfigured() {
@@ -259,6 +264,7 @@ public final class YtDlpUrlResolver {
             // 1. Check common install locations.
             String userHome = System.getProperty("user.home", "");
             List<Path> candidates = new ArrayList<>();
+            candidates.add(YtDlpBootstrapper.getToolsDirectory().resolve(exeName));
             if (isWindows) {
                 candidates.add(Path.of(userHome, "yt-dlp-tools", exeName));
                 candidates.add(Path.of(userHome, "AppData", "Local", "Microsoft", "WinGet", "Packages")

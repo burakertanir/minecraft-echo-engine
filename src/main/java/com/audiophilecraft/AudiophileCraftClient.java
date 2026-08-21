@@ -25,6 +25,9 @@ public class AudiophileCraftClient implements ClientModInitializer {
         // Initialize Live Tuning Config (hot-reload JSON)
         com.audiophilecraft.config.LiveTuningConfig.initialize();
 
+        // Check and pre-download yt-dlp & deno in background on startup if needed
+        com.audiophilecraft.sound.YtDlpBootstrapper.ensureInstalledAsync();
+
         // NOTE: AudioEngine now uses lazy initialization on Minecraft's own OpenAL
         // context.
         // No init() call needed here.
